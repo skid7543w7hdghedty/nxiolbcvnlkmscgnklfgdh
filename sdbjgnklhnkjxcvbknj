@@ -1,0 +1,204 @@
+-- This is a LocalScript that should be placed in StarterGui or run locally.
+
+local player = game.Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+local UserInputService = game:GetService("UserInputService")
+
+-- Create the ScreenGui
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "DraggableGui"
+screenGui.ResetOnSpawn = false  -- This ensures the GUI persists after death/respawn
+screenGui.Parent = playerGui
+
+-- Create the draggable Frame
+local frame = Instance.new("Frame")
+frame.Name = "DraggableFrame"
+frame.Size = UDim2.new(0, 200, 0, 180)  -- Adjusted size to fit three buttons properly
+frame.Position = UDim2.new(0.5, -100, 0.5, -90)  -- Center position
+frame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+frame.BorderSizePixel = 0
+frame.Parent = screenGui
+
+-- Title bar as Frame for input handling
+local titleBar = Instance.new("Frame")
+titleBar.Name = "TitleBar"
+titleBar.Size = UDim2.new(1, 0, 0, 30)
+titleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+titleBar.Parent = frame
+titleBar.Active = true  -- For dragging
+
+-- Title label
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -30, 1, 0)
+titleLabel.Position = UDim2.new(0, 0, 0, 0)
+titleLabel.BackgroundTransparency = 1
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.Text = "OverDrive H Premium"
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.TextSize = 16
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.Parent = titleBar
+
+-- Hide/Show button
+local isHidden = false
+local hideButton = Instance.new("TextButton")
+hideButton.Size = UDim2.new(0, 30, 1, 0)
+hideButton.Position = UDim2.new(1, -30, 0, 0)
+hideButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+hideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+hideButton.Text = "-"
+hideButton.Font = Enum.Font.SourceSansBold
+hideButton.TextSize = 18
+hideButton.Parent = titleBar
+
+-- Add the first button (Super Jump)
+local button1 = Instance.new("TextButton")
+button1.Name = "JumpButton"
+button1.Size = UDim2.new(1, 0, 0, 50)
+button1.Position = UDim2.new(0, 0, 0, 30)  -- Below the title bar
+button1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+button1.TextColor3 = Color3.fromRGB(255, 255, 255)
+button1.Text = "Jump Boost"
+button1.Font = Enum.Font.SourceSansBold
+button1.TextSize = 18
+button1.Parent = frame
+
+-- First button click functionality
+button1.MouseButton1Click:Connect(function()
+    local character = player.Character
+    if character and character:FindFirstChild("Humanoid") then
+        local humanoid = character.Humanoid
+        humanoid.JumpPower = 155
+        wait(0.7)
+        if character and character:FindFirstChild("Humanoid") then  -- Check again in case of changes
+            humanoid.JumpPower = 50
+        end
+    end
+end)
+
+-- Add the second button (Speed Boost during jump)
+local button2 = Instance.new("TextButton")
+button2.Name = "SpeedButton"
+button2.Size = UDim2.new(1, 0, 0, 50)
+button2.Position = UDim2.new(0, 0, 0, 80)  -- Below the first button
+button2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+button2.TextColor3 = Color3.fromRGB(255, 255, 255)
+button2.Text = "Fake Speed Glitch"
+button2.Font = Enum.Font.SourceSansBold
+button2.TextSize = 18
+button2.Parent = frame
+
+-- Second button click functionality
+button2.MouseButton1Click:Connect(function()
+    local character = player.Character
+    if character and character:FindFirstChild("Humanoid") then
+        local humanoid = character.Humanoid
+        
+        -- Connect to state changes for persistent effect until death
+        local stateConn = humanoid.StateChanged:Connect(function(oldState, newState)
+            if newState == Enum.HumanoidStateType.Freefall then
+                humanoid.WalkSpeed = 40
+            elseif newState == Enum.HumanoidStateType.Landed then
+                humanoid.WalkSpeed = 16
+            end
+        end)
+        
+        -- Apply immediately if currently in Freefall
+        if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
+            humanoid.WalkSpeed = 40
+        end
+        
+        -- Optional: Disconnect on death (though not necessary as Humanoid is destroyed)
+        humanoid.Died:Connect(function()
+            if stateConn then
+                stateConn:Disconnect()
+            end
+        end)
+    end
+end)
+
+-- Add the third button (Infinite Jump)
+local isEnabled = false
+
+local button3 = Instance.new("TextButton")
+button3.Name = "InfiniteJumpButton"
+button3.Size = UDim2.new(1, 0, 0, 50)
+button3.Position = UDim2.new(0, 0, 0, 130)  -- Below the second button
+button3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+button3.TextColor3 = Color3.fromRGB(255, 255, 255)
+button3.Text = "Infinite Jump: OFF"
+button3.Font = Enum.Font.SourceSansBold
+button3.TextSize = 18
+button3.Parent = frame
+
+-- Third button click functionality (toggle)
+button3.MouseButton1Click:Connect(function()
+    isEnabled = not isEnabled
+    button3.Text = "Infinite Jump: " .. (isEnabled and "ON" or "OFF")
+    button3.BackgroundColor3 = isEnabled and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(0, 0, 0)
+end)
+
+-- Infinite jump logic
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if isEnabled and input.KeyCode == Enum.KeyCode.Space then
+        local character = player.Character
+        if character then
+            local humanoid = character:FindFirstChild("Humanoid")
+            if humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            end
+        end
+    end
+end)
+
+-- Hide/Show functionality
+hideButton.MouseButton1Click:Connect(function()
+    isHidden = not isHidden
+    button1.Visible = not isHidden
+    button2.Visible = not isHidden
+    button3.Visible = not isHidden
+    if isHidden then
+        frame.Size = UDim2.new(0, 200, 0, 30)
+        hideButton.Text = "+"
+        hideButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    else
+        frame.Size = UDim2.new(0, 200, 0, 180)
+        hideButton.Text = "-"
+        hideButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    end
+end)
+
+-- Dragging functionality (now on titleBar)
+local dragging = false
+local dragInput
+local dragStart
+local startPos
+
+titleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = frame.Position
+        
+        local connection
+        connection = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                dragging = false
+                connection:Disconnect()
+            end
+        end)
+    end
+end)
+
+titleBar.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        dragInput = input
+    end
+end)
+
+game:GetService("UserInputService").InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
