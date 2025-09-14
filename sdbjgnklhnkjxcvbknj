@@ -1,9 +1,9 @@
--- This is a LocalScript that should be placed in StarterGui or run locally.
-
 local player = game.Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 -- Infinite jump variables
 local isEnabled = false
@@ -39,34 +39,436 @@ RunService.PostSimulation:Connect(function()
     jumpRequestThisFrame = false
 end)
 
--- Create the ScreenGui
+-- Variables for Wallhop Functionality
+local wallhopToggle = false
+local InfiniteJumpEnabled = true
+local raycastParams = RaycastParams.new()
+raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+local jumpConnection = nil
+
+-- Precise wall detection function
+local function getWallRaycastResult()
+    local character = player.Character
+    if not character then return nil end
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return nil end
+
+    raycastParams.FilterDescendantsInstances = {character}
+    local detectionDistance = 2
+    local closestHit = nil
+    local minDistance = detectionDistance + 1
+    local hrpCF = humanoidRootPart.CFrame
+
+    for i = 0, 7 do
+        local angle = math.rad(i * 45)
+        local direction = (hrpCF * CFrame.Angles(0, angle, 0)).LookVector
+        local ray = Workspace:Raycast(humanoidRootPart.Position, direction * detectionDistance, raycastParams)
+        if ray and ray.Instance and ray.Distance < minDistance then
+            minDistance = ray.Distance
+            closestHit = ray
+        end
+    end
+
+    local blockCastSize = Vector3.new(1.5, 1, 0.5)
+    local blockCastOffset = CFrame.new(0, -1, -0.5)
+    local blockCastOriginCF = hrpCF * blockCastOffset
+    local blockCastDirection = hrpCF.LookVector
+    local blockCastDistance = 1.5
+    local blockResult = Workspace:Blockcast(blockCastOriginCF, blockCastSize, blockCastDirection * blockCastDistance, raycastParams)
+
+    if blockResult and blockResult.Instance and blockResult.Distance < minDistance then
+         minDistance = blockResult.Distance
+         closestHit = blockResult
+    end
+
+    return closestHit
+end
+
+-- Reusable Core Wall Jump Execution Function
+local function executeWallJump(wallRayResult, jumpType)
+    if jumpType ~= "Button" and not InfiniteJumpEnabled then
+        return
+    end
+
+    local character = player.Character
+    local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+    local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+    local camera = Workspace.CurrentCamera
+
+    if not (humanoid and rootPart and camera and humanoid:GetState() ~= Enum.HumanoidStateType.Dead and wallRayResult) then
+        return
+    end
+
+    if jumpType ~= "Button" then
+        InfiniteJumpEnabled = false
+    end
+
+    local maxInfluenceAngleRight = math.rad(20)
+    local maxInfluenceAngleLeft  = math.rad(-100)
+
+    local wallNormal = wallRayResult.Normal
+    local baseDirectionAwayFromWall = Vector3.new(wallNormal.X, 0, wallNormal.Z).Unit
+    if baseDirectionAwayFromWall.Magnitude < 0.1 then
+         local dirToHit = (wallRayResult.Position - rootPart.Position) * Vector3.new(1,0,1)
+         baseDirectionAwayFromWall = -dirToHit.Unit
+         if baseDirectionAwayFromWall.Magnitude < 0.1 then
+             baseDirectionAwayFromWall = -rootPart.CFrame.LookVector * Vector3.new(1, 0, 1)
+             if baseDirectionAwayFromWall.Magnitude > 0.1 then baseDirectionAwayFromWall = baseDirectionAwayFromWall.Unit end
+             if baseDirectionAwayFromWall.Magnitude < 0.1 then baseDirectionAwayFromWall = Vector3.new(0,0,1) end
+         end
+    end
+    baseDirectionAwayFromWall = Vector3.new(baseDirectionAwayFromWall.X, 0, baseDirectionAwayFromWall.Z).Unit
+    if baseDirectionAwayFromWall.Magnitude < 0.1 then baseDirectionAwayFromWall = Vector3.new(0,0,1) end
+
+    local cameraLook = camera.CFrame.LookVector
+    local horizontalCameraLook = Vector3.new(cameraLook.X, 0, cameraLook.Z).Unit
+    if horizontalCameraLook.Magnitude < 0.1 then horizontalCameraLook = baseDirectionAwayFromWall end
+
+    local dot = math.clamp(baseDirectionAwayFromWall:Dot(horizontalCameraLook), -1, 1)
+    local angleBetween = math.acos(dot)
+    local cross = baseDirectionAwayFromWall:Cross(horizontalCameraLook)
+    local rotationSign = -math.sign(cross.Y)
+    if rotationSign == 0 then angleBetween = 0 end
+
+    local actualInfluenceAngle
+    if rotationSign == 1 then
+        actualInfluenceAngle = math.min(angleBetween, maxInfluenceAngleRight)
+    elseif rotationSign == -1 then
+        actualInfluenceAngle = math.min(angleBetween, maxInfluenceAngleLeft)
+    else
+        actualInfluenceAngle = 0
+    end
+
+    local adjustmentRotation = CFrame.Angles(0, actualInfluenceAngle * rotationSign, 0)
+    local initialTargetLookDirection = adjustmentRotation * baseDirectionAwayFromWall
+
+    rootPart.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + initialTargetLookDirection)
+    RunService.Heartbeat:Wait()
+
+    local didJump = false
+    if humanoid and humanoid:GetState() ~= Enum.HumanoidStateType.Dead then
+         humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+         didJump = true
+         print("Performed jump away from wall (".. (jumpType or "Unknown") .. ").")
+
+         rootPart.CFrame = rootPart.CFrame * CFrame.Angles(0, -1, 0)
+         task.wait(0.15)
+         rootPart.CFrame = rootPart.CFrame * CFrame.Angles(0, 1, 0)
+         print("Applied cosmetic rotation flick (-1/+1 radians) (".. (jumpType or "Unknown") .. ").")
+    end
+
+    if didJump then
+         local directionTowardsWall = -baseDirectionAwayFromWall
+         task.wait(0.05)
+         rootPart.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + directionTowardsWall)
+         print("Rotated back towards wall after jump (".. (jumpType or "Unknown") .. ").")
+    end
+
+    if jumpType ~= "Button" then
+        task.wait(0.1)
+        InfiniteJumpEnabled = true
+    end
+end
+
+-- Main Wallhop Function (Spacebar)
+jumpConnection = UserInputService.JumpRequest:Connect(function()
+    if not wallhopToggle then return end
+    local wallRayResult = getWallRaycastResult()
+    if wallRayResult then
+        executeWallJump(wallRayResult, "Manual")
+    end
+end)
+
+-- Air Strafe variables
+local airStrafeMultiplier = 1.7
+local maxAirSpeed = 20
+local strafeInterval = 1.5
+local lastKeyTime = 0
+local lastKey = nil
+local isStrafing = false
+local isScriptEnabled = false
+
+local character
+local humanoid
+local rootPart
+
+-- Air Strafe function
+local function updateAirMovement()
+    if not isScriptEnabled then return end
+    if humanoid:GetState() == Enum.HumanoidStateType.Jumping or humanoid:GetState() == Enum.HumanoidStateType.Freefall then
+        if isStrafing then
+            local moveDirection = Vector3.new(0, 0, 0)
+            
+            if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+                moveDirection = moveDirection + Vector3.new(-1, 0, 0)
+            end
+            if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+                moveDirection = moveDirection + Vector3.new(1, 0, 0)
+            end
+
+            if moveDirection.Magnitude > 0 then
+                moveDirection = moveDirection.Unit
+                local camera = workspace.CurrentCamera
+                local cameraCFrame = camera.CFrame
+                moveDirection = cameraCFrame:VectorToWorldSpace(moveDirection)
+                moveDirection = Vector3.new(moveDirection.X, 0, moveDirection.Z).Unit
+
+                local velocity = rootPart.Velocity
+                local newVelocity = Vector3.new(
+                    moveDirection.X * maxAirSpeed * airStrafeMultiplier,
+                    velocity.Y,
+                    moveDirection.Z * maxAirSpeed * airStrafeMultiplier
+                )
+                rootPart.Velocity = newVelocity
+            end
+        end
+    end
+end
+
+-- Check strafe sequence
+local function checkStrafeSequence(keyCode)
+    if not isScriptEnabled then return end
+    local currentTime = tick()
+    if keyCode == Enum.KeyCode.A or keyCode == Enum.KeyCode.D then
+        if lastKey and lastKey ~= keyCode and (currentTime - lastKeyTime) <= strafeInterval then
+            isStrafing = true
+            delay(strafeInterval, function()
+                isStrafing = false
+            end)
+        end
+        lastKey = keyCode
+        lastKeyTime = currentTime
+    end
+end
+
+-- Handle A and D input for air strafe
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.D then
+        checkStrafeSequence(input.KeyCode)
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    if character and humanoid and rootPart then
+        updateAirMovement()
+    end
+end)
+
+-- Anti-Aim Script States
+local currentMode = 0
+local running = false
+local scriptCoroutine = nil
+
+-- Anti-Aim Script Functions
+local scripts = {
+	function() -- Function 1: 0-360 degrees
+		while true do
+			task.wait(0.085)
+			if not running then return end
+			if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Humanoid") then
+				local humanoidRootPart = player.Character.HumanoidRootPart
+				local randomAngle = math.rad(math.random(0, 360))
+				humanoidRootPart.CFrame = CFrame.new(humanoidRootPart.Position) * CFrame.Angles(0, randomAngle, 0)
+			end
+		end
+	end,
+	function() -- Function 2: 0-180 degrees
+		while true do
+			task.wait(0.085)
+			if not running then return end
+			if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Humanoid") then
+				local humanoidRootPart = player.Character.HumanoidRootPart
+				local randomAngle = math.rad(math.random(0, 180))
+				humanoidRootPart.CFrame = CFrame.new(humanoidRootPart.Position) * CFrame.Angles(0, randomAngle, 0)
+			end
+		end
+	end,
+	function() -- Function 3: 0-360 degrees (random)
+		while true do
+			task.wait(0.085)
+			if not running then return end
+			if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Humanoid") then
+				local humanoidRootPart = player.Character.HumanoidRootPart
+				local randomAngle = math.rad(math.random(0, 360))
+				humanoidRootPart.CFrame = CFrame.new(humanoidRootPart.Position) * CFrame.Angles(0, randomAngle, 0)
+			end
+		end
+	end,
+	function() -- Function 4: 0-180 degrees (random)
+		while true do
+			task.wait(0.085)
+			if not running then return end
+			if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChild("Humanoid") then
+				local humanoidRootPart = player.Character.HumanoidRootPart
+				local randomAngle = math.rad(math.random(0, 180))
+				humanoidRootPart.CFrame = CFrame.new(humanoidRootPart.Position) * CFrame.Angles(0, randomAngle, 0)
+			end
+		end
+	end
+}
+
+-- Anti-Aim Cycle Function
+local function cycleMode()
+	currentMode = (currentMode + 1) % 5
+	if currentMode == 0 then
+		running = false
+		antiAimButton.Text = "Anti-Aim: OFF"
+		antiAimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	else
+		running = false -- Stop previous
+		scriptCoroutine = coroutine.create(scripts[currentMode])
+		running = true
+		coroutine.resume(scriptCoroutine)
+	end
+end
+
+-- Camera rotation variables for buttons 3, 4, and 5
+local isRotate90Enabled = false
+local isRotate180Enabled = false
+local isTweenRotate180Enabled = false
+local isAlive = true -- Shared flag for player alive status
+
+-- Camera rotation functions
+local function rotateCamera90()
+    if not isAlive or not isRotate90Enabled then return end
+    local camera = Workspace.CurrentCamera
+    local defaultCFrame = camera.CFrame
+    local rotation = CFrame.Angles(0, math.rad(90), 0)
+    camera.CFrame = camera.CFrame * rotation
+    task.wait(0.11)
+    camera.CFrame = defaultCFrame
+end
+
+local function rotateCamera180()
+    if not isAlive or not isRotate180Enabled then return end
+    local camera = Workspace.CurrentCamera
+    local defaultCFrame = camera.CFrame
+    local rotation = CFrame.Angles(0, math.rad(180), 0)
+    camera.CFrame = camera.CFrame * rotation
+    task.wait(0.11)
+    camera.CFrame = defaultCFrame
+end
+
+local function tweenRotateCamera180()
+    if not isAlive or not isTweenRotate180Enabled then return end
+    local camera = Workspace.CurrentCamera
+    local defaultCFrame = camera.CFrame
+    local rotation = CFrame.Angles(0, math.rad(180), 0)
+    local rotatedCFrame = camera.CFrame * rotation
+    local tweenInfo = TweenInfo.new(0.11, Enum.EasingStyle.Linear)
+    local tweenToRotated = TweenService:Create(camera, tweenInfo, {CFrame = rotatedCFrame})
+    tweenToRotated:Play()
+    tweenToRotated.Completed:Wait()
+    local tweenBack = TweenService:Create(camera, tweenInfo, {CFrame = defaultCFrame})
+    tweenBack:Play()
+end
+
+-- Handle 'X' key press for camera rotations
+UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+    if not isAlive or gameProcessedEvent then return end
+    if input.KeyCode == Enum.KeyCode.X then
+        if isRotate90Enabled then
+            rotateCamera90()
+        elseif isRotate180Enabled then
+            rotateCamera180()
+        elseif isTweenRotate180Enabled then
+            tweenRotateCamera180()
+        end
+    end
+end)
+
+-- Handle camera to ensure first-person compatibility
+local function updateCamera()
+    if player.Character and player.Character:FindFirstChild("Humanoid") then
+        local humanoid = player.Character.Humanoid
+        humanoid.CameraOffset = Vector3.new(0, 0, 0)
+    end
+end
+
+-- Handle character death to turn off toggles
+local function onCharacterAdded(char)
+    character = char
+    humanoid = char:WaitForChild("Humanoid")
+    rootPart = char:WaitForChild("HumanoidRootPart")
+    updateCamera()
+    humanoid.Died:Connect(function()
+        wallhopToggle = false
+        button2.Text = "Wallhop: OFF"
+        isScriptEnabled = false
+        airStrafeButton.Text = "Air Strafe: OFF"
+        running = false
+        currentMode = 0
+        if antiAimButton then
+            antiAimButton.Text = "Anti-Aim: OFF"
+            antiAimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+        isRotate90Enabled = false
+        if rotate90Button then
+            rotate90Button.Text = "90° Flick: OFF"
+            rotate90Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+        isRotate180Enabled = false
+        if rotate180Button then
+            rotate180Button.Text = "180° Flick: OFF"
+            rotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+        isTweenRotate180Enabled = false
+        if tweenRotate180Button then
+            tweenRotate180Button.Text = "360° Flick: OFF"
+            tweenRotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+        isAlive = false
+    end)
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
+if player.Character then
+    onCharacterAdded(player.Character)
+end
+
+player.CharacterRemoving:Connect(function()
+    running = false
+    currentMode = 0
+    if antiAimButton then
+        antiAimButton.Text = "Anti-Aim: OFF"
+        antiAimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+    isAlive = false
+end)
+
+player.CharacterAdded:Connect(function()
+    isAlive = true
+end)
+
+-- Create the first ScreenGui (Main GUI without Air Strafe)
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "DraggableGui"
-screenGui.ResetOnSpawn = false  -- This ensures the GUI persists after death/respawn
+screenGui.ResetOnSpawn = false
 screenGui.Parent = playerGui
 
--- Create the draggable Frame
+-- Create the draggable Frame for first GUI
 local frame = Instance.new("Frame")
 frame.Name = "DraggableFrame"
-frame.Size = UDim2.new(0, 200, 0, 150)  -- Initial size
-frame.Position = UDim2.new(0.5, -100, 0.5, -125)  -- Center position
+frame.Size = UDim2.new(0, 200, 0, 280)
+frame.Position = UDim2.new(0.5, -100, 0.5, -100)
 frame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 frame.BorderSizePixel = 0
-frame.Active = true  -- Needed for input events
+frame.Active = true
 frame.Parent = screenGui
 
--- Title bar
+-- Title bar for first GUI
 local titleBar = Instance.new("TextLabel")
 titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, -30, 0, 30)
 titleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleBar.Text = "OverDrive H Premium"
+titleBar.Text = "OverDrive H: Tab-1"
 titleBar.Font = Enum.Font.SourceSansBold
-titleBar.TextSize = 20
+titleBar.TextSize = 17
 titleBar.Parent = frame
 
--- Minimize button next to title
+-- Minimize button for first GUI
 local minimizeButton = Instance.new("TextButton")
 minimizeButton.Name = "MinimizeButton"
 minimizeButton.Size = UDim2.new(0, 30, 0, 30)
@@ -78,64 +480,91 @@ minimizeButton.Font = Enum.Font.SourceSansBold
 minimizeButton.TextSize = 18
 minimizeButton.Parent = frame
 
--- Add the first button (Super Jump)
+-- Add the first button (Infinite Jump)
 local button1 = Instance.new("TextButton")
-button1.Name = "JumpButton"
+button1.Name = "InfiniteJumpButton"
 button1.Size = UDim2.new(1, 0, 0, 50)
-button1.Position = UDim2.new(0, 0, 0, 30)  -- Below the title bar
+button1.Position = UDim2.new(0, 0, 0, 30)
 button1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 button1.TextColor3 = Color3.fromRGB(255, 255, 255)
-button1.Text = "Jump Boost"
+button1.Text = "Infinite Jump: OFF"
 button1.Font = Enum.Font.SourceSansBold
 button1.TextSize = 18.5
 button1.Parent = frame
 
--- First button click functionality
 button1.MouseButton1Click:Connect(function()
+    isEnabled = not isEnabled
+    button1.Text = "Infinite Jump: " .. (isEnabled and "ON" or "OFF")
+    button1.BackgroundColor3 = isEnabled and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(0, 0, 0)
+end)
+
+-- Add the second button (Wallhop)
+local button2 = Instance.new("TextButton")
+button2.Name = "WallhopButton"
+button2.Size = UDim2.new(1, 0, 0, 50)
+button2.Position = UDim2.new(0, 0, 0, 80)
+button2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+button2.TextColor3 = Color3.fromRGB(255, 255, 255)
+button2.Text = "Wallhop: OFF"
+button2.Font = Enum.Font.SourceSansBold
+button2.TextSize = 18.5
+button2.Parent = frame
+
+button2.MouseButton1Click:Connect(function()
+    wallhopToggle = not wallhopToggle
+    button2.Text = "Wallhop: " .. (wallhopToggle and "ON" or "OFF")
+end)
+
+-- Add the third button (Jump Boost)
+local button3 = Instance.new("TextButton")
+button3.Name = "JumpButton"
+button3.Size = UDim2.new(1, 0, 0, 50)
+button3.Position = UDim2.new(0, 0, 0, 130)
+button3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+button3.TextColor3 = Color3.fromRGB(255, 255, 255)
+button3.Text = "Jump Boost"
+button3.Font = Enum.Font.SourceSansBold
+button3.TextSize = 18.5
+button3.Parent = frame
+
+button3.MouseButton1Click:Connect(function()
     local character = player.Character
     if character and character:FindFirstChild("Humanoid") then
         local humanoid = character.Humanoid
         humanoid.JumpPower = 155
         wait(0.7)
-        if character and character:FindFirstChild("Humanoid") then  -- Check again in case of changes
+        if character and character:FindFirstChild("Humanoid") then
             humanoid.JumpPower = 50
         end
     end
 end)
 
--- Add the second button (Speed Boost during jump)
-local button2 = Instance.new("TextButton")
-button2.Name = "SpeedButton"
-button2.Size = UDim2.new(1, 0, 0, 50)
-button2.Position = UDim2.new(0, 0, 0, 80)  -- Below the first button
-button2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-button2.TextColor3 = Color3.fromRGB(255, 255, 255)
-button2.Text = "Fake Speed Glitch"
-button2.Font = Enum.Font.SourceSansBold
-button2.TextSize = 18.5
-button2.Parent = frame
+-- Add the fourth button (Fake Speed Glitch)
+local button4 = Instance.new("TextButton")
+button4.Name = "SpeedButton"
+button4.Size = UDim2.new(1, 0, 0, 50)
+button4.Position = UDim2.new(0, 0, 0, 180)
+button4.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+button4.TextColor3 = Color3.fromRGB(255, 255, 255)
+button4.Text = "Fake Speed Glitch"
+button4.Font = Enum.Font.SourceSansBold
+button4.TextSize = 18.5
+button4.Parent = frame
 
--- Second button click functionality
-button2.MouseButton1Click:Connect(function()
+button4.MouseButton1Click:Connect(function()
     local character = player.Character
     if character and character:FindFirstChild("Humanoid") then
         local humanoid = character.Humanoid
-        
-        -- Connect to state changes for persistent effect until death
         local stateConn = humanoid.StateChanged:Connect(function(oldState, newState)
             if newState == Enum.HumanoidStateType.Freefall then
-                humanoid.WalkSpeed = 40
+                humanoid.WalkSpeed = 50
             elseif newState == Enum.HumanoidStateType.Landed then
-                humanoid.WalkSpeed = 16
+                humanoid.WalkSpeed = 17
             end
         end)
-        
-        -- Apply immediately if currently in Freefall
         if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
             humanoid.WalkSpeed = 40
         end
-        
-        -- Optional: Disconnect on death (though not necessary as Humanoid is destroyed)
         humanoid.Died:Connect(function()
             if stateConn then
                 stateConn:Disconnect()
@@ -144,34 +573,274 @@ button2.MouseButton1Click:Connect(function()
     end
 end)
 
--- Add the third button (Infinite Jump)
-local button3 = Instance.new("TextButton")
-button3.Name = "InfiniteJumpButton"
-button3.Size = UDim2.new(1, 0, 0, 50)
-button3.Position = UDim2.new(0, 0, 0, 130)  -- Below the second button
-button3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-button3.TextColor3 = Color3.fromRGB(255, 255, 255)
-button3.Text = "Infinite Jump: OFF"
-button3.Font = Enum.Font.SourceSansBold
-button3.TextSize = 18
-button3.Parent = frame
+-- Add the fifth button (Invis Toggle)
+local button5 = Instance.new("TextButton")
+button5.Name = "InvisButton"
+button5.Size = UDim2.new(1, 0, 0, 50)
+button5.Position = UDim2.new(0, 0, 0, 230)
+button5.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+button5.TextColor3 = Color3.fromRGB(255, 255, 255)
+button5.Text = "Invis: OFF"
+button5.Font = Enum.Font.SourceSansBold
+button5.TextSize = 18.5
+button5.Parent = frame
 
--- Third button click functionality
-button3.MouseButton1Click:Connect(function()
-    isEnabled = not isEnabled
-    button3.Text = "Infinite Jump: " .. (isEnabled and "ON" or "OFF")
-    button3.BackgroundColor3 = isEnabled and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(0, 0, 0)
+local invis_on = false
+button5.MouseButton1Click:Connect(function()
+    invis_on = not invis_on
+    if invis_on then
+        local savedpos = game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame
+        wait()
+        game.Players.LocalPlayer.Character:MoveTo(Vector3.new(-25.95, 84, 3537.55))
+        wait(0.15)
+        local Seat = Instance.new('Seat', game.Workspace)
+        Seat.Anchored = false
+        Seat.CanCollide = false
+        Seat.Name = 'invischair'
+        Seat.Transparency = 1
+        Seat.Position = Vector3.new(-25.95, 84, 3537.55)
+        local Weld = Instance.new("Weld", Seat)
+        Weld.Part0 = Seat
+        Weld.Part1 = game.Players.LocalPlayer.Character:FindFirstChild("Torso") or game.Players.LocalPlayer.Character.UpperTorso
+        wait()
+        Seat.CFrame = savedpos
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "Invis On";
+            Duration = 1;
+            Text = "";
+        })
+        button5.Text = "Invis: ON"
+    else
+        local chair = workspace:FindFirstChild('invischair')
+        if chair then
+            chair:Destroy()
+        end
+        game.StarterGui:SetCore("SendNotification", {
+            Title = "Invis Off";
+            Duration = 1;
+            Text = "";
+        })
+        button5.Text = "Invis: OFF"
+    end
 end)
 
--- Minimize button functionality
+-- Create the second ScreenGui (Air Strafe and Camera Rotations GUI)
+local airStrafeGui = Instance.new("ScreenGui")
+airStrafeGui.Name = "AirStrafeGui"
+airStrafeGui.ResetOnSpawn = false
+airStrafeGui.Parent = playerGui
+
+-- Create the draggable Frame for Air Strafe GUI
+local airStrafeFrame = Instance.new("Frame")
+airStrafeFrame.Name = "AirStrafeFrame"
+airStrafeFrame.Size = UDim2.new(0, 200, 0, 280) -- Increased height to accommodate 5 buttons
+airStrafeFrame.Position = UDim2.new(0.5, -100, 0.5, 100)
+airStrafeFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+airStrafeFrame.BorderSizePixel = 0
+airStrafeFrame.Active = true
+airStrafeFrame.Parent = airStrafeGui
+
+-- Title bar for Air Strafe GUI
+local airStrafeTitleBar = Instance.new("TextLabel")
+airStrafeTitleBar.Name = "TitleBar"
+airStrafeTitleBar.Size = UDim2.new(1, -30, 0, 30)
+airStrafeTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+airStrafeTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+airStrafeTitleBar.Text = "OverDrive H: Tab-2"
+airStrafeTitleBar.Font = Enum.Font.SourceSansBold
+airStrafeTitleBar.TextSize = 17
+airStrafeTitleBar.Parent = airStrafeFrame
+
+-- Minimize button for Air Strafe GUI
+local airStrafeMinimizeButton = Instance.new("TextButton")
+airStrafeMinimizeButton.Name = "MinimizeButton"
+airStrafeMinimizeButton.Size = UDim2.new(0, 30, 0, 30)
+airStrafeMinimizeButton.Position = UDim2.new(1, -30, 0, 0)
+airStrafeMinimizeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+airStrafeMinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+airStrafeMinimizeButton.Text = "—"
+airStrafeMinimizeButton.Font = Enum.Font.SourceSansBold
+airStrafeMinimizeButton.TextSize = 18
+airStrafeMinimizeButton.Parent = airStrafeFrame
+
+-- Add the Air Strafe button
+local airStrafeButton = Instance.new("TextButton")
+airStrafeButton.Name = "AirStrafeButton"
+airStrafeButton.Size = UDim2.new(1, 0, 0, 50)
+airStrafeButton.Position = UDim2.new(0, 0, 0, 30)
+airStrafeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+airStrafeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+airStrafeButton.Text = "Air Strafe: OFF"
+airStrafeButton.Font = Enum.Font.SourceSansBold
+airStrafeButton.TextSize = 18.5
+airStrafeButton.Parent = airStrafeFrame
+
+-- Air Strafe button click functionality
+airStrafeButton.MouseButton1Click:Connect(function()
+    isScriptEnabled = not isScriptEnabled
+    airStrafeButton.Text = "Air Strafe: " .. (isScriptEnabled and "ON" or "OFF")
+end)
+
+-- Add the Anti-Aim button
+local antiAimButton = Instance.new("TextButton")
+antiAimButton.Name = "AntiAimButton"
+antiAimButton.Size = UDim2.new(1, 0, 0, 50)
+antiAimButton.Position = UDim2.new(0, 0, 0, 80)
+antiAimButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+antiAimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+antiAimButton.Text = "Anti-Aim (4 Types)"
+antiAimButton.Font = Enum.Font.SourceSansBold
+antiAimButton.TextSize = 18
+antiAimButton.Parent = airStrafeFrame
+
+-- Connect Anti-Aim Button
+antiAimButton.MouseButton1Click:Connect(cycleMode)
+
+-- Add the third button (Rotate 90)
+local rotate90Button = Instance.new("TextButton")
+rotate90Button.Name = "Rotate90Button"
+rotate90Button.Size = UDim2.new(1, 0, 0, 50)
+rotate90Button.Position = UDim2.new(0, 0, 0, 130)
+rotate90Button.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+rotate90Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+rotate90Button.Text = "90° Flick: OFF"
+rotate90Button.Font = Enum.Font.SourceSansBold
+rotate90Button.TextSize = 18.5
+rotate90Button.Parent = airStrafeFrame
+
+-- Rotate 90 button click functionality
+rotate90Button.MouseButton1Click:Connect(function()
+    isRotate90Enabled = not isRotate90Enabled
+    isRotate180Enabled = false
+    isTweenRotate180Enabled = false
+    rotate90Button.Text = "90° Flick: " .. (isRotate90Enabled and "ON" or "OFF")
+    rotate90Button.TextColor3 = isRotate90Enabled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 255, 255)
+    rotate180Button.Text = "180° Flick: OFF"
+    rotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tweenRotate180Button.Text = "360° Flick: OFF"
+    tweenRotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+end)
+
+-- Add the fourth button (Rotate 180)
+local rotate180Button = Instance.new("TextButton")
+rotate180Button.Name = "Rotate180Button"
+rotate180Button.Size = UDim2.new(1, 0, 0, 50)
+rotate180Button.Position = UDim2.new(0, 0, 0, 180)
+rotate180Button.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+rotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+rotate180Button.Text = "180° Flick: OFF"
+rotate180Button.Font = Enum.Font.SourceSansBold
+rotate180Button.TextSize = 18.5
+rotate180Button.Parent = airStrafeFrame
+
+-- Rotate 180 button click functionality
+rotate180Button.MouseButton1Click:Connect(function()
+    isRotate180Enabled = not isRotate180Enabled
+    isRotate90Enabled = false
+    isTweenRotate180Enabled = false
+    rotate180Button.Text = "180° Flick: " .. (isRotate180Enabled and "ON" or "OFF")
+    rotate180Button.TextColor3 = isRotate180Enabled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 255, 255)
+    rotate90Button.Text = "90° Flick: OFF"
+    rotate90Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tweenRotate180Button.Text = "360° Flick: OFF"
+    tweenRotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+end)
+
+-- Add the fifth button (Tween Rotate 180)
+local tweenRotate180Button = Instance.new("TextButton")
+tweenRotate180Button.Name = "TweenRotate180Button"
+tweenRotate180Button.Size = UDim2.new(1, 0, 0, 50)
+tweenRotate180Button.Position = UDim2.new(0, 0, 0, 230)
+tweenRotate180Button.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+tweenRotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+tweenRotate180Button.Text = "360° Flick: OFF"
+tweenRotate180Button.Font = Enum.Font.SourceSansBold
+tweenRotate180Button.TextSize = 18.5
+tweenRotate180Button.Parent = airStrafeFrame
+
+-- Tween Rotate 180 button click functionality
+tweenRotate180Button.MouseButton1Click:Connect(function()
+    isTweenRotate180Enabled = not isTweenRotate180Enabled
+    isRotate90Enabled = false
+    isRotate180Enabled = false
+    tweenRotate180Button.Text = "360° Flick: " .. (isTweenRotate180Enabled and "ON" or "OFF")
+    tweenRotate180Button.TextColor3 = isTweenRotate180Enabled and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 255, 255)
+    rotate90Button.Text = "90° Flick: OFF"
+    rotate90Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    rotate180Button.Text = "180° Flick: OFF"
+    rotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
+end)
+
+-- Create the Toggle Button ScreenGui
+local toggleGui = Instance.new("ScreenGui")
+toggleGui.Name = "ToggleGui"
+toggleGui.ResetOnSpawn = false
+toggleGui.Parent = playerGui
+
+-- Create the round toggle button (as a Frame for the background)
+local toggleButton = Instance.new("Frame")
+toggleButton.Name = "ToggleButton"
+toggleButton.Size = UDim2.new(0, 50, 0, 50)
+toggleButton.Position = UDim2.new(0.5, -25, 0.5, -25) -- Centered on screen
+toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+toggleButton.Active = true
+toggleButton.Parent = toggleGui
+
+-- Make the button round
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(1, 0)
+corner.Parent = toggleButton
+
+-- Add white border to toggle button background
+local stroke = Instance.new("UIStroke")
+stroke.Name = "ToggleButtonStroke"
+stroke.Color = Color3.fromRGB(255, 255, 255) -- White border
+stroke.Thickness = 2
+stroke.Parent = toggleButton
+
+-- Add TextLabel for the "ODH" text
+local toggleText = Instance.new("TextLabel")
+toggleText.Name = "ToggleText"
+toggleText.Size = UDim2.new(1, 0, 1, 0)
+toggleText.Position = UDim2.new(0, 0, 0, 0)
+toggleText.BackgroundTransparency = 1
+toggleText.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleText.Text = "ODH"
+toggleText.Font = Enum.Font.SourceSansBold
+toggleText.TextSize = 16
+toggleText.Parent = toggleButton
+
+-- GUI visibility state
+local areGuisVisible = true
+
+-- Toggle button click functionality with effect
+toggleButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        -- Click effect: Change background color temporarily
+        toggleButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100) -- Gray for click effect
+        task.spawn(function()
+            task.wait(0.1) -- Duration of the click effect
+            toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0) -- Revert to black
+        end)
+        -- Toggle GUI visibility
+        areGuisVisible = not areGuisVisible
+        screenGui.Enabled = areGuisVisible
+        airStrafeGui.Enabled = areGuisVisible
+        toggleText.Text = areGuisVisible and "ODH" or "ODH"
+    end
+end)
+
+-- Minimize button functionality for first GUI
 local isContentVisible = true
 minimizeButton.MouseButton1Click:Connect(function()
     isContentVisible = not isContentVisible
     button1.Visible = isContentVisible
     button2.Visible = isContentVisible
     button3.Visible = isContentVisible
+    button4.Visible = isContentVisible
+    button5.Visible = isContentVisible
     if isContentVisible then
-        frame.Size = UDim2.new(0, 200, 0, 250)
+        frame.Size = UDim2.new(0, 200, 0, 280)
         minimizeButton.Text = "—"
     else
         frame.Size = UDim2.new(0, 200, 0, 30)
@@ -179,7 +848,25 @@ minimizeButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- Dragging functionality
+-- Minimize button functionality for Air Strafe GUI
+local isAirStrafeContentVisible = true
+airStrafeMinimizeButton.MouseButton1Click:Connect(function()
+    isAirStrafeContentVisible = not isAirStrafeContentVisible
+    airStrafeButton.Visible = isAirStrafeContentVisible
+    antiAimButton.Visible = isAirStrafeContentVisible
+    rotate90Button.Visible = isAirStrafeContentVisible
+    rotate180Button.Visible = isAirStrafeContentVisible
+    tweenRotate180Button.Visible = isAirStrafeContentVisible
+    if isAirStrafeContentVisible then
+        airStrafeFrame.Size = UDim2.new(0, 200, 0, 280)
+        airStrafeMinimizeButton.Text = "—"
+    else
+        airStrafeFrame.Size = UDim2.new(0, 200, 0, 30)
+        airStrafeMinimizeButton.Text = "+"
+    end
+end)
+
+-- Dragging functionality for first GUI
 local dragging = false
 local dragInput
 local dragStart
@@ -207,9 +894,79 @@ frame.InputChanged:Connect(function(input)
     end
 end)
 
-game:GetService("UserInputService").InputChanged:Connect(function(input)
+UserInputService.InputChanged:Connect(function(input)
     if input == dragInput and dragging then
         local delta = input.Position - dragStart
         frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Dragging functionality for Air Strafe GUI
+local airStrafeDragging = false
+local airStrafeDragInput
+local airStrafeDragStart
+local airStrafeStartPos
+
+airStrafeFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        airStrafeDragging = true
+        airStrafeDragStart = input.Position
+        airStrafeStartPos = airStrafeFrame.Position
+        
+        local connection
+        connection = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                airStrafeDragging = false
+                connection:Disconnect()
+            end
+        end)
+    end
+end)
+
+airStrafeFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        airStrafeDragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == airStrafeDragInput and airStrafeDragging then
+        local delta = input.Position - airStrafeDragStart
+        airStrafeFrame.Position = UDim2.new(airStrafeStartPos.X.Scale, airStrafeStartPos.X.Offset + delta.X, airStrafeStartPos.Y.Scale, airStrafeStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Dragging functionality for Toggle Button
+local toggleDragging = false
+local toggleDragInput
+local toggleDragStart
+local toggleStartPos
+
+toggleButton.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        toggleDragging = true
+        toggleDragStart = input.Position
+        toggleStartPos = toggleButton.Position
+        
+        local connection
+        connection = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                toggleDragging = false
+                connection:Disconnect()
+            end
+        end)
+    end
+end)
+
+toggleButton.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        toggleDragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == toggleDragInput and toggleDragging then
+        local delta = input.Position - toggleDragStart
+        toggleButton.Position = UDim2.new(toggleStartPos.X.Scale, toggleStartPos.X.Offset + delta.X, toggleStartPos.Y.Scale, toggleStartPos.Y.Offset + delta.Y)
     end
 end)
