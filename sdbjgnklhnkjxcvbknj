@@ -4,6 +4,11 @@ local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local TweenService = game:GetService("TweenService")
 local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+
+-- Load anti-fling script
+loadstring(game:HttpGet("https://raw.githubusercontent.com/GGH52lan/GGH52lan/main/anti-fling.txt"))()
 
 -- Infinite jump variables
 local isEnabled = false
@@ -208,7 +213,7 @@ local function updateAirMovement()
 
             if moveDirection.Magnitude > 0 then
                 moveDirection = moveDirection.Unit
-                local camera = workspace.CurrentCamera
+                local camera = Workspace.CurrentCamera
                 local cameraCFrame = camera.CFrame
                 moveDirection = cameraCFrame:VectorToWorldSpace(moveDirection)
                 moveDirection = Vector3.new(moveDirection.X, 0, moveDirection.Z).Unit
@@ -313,8 +318,6 @@ local function cycleMode()
 	currentMode = (currentMode + 1) % 5
 	if currentMode == 0 then
 		running = false
-		antiAimButton.Text = "Anti-Aim: OFF"
-		antiAimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 	else
 		running = false -- Stop previous
 		scriptCoroutine = coroutine.create(scripts[currentMode])
@@ -378,6 +381,98 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
     end
 end)
 
+-- Touch Fling variables
+local hiddenFling = false
+local flingThread = nil
+
+-- Touch Fling function
+local function fling()
+    local lp = player
+    local c, hrp, vel, movel = nil, nil, nil, 0.1
+
+    if not ReplicatedStorage:FindFirstChild("juisdfj0i32i0eidsuf0iok") then
+        local detection = Instance.new("Decal")
+        detection.Name = "juisdfj0i32i0eidsuf0iok"
+        detection.Parent = ReplicatedStorage
+    end
+
+    while hiddenFling do
+        RunService.Heartbeat:Wait()
+        c = lp.Character
+        hrp = c and c:FindFirstChild("HumanoidRootPart")
+
+        if hrp then
+            vel = hrp.Velocity
+            hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
+            RunService.RenderStepped:Wait()
+            hrp.Velocity = vel
+            RunService.Stepped:Wait()
+            hrp.Velocity = vel + Vector3.new(0, movel, 0)
+            movel = -movel
+        end
+    end
+end
+
+-- Noclip variables
+local noclipEnabled = false
+local noclipConnection = nil
+
+-- Noclip function
+local function toggleNoclip()
+    noclipEnabled = not noclipEnabled
+    if noclipEnabled then
+        noclipConnection = RunService.Stepped:Connect(function()
+            if player.Character then
+                for _, part in pairs(player.Character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = false
+                    end
+                end
+            end
+        end)
+    else
+        if noclipConnection then
+            noclipConnection:Disconnect()
+            noclipConnection = nil
+        end
+    end
+end
+
+-- Reach variables
+local reachEnabled = false
+local reachConnection = nil
+local range = 11
+
+-- Reach function
+local function toggleReach()
+    reachEnabled = not reachEnabled
+    if reachEnabled then
+        reachConnection = RunService.RenderStepped:Connect(function()
+            local p = Players:GetPlayers()
+            for i = 2, #p do 
+                local v = p[i].Character
+                if v and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") and player:DistanceFromCharacter(v.HumanoidRootPart.Position) <= range then
+                    local tool = player.Character and player.Character:FindFirstChildOfClass("Tool")
+                    if tool and tool:FindFirstChild("Handle") then
+                        tool:Activate()
+                        for _, part in next, v:GetChildren() do
+                            if part:IsA("BasePart") then
+                                firetouchinterest(tool.Handle, part, 0)
+                                firetouchinterest(tool.Handle, part, 1)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+    else
+        if reachConnection then
+            reachConnection:Disconnect()
+            reachConnection = nil
+        end
+    end
+end
+
 -- Handle camera to ensure first-person compatibility
 local function updateCamera()
     if player.Character and player.Character:FindFirstChild("Humanoid") then
@@ -418,6 +513,29 @@ local function onCharacterAdded(char)
             tweenRotate180Button.Text = "360° Flick: OFF"
             tweenRotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
         end
+        hiddenFling = false
+        if touchFlingButton then
+            touchFlingButton.Text = "Touch Fling: OFF"
+            touchFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+        noclipEnabled = false
+        if noclipButton then
+            noclipButton.Text = "Noclip"
+            noclipButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+        if noclipConnection then
+            noclipConnection:Disconnect()
+            noclipConnection = nil
+        end
+        reachEnabled = false
+        if reachButton then
+            reachButton.Text = "KillAura"
+            reachButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+        end
+        if reachConnection then
+            reachConnection:Disconnect()
+            reachConnection = nil
+        end
         isAlive = false
     end)
 end
@@ -433,6 +551,29 @@ player.CharacterRemoving:Connect(function()
     if antiAimButton then
         antiAimButton.Text = "Anti-Aim: OFF"
         antiAimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+    hiddenFling = false
+    if touchFlingButton then
+        touchFlingButton.Text = "Touch Fling: OFF"
+        touchFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+    noclipEnabled = false
+    if noclipButton then
+        noclipButton.Text = "Noclip"
+        noclipButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+    if noclipConnection then
+        noclipConnection:Disconnect()
+        noclipConnection = nil
+    end
+    reachEnabled = false
+    if reachButton then
+        reachButton.Text = "KillAura"
+        reachButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+    if reachConnection then
+        reachConnection:Disconnect()
+        reachConnection = nil
     end
     isAlive = false
 end)
@@ -531,10 +672,10 @@ button3.MouseButton1Click:Connect(function()
     local character = player.Character
     if character and character:FindFirstChild("Humanoid") then
         local humanoid = character.Humanoid
-        humanoid.JumpPower = 155
+        humanoid.JumpPower = 165
         wait(0.7)
         if character and character:FindFirstChild("Humanoid") then
-            humanoid.JumpPower = 50
+            humanoid.JumpPower = 50.5
         end
     end
 end)
@@ -557,13 +698,13 @@ button4.MouseButton1Click:Connect(function()
         local humanoid = character.Humanoid
         local stateConn = humanoid.StateChanged:Connect(function(oldState, newState)
             if newState == Enum.HumanoidStateType.Freefall then
-                humanoid.WalkSpeed = 50
+                humanoid.WalkSpeed = 75
             elseif newState == Enum.HumanoidStateType.Landed then
-                humanoid.WalkSpeed = 17
+                humanoid.WalkSpeed = 17.4
             end
         end)
         if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
-            humanoid.WalkSpeed = 40
+            humanoid.WalkSpeed = 75
         end
         humanoid.Died:Connect(function()
             if stateConn then
@@ -633,7 +774,7 @@ airStrafeGui.Parent = playerGui
 -- Create the draggable Frame for Air Strafe GUI
 local airStrafeFrame = Instance.new("Frame")
 airStrafeFrame.Name = "AirStrafeFrame"
-airStrafeFrame.Size = UDim2.new(0, 200, 0, 280) -- Increased height to accommodate 5 buttons
+airStrafeFrame.Size = UDim2.new(0, 200, 0, 280)
 airStrafeFrame.Position = UDim2.new(0.5, -100, 0.5, 100)
 airStrafeFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 airStrafeFrame.BorderSizePixel = 0
@@ -690,7 +831,7 @@ antiAimButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 antiAimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 antiAimButton.Text = "Anti-Aim (4 Types)"
 antiAimButton.Font = Enum.Font.SourceSansBold
-antiAimButton.TextSize = 18
+antiAimButton.TextSize = 18.5
 antiAimButton.Parent = airStrafeFrame
 
 -- Connect Anti-Aim Button
@@ -771,6 +912,100 @@ tweenRotate180Button.MouseButton1Click:Connect(function()
     rotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
 end)
 
+-- Create the third ScreenGui (Touch Fling, Noclip, and Reach GUI)
+local touchFlingGui = Instance.new("ScreenGui")
+touchFlingGui.Name = "TouchFlingGui"
+touchFlingGui.ResetOnSpawn = false
+touchFlingGui.Parent = playerGui
+
+-- Create the draggable Frame for Touch Fling GUI
+local touchFlingFrame = Instance.new("Frame")
+touchFlingFrame.Name = "TouchFlingFrame"
+touchFlingFrame.Size = UDim2.new(0, 200, 0, 180)
+touchFlingFrame.Position = UDim2.new(0.5, -100, 0.5, 300)
+touchFlingFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+touchFlingFrame.BorderSizePixel = 0
+touchFlingFrame.Active = true
+touchFlingFrame.Parent = touchFlingGui
+
+-- Title bar for Touch Fling GUI
+local touchFlingTitleBar = Instance.new("TextLabel")
+touchFlingTitleBar.Name = "TitleBar"
+touchFlingTitleBar.Size = UDim2.new(1, -30, 0, 30)
+touchFlingTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+touchFlingTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+touchFlingTitleBar.Text = "OverDrive H: Tab-3"
+touchFlingTitleBar.Font = Enum.Font.SourceSansBold
+touchFlingTitleBar.TextSize = 17
+touchFlingTitleBar.Parent = touchFlingFrame
+
+-- Minimize button for Touch Fling GUI
+local touchFlingMinimizeButton = Instance.new("TextButton")
+touchFlingMinimizeButton.Name = "MinimizeButton"
+touchFlingMinimizeButton.Size = UDim2.new(0, 30, 0, 30)
+touchFlingMinimizeButton.Position = UDim2.new(1, -30, 0, 0)
+touchFlingMinimizeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+touchFlingMinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+touchFlingMinimizeButton.Text = "—"
+touchFlingMinimizeButton.Font = Enum.Font.SourceSansBold
+touchFlingMinimizeButton.TextSize = 18
+touchFlingMinimizeButton.Parent = touchFlingFrame
+
+-- Add the Touch Fling button
+local touchFlingButton = Instance.new("TextButton")
+touchFlingButton.Name = "TouchFlingButton"
+touchFlingButton.Size = UDim2.new(1, 0, 0, 50)
+touchFlingButton.Position = UDim2.new(0, 0, 0, 30)
+touchFlingButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+touchFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+touchFlingButton.Text = "Touch Fling: OFF"
+touchFlingButton.Font = Enum.Font.SourceSansBold
+touchFlingButton.TextSize = 18.5
+touchFlingButton.Parent = touchFlingFrame
+
+-- Touch Fling button click functionality
+touchFlingButton.MouseButton1Click:Connect(function()
+    hiddenFling = not hiddenFling
+    touchFlingButton.Text = "Touch Fling: " .. (hiddenFling and "ON" or "OFF")
+    touchFlingButton.TextColor3 = hiddenFling and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 255, 255)
+    if hiddenFling then
+        flingThread = coroutine.create(fling)
+        coroutine.resume(flingThread)
+    else
+        hiddenFling = false
+    end
+end)
+
+-- Add the Noclip button
+local noclipButton = Instance.new("TextButton")
+noclipButton.Name = "NoclipButton"
+noclipButton.Size = UDim2.new(1, 0, 0, 50)
+noclipButton.Position = UDim2.new(0, 0, 0, 80)
+noclipButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+noclipButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+noclipButton.Text = "Noclip"
+noclipButton.Font = Enum.Font.SourceSansBold
+noclipButton.TextSize = 18.5
+noclipButton.Parent = touchFlingFrame
+
+-- Noclip button click functionality
+noclipButton.MouseButton1Click:Connect(toggleNoclip)
+
+-- Add the Reach button
+local reachButton = Instance.new("TextButton")
+reachButton.Name = "ReachButton"
+reachButton.Size = UDim2.new(1, 0, 0, 50)
+reachButton.Position = UDim2.new(0, 0, 0, 130)
+reachButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+reachButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+reachButton.Text = "KillAura"
+reachButton.Font = Enum.Font.SourceSansBold
+reachButton.TextSize = 18.5
+reachButton.Parent = touchFlingFrame
+
+-- Reach button click functionality
+reachButton.MouseButton1Click:Connect(toggleReach)
+
 -- Create the Toggle Button ScreenGui
 local toggleGui = Instance.new("ScreenGui")
 toggleGui.Name = "ToggleGui"
@@ -781,7 +1016,7 @@ toggleGui.Parent = playerGui
 local toggleButton = Instance.new("Frame")
 toggleButton.Name = "ToggleButton"
 toggleButton.Size = UDim2.new(0, 50, 0, 50)
-toggleButton.Position = UDim2.new(0.5, -25, 0.5, -25) -- Centered on screen
+toggleButton.Position = UDim2.new(0.5, -25, 0.5, -25)
 toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 toggleButton.Active = true
 toggleButton.Parent = toggleGui
@@ -794,7 +1029,7 @@ corner.Parent = toggleButton
 -- Add white border to toggle button background
 local stroke = Instance.new("UIStroke")
 stroke.Name = "ToggleButtonStroke"
-stroke.Color = Color3.fromRGB(255, 255, 255) -- White border
+stroke.Color = Color3.fromRGB(255, 255, 255)
 stroke.Thickness = 2
 stroke.Parent = toggleButton
 
@@ -807,7 +1042,7 @@ toggleText.BackgroundTransparency = 1
 toggleText.TextColor3 = Color3.fromRGB(255, 255, 255)
 toggleText.Text = "ODH"
 toggleText.Font = Enum.Font.SourceSansBold
-toggleText.TextSize = 16
+toggleText.TextSize = 18.5
 toggleText.Parent = toggleButton
 
 -- GUI visibility state
@@ -816,16 +1051,15 @@ local areGuisVisible = true
 -- Toggle button click functionality with effect
 toggleButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        -- Click effect: Change background color temporarily
-        toggleButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100) -- Gray for click effect
+        toggleButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
         task.spawn(function()
-            task.wait(0.1) -- Duration of the click effect
-            toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0) -- Revert to black
+            task.wait(0.1)
+            toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         end)
-        -- Toggle GUI visibility
         areGuisVisible = not areGuisVisible
         screenGui.Enabled = areGuisVisible
         airStrafeGui.Enabled = areGuisVisible
+        touchFlingGui.Enabled = areGuisVisible
         toggleText.Text = areGuisVisible and "ODH" or "ODH"
     end
 end)
@@ -863,6 +1097,22 @@ airStrafeMinimizeButton.MouseButton1Click:Connect(function()
     else
         airStrafeFrame.Size = UDim2.new(0, 200, 0, 30)
         airStrafeMinimizeButton.Text = "+"
+    end
+end)
+
+-- Minimize button functionality for Touch Fling GUI
+local isTouchFlingContentVisible = true
+touchFlingMinimizeButton.MouseButton1Click:Connect(function()
+    isTouchFlingContentVisible = not isTouchFlingContentVisible
+    touchFlingButton.Visible = isTouchFlingContentVisible
+    noclipButton.Visible = isTouchFlingContentVisible
+    reachButton.Visible = isTouchFlingContentVisible
+    if isTouchFlingContentVisible then
+        touchFlingFrame.Size = UDim2.new(0, 200, 0, 180)
+        touchFlingMinimizeButton.Text = "—"
+    else
+        touchFlingFrame.Size = UDim2.new(0, 200, 0, 30)
+        touchFlingMinimizeButton.Text = "+"
     end
 end)
 
@@ -936,6 +1186,41 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+-- Dragging functionality for Touch Fling GUI
+local touchFlingDragging = false
+local touchFlingDragInput
+local touchFlingDragStart
+local touchFlingStartPos
+
+touchFlingFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        touchFlingDragging = true
+        touchFlingDragStart = input.Position
+        touchFlingStartPos = touchFlingFrame.Position
+        
+        local connection
+        connection = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                touchFlingDragging = false
+                connection:Disconnect()
+            end
+        end)
+    end
+end)
+
+touchFlingFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        touchFlingDragInput = input
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input == touchFlingDragInput and touchFlingDragging then
+        local delta = input.Position - touchFlingDragStart
+        touchFlingFrame.Position = UDim2.new(touchFlingStartPos.X.Scale, touchFlingStartPos.X.Offset + delta.X, touchFlingStartPos.Y.Scale, touchFlingStartPos.Y.Offset + delta.Y)
+    end
+end)
+
 -- Dragging functionality for Toggle Button
 local toggleDragging = false
 local toggleDragInput
@@ -970,3 +1255,6 @@ UserInputService.InputChanged:Connect(function(input)
         toggleButton.Position = UDim2.new(toggleStartPos.X.Scale, toggleStartPos.X.Offset + delta.X, toggleStartPos.Y.Scale, toggleStartPos.Y.Offset + delta.Y)
     end
 end)
+
+-- Print credit message
+print("sub to DuplexScripts")
