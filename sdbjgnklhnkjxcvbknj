@@ -7,9 +7,6 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
--- Load anti-fling script
-loadstring(game:HttpGet("https://raw.githubusercontent.com/GGH52lan/GGH52lan/main/anti-fling.txt"))()
-
 -- Infinite jump variables
 local isEnabled = false
 local jumpRequestThisFrame = false
@@ -381,38 +378,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
     end
 end)
 
--- Touch Fling variables
-local hiddenFling = false
-local flingThread = nil
-
--- Touch Fling function
-local function fling()
-    local lp = player
-    local c, hrp, vel, movel = nil, nil, nil, 0.1
-
-    if not ReplicatedStorage:FindFirstChild("juisdfj0i32i0eidsuf0iok") then
-        local detection = Instance.new("Decal")
-        detection.Name = "juisdfj0i32i0eidsuf0iok"
-        detection.Parent = ReplicatedStorage
-    end
-
-    while hiddenFling do
-        RunService.Heartbeat:Wait()
-        c = lp.Character
-        hrp = c and c:FindFirstChild("HumanoidRootPart")
-
-        if hrp then
-            vel = hrp.Velocity
-            hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
-            RunService.RenderStepped:Wait()
-            hrp.Velocity = vel
-            RunService.Stepped:Wait()
-            hrp.Velocity = vel + Vector3.new(0, movel, 0)
-            movel = -movel
-        end
-    end
-end
-
 -- Noclip variables
 local noclipEnabled = false
 local noclipConnection = nil
@@ -473,6 +438,62 @@ local function toggleReach()
     end
 end
 
+-- Fake Speed Glitch variables
+local fakeSpeedEnabled = false
+local fakeSpeedConnection = nil
+local fakeSpeedDiedConnection = nil
+
+-- Fake Speed Glitch toggle function
+local function toggleFakeSpeed()
+    fakeSpeedEnabled = not fakeSpeedEnabled
+    local character = player.Character
+    if character and character:FindFirstChild("Humanoid") then
+        local humanoid = character.Humanoid
+        if fakeSpeedEnabled then
+            fakeSpeedConnection = humanoid.StateChanged:Connect(function(oldState, newState)
+                if newState == Enum.HumanoidStateType.Freefall then
+                    humanoid.WalkSpeed = 150
+                elseif newState == Enum.HumanoidStateType.Landed then
+                    humanoid.WalkSpeed = 18
+                end
+            end)
+            if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
+                humanoid.WalkSpeed = 150
+            end
+            fakeSpeedDiedConnection = humanoid.Died:Connect(function()
+                if fakeSpeedConnection then
+                    fakeSpeedConnection:Disconnect()
+                    fakeSpeedConnection = nil
+                end
+                if fakeSpeedDiedConnection then
+                    fakeSpeedDiedConnection:Disconnect()
+                    fakeSpeedDiedConnection = nil
+                end
+                fakeSpeedEnabled = false
+                if button4 then
+                    button4.Text = "Fake Speed: OFF"
+                end
+            end)
+        else
+            if fakeSpeedConnection then
+                fakeSpeedConnection:Disconnect()
+                fakeSpeedConnection = nil
+            end
+            if fakeSpeedDiedConnection then
+                fakeSpeedDiedConnection:Disconnect()
+                fakeSpeedDiedConnection = nil
+            end
+            humanoid.WalkSpeed = 18
+        end
+    end
+end
+
+-- Linked drag variables
+local isLinkedDrag = false
+local linkedFrameStart
+local linkedAirStrafeStart
+local linkedTouchStart
+
 -- Handle camera to ensure first-person compatibility
 local function updateCamera()
     if player.Character and player.Character:FindFirstChild("Humanoid") then
@@ -513,11 +534,6 @@ local function onCharacterAdded(char)
             tweenRotate180Button.Text = "360° Flick: OFF"
             tweenRotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
         end
-        hiddenFling = false
-        if touchFlingButton then
-            touchFlingButton.Text = "Touch Fling: OFF"
-            touchFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        end
         noclipEnabled = false
         if noclipButton then
             noclipButton.Text = "Noclip"
@@ -536,6 +552,29 @@ local function onCharacterAdded(char)
             reachConnection:Disconnect()
             reachConnection = nil
         end
+        fakeSpeedEnabled = false
+        if button4 then
+            button4.Text = "Fake Speed: OFF"
+        end
+        if fakeSpeedConnection then
+            fakeSpeedConnection:Disconnect()
+            fakeSpeedConnection = nil
+        end
+        if fakeSpeedDiedConnection then
+            fakeSpeedDiedConnection:Disconnect()
+            fakeSpeedDiedConnection = nil
+        end
+        isLinkedDrag = false
+        local offColor = Color3.fromRGB(0, 0, 0)
+        if linkButton1 then
+            linkButton1.BackgroundColor3 = offColor
+        end
+        if linkButton2 then
+            linkButton2.BackgroundColor3 = offColor
+        end
+        if linkButton3 then
+            linkButton3.BackgroundColor3 = offColor
+        end
         isAlive = false
     end)
 end
@@ -551,11 +590,6 @@ player.CharacterRemoving:Connect(function()
     if antiAimButton then
         antiAimButton.Text = "Anti-Aim: OFF"
         antiAimButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-    end
-    hiddenFling = false
-    if touchFlingButton then
-        touchFlingButton.Text = "Touch Fling: OFF"
-        touchFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     end
     noclipEnabled = false
     if noclipButton then
@@ -574,6 +608,29 @@ player.CharacterRemoving:Connect(function()
     if reachConnection then
         reachConnection:Disconnect()
         reachConnection = nil
+    end
+    fakeSpeedEnabled = false
+    if button4 then
+        button4.Text = "Fake Speed: OFF"
+    end
+    if fakeSpeedConnection then
+        fakeSpeedConnection:Disconnect()
+        fakeSpeedConnection = nil
+    end
+    if fakeSpeedDiedConnection then
+        fakeSpeedDiedConnection:Disconnect()
+        fakeSpeedDiedConnection = nil
+    end
+    isLinkedDrag = false
+    local offColor = Color3.fromRGB(0, 0, 0)
+    if linkButton1 then
+        linkButton1.BackgroundColor3 = offColor
+    end
+    if linkButton2 then
+        linkButton2.BackgroundColor3 = offColor
+    end
+    if linkButton3 then
+        linkButton3.BackgroundColor3 = offColor
     end
     isAlive = false
 end)
@@ -601,12 +658,12 @@ frame.Parent = screenGui
 -- Title bar for first GUI
 local titleBar = Instance.new("TextLabel")
 titleBar.Name = "TitleBar"
-titleBar.Size = UDim2.new(1, -30, 0, 30)
+titleBar.Size = UDim2.new(1, -60, 0, 30)
 titleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.Text = "OverDrive H: Tab-1"
 titleBar.Font = Enum.Font.SourceSansBold
-titleBar.TextSize = 17
+titleBar.TextSize = 16.5
 titleBar.Parent = frame
 
 -- Minimize button for first GUI
@@ -620,6 +677,18 @@ minimizeButton.Text = "—"
 minimizeButton.Font = Enum.Font.SourceSansBold
 minimizeButton.TextSize = 18
 minimizeButton.Parent = frame
+
+-- Link button for first GUI
+local linkButton1 = Instance.new("TextButton")
+linkButton1.Name = "LinkButton1"
+linkButton1.Size = UDim2.new(0, 30, 0, 30)
+linkButton1.Position = UDim2.new(1, -60, 0, 0)
+linkButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+linkButton1.TextColor3 = Color3.fromRGB(255, 255, 255)
+linkButton1.Text = "L"
+linkButton1.Font = Enum.Font.SourceSansBold
+linkButton1.TextSize = 14
+linkButton1.Parent = frame
 
 -- Add the first button (Infinite Jump)
 local button1 = Instance.new("TextButton")
@@ -672,7 +741,7 @@ button3.MouseButton1Click:Connect(function()
     local character = player.Character
     if character and character:FindFirstChild("Humanoid") then
         local humanoid = character.Humanoid
-        humanoid.JumpPower = 165
+        humanoid.JumpPower = 160
         wait(0.7)
         if character and character:FindFirstChild("Humanoid") then
             humanoid.JumpPower = 50.5
@@ -692,27 +761,7 @@ button4.Font = Enum.Font.SourceSansBold
 button4.TextSize = 18.5
 button4.Parent = frame
 
-button4.MouseButton1Click:Connect(function()
-    local character = player.Character
-    if character and character:FindFirstChild("Humanoid") then
-        local humanoid = character.Humanoid
-        local stateConn = humanoid.StateChanged:Connect(function(oldState, newState)
-            if newState == Enum.HumanoidStateType.Freefall then
-                humanoid.WalkSpeed = 75
-            elseif newState == Enum.HumanoidStateType.Landed then
-                humanoid.WalkSpeed = 17.4
-            end
-        end)
-        if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
-            humanoid.WalkSpeed = 75
-        end
-        humanoid.Died:Connect(function()
-            if stateConn then
-                stateConn:Disconnect()
-            end
-        end)
-    end
-end)
+button4.MouseButton1Click:Connect(toggleFakeSpeed)
 
 -- Add the fifth button (Invis Toggle)
 local button5 = Instance.new("TextButton")
@@ -784,12 +833,12 @@ airStrafeFrame.Parent = airStrafeGui
 -- Title bar for Air Strafe GUI
 local airStrafeTitleBar = Instance.new("TextLabel")
 airStrafeTitleBar.Name = "TitleBar"
-airStrafeTitleBar.Size = UDim2.new(1, -30, 0, 30)
+airStrafeTitleBar.Size = UDim2.new(1, -60, 0, 30)
 airStrafeTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 airStrafeTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 airStrafeTitleBar.Text = "OverDrive H: Tab-2"
 airStrafeTitleBar.Font = Enum.Font.SourceSansBold
-airStrafeTitleBar.TextSize = 17
+airStrafeTitleBar.TextSize = 16.5
 airStrafeTitleBar.Parent = airStrafeFrame
 
 -- Minimize button for Air Strafe GUI
@@ -803,6 +852,18 @@ airStrafeMinimizeButton.Text = "—"
 airStrafeMinimizeButton.Font = Enum.Font.SourceSansBold
 airStrafeMinimizeButton.TextSize = 18
 airStrafeMinimizeButton.Parent = airStrafeFrame
+
+-- Link button for Air Strafe GUI
+local linkButton2 = Instance.new("TextButton")
+linkButton2.Name = "LinkButton2"
+linkButton2.Size = UDim2.new(0, 30, 0, 30)
+linkButton2.Position = UDim2.new(1, -60, 0, 0)
+linkButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+linkButton2.TextColor3 = Color3.fromRGB(255, 255, 255)
+linkButton2.Text = "L"
+linkButton2.Font = Enum.Font.SourceSansBold
+linkButton2.TextSize = 14
+linkButton2.Parent = airStrafeFrame
 
 -- Add the Air Strafe button
 local airStrafeButton = Instance.new("TextButton")
@@ -912,34 +973,34 @@ tweenRotate180Button.MouseButton1Click:Connect(function()
     rotate180Button.TextColor3 = Color3.fromRGB(255, 255, 255)
 end)
 
--- Create the third ScreenGui (Touch Fling, Noclip, and Reach GUI)
+-- Create the third ScreenGui (Noclip and Reach GUI)
 local touchFlingGui = Instance.new("ScreenGui")
 touchFlingGui.Name = "TouchFlingGui"
 touchFlingGui.ResetOnSpawn = false
 touchFlingGui.Parent = playerGui
 
--- Create the draggable Frame for Touch Fling GUI
+-- Create the draggable Frame for Noclip and Reach GUI
 local touchFlingFrame = Instance.new("Frame")
 touchFlingFrame.Name = "TouchFlingFrame"
-touchFlingFrame.Size = UDim2.new(0, 200, 0, 180)
+touchFlingFrame.Size = UDim2.new(0, 200, 0, 130) -- Reduced height for two buttons
 touchFlingFrame.Position = UDim2.new(0.5, -100, 0.5, 300)
 touchFlingFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 touchFlingFrame.BorderSizePixel = 0
 touchFlingFrame.Active = true
 touchFlingFrame.Parent = touchFlingGui
 
--- Title bar for Touch Fling GUI
+-- Title bar for Noclip and Reach GUI
 local touchFlingTitleBar = Instance.new("TextLabel")
 touchFlingTitleBar.Name = "TitleBar"
-touchFlingTitleBar.Size = UDim2.new(1, -30, 0, 30)
+touchFlingTitleBar.Size = UDim2.new(1, -60, 0, 30)
 touchFlingTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 touchFlingTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 touchFlingTitleBar.Text = "OverDrive H: Tab-3"
 touchFlingTitleBar.Font = Enum.Font.SourceSansBold
-touchFlingTitleBar.TextSize = 17
+touchFlingTitleBar.TextSize = 16.5
 touchFlingTitleBar.Parent = touchFlingFrame
 
--- Minimize button for Touch Fling GUI
+-- Minimize button for Noclip and Reach GUI
 local touchFlingMinimizeButton = Instance.new("TextButton")
 touchFlingMinimizeButton.Name = "MinimizeButton"
 touchFlingMinimizeButton.Size = UDim2.new(0, 30, 0, 30)
@@ -951,36 +1012,23 @@ touchFlingMinimizeButton.Font = Enum.Font.SourceSansBold
 touchFlingMinimizeButton.TextSize = 18
 touchFlingMinimizeButton.Parent = touchFlingFrame
 
--- Add the Touch Fling button
-local touchFlingButton = Instance.new("TextButton")
-touchFlingButton.Name = "TouchFlingButton"
-touchFlingButton.Size = UDim2.new(1, 0, 0, 50)
-touchFlingButton.Position = UDim2.new(0, 0, 0, 30)
-touchFlingButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-touchFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-touchFlingButton.Text = "Touch Fling: OFF"
-touchFlingButton.Font = Enum.Font.SourceSansBold
-touchFlingButton.TextSize = 18.5
-touchFlingButton.Parent = touchFlingFrame
-
--- Touch Fling button click functionality
-touchFlingButton.MouseButton1Click:Connect(function()
-    hiddenFling = not hiddenFling
-    touchFlingButton.Text = "Touch Fling: " .. (hiddenFling and "ON" or "OFF")
-    touchFlingButton.TextColor3 = hiddenFling and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 255, 255)
-    if hiddenFling then
-        flingThread = coroutine.create(fling)
-        coroutine.resume(flingThread)
-    else
-        hiddenFling = false
-    end
-end)
+-- Link button for Noclip and Reach GUI
+local linkButton3 = Instance.new("TextButton")
+linkButton3.Name = "LinkButton3"
+linkButton3.Size = UDim2.new(0, 30, 0, 30)
+linkButton3.Position = UDim2.new(1, -60, 0, 0)
+linkButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+linkButton3.TextColor3 = Color3.fromRGB(255, 255, 255)
+linkButton3.Text = "L"
+linkButton3.Font = Enum.Font.SourceSansBold
+linkButton3.TextSize = 14
+linkButton3.Parent = touchFlingFrame
 
 -- Add the Noclip button
 local noclipButton = Instance.new("TextButton")
 noclipButton.Name = "NoclipButton"
 noclipButton.Size = UDim2.new(1, 0, 0, 50)
-noclipButton.Position = UDim2.new(0, 0, 0, 80)
+noclipButton.Position = UDim2.new(0, 0, 0, 30)
 noclipButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 noclipButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 noclipButton.Text = "Noclip"
@@ -995,7 +1043,7 @@ noclipButton.MouseButton1Click:Connect(toggleNoclip)
 local reachButton = Instance.new("TextButton")
 reachButton.Name = "ReachButton"
 reachButton.Size = UDim2.new(1, 0, 0, 50)
-reachButton.Position = UDim2.new(0, 0, 0, 130)
+reachButton.Position = UDim2.new(0, 0, 0, 80)
 reachButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 reachButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 reachButton.Text = "KillAura"
@@ -1005,6 +1053,19 @@ reachButton.Parent = touchFlingFrame
 
 -- Reach button click functionality
 reachButton.MouseButton1Click:Connect(toggleReach)
+
+-- Link button functionality (shared for all)
+local function toggleLinkedDrag()
+    isLinkedDrag = not isLinkedDrag
+    local color = isLinkedDrag and Color3.fromRGB(0, 255, 0) or Color3.fromRGB(0, 0, 0)
+    if linkButton1 then linkButton1.BackgroundColor3 = color end
+    if linkButton2 then linkButton2.BackgroundColor3 = color end
+    if linkButton3 then linkButton3.BackgroundColor3 = color end
+end
+
+linkButton1.MouseButton1Click:Connect(toggleLinkedDrag)
+linkButton2.MouseButton1Click:Connect(toggleLinkedDrag)
+linkButton3.MouseButton1Click:Connect(toggleLinkedDrag)
 
 -- Create the Toggle Button ScreenGui
 local toggleGui = Instance.new("ScreenGui")
@@ -1100,15 +1161,14 @@ airStrafeMinimizeButton.MouseButton1Click:Connect(function()
     end
 end)
 
--- Minimize button functionality for Touch Fling GUI
+-- Minimize button functionality for Noclip and Reach GUI
 local isTouchFlingContentVisible = true
 touchFlingMinimizeButton.MouseButton1Click:Connect(function()
     isTouchFlingContentVisible = not isTouchFlingContentVisible
-    touchFlingButton.Visible = isTouchFlingContentVisible
     noclipButton.Visible = isTouchFlingContentVisible
     reachButton.Visible = isTouchFlingContentVisible
     if isTouchFlingContentVisible then
-        touchFlingFrame.Size = UDim2.new(0, 200, 0, 180)
+        touchFlingFrame.Size = UDim2.new(0, 200, 0, 130)
         touchFlingMinimizeButton.Text = "—"
     else
         touchFlingFrame.Size = UDim2.new(0, 200, 0, 30)
@@ -1127,6 +1187,12 @@ frame.InputBegan:Connect(function(input)
         dragging = true
         dragStart = input.Position
         startPos = frame.Position
+        
+        if isLinkedDrag then
+            linkedFrameStart = frame.Position
+            linkedAirStrafeStart = airStrafeFrame.Position
+            linkedTouchStart = touchFlingFrame.Position
+        end
         
         local connection
         connection = input.Changed:Connect(function()
@@ -1147,7 +1213,12 @@ end)
 UserInputService.InputChanged:Connect(function(input)
     if input == dragInput and dragging then
         local delta = input.Position - dragStart
-        frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        frame.Position = newPos
+        if isLinkedDrag then
+            airStrafeFrame.Position = UDim2.new(linkedAirStrafeStart.X.Scale, linkedAirStrafeStart.X.Offset + delta.X, linkedAirStrafeStart.Y.Scale, linkedAirStrafeStart.Y.Offset + delta.Y)
+            touchFlingFrame.Position = UDim2.new(linkedTouchStart.X.Scale, linkedTouchStart.X.Offset + delta.X, linkedTouchStart.Y.Scale, linkedTouchStart.Y.Offset + delta.Y)
+        end
     end
 end)
 
@@ -1162,6 +1233,12 @@ airStrafeFrame.InputBegan:Connect(function(input)
         airStrafeDragging = true
         airStrafeDragStart = input.Position
         airStrafeStartPos = airStrafeFrame.Position
+        
+        if isLinkedDrag then
+            linkedFrameStart = frame.Position
+            linkedAirStrafeStart = airStrafeFrame.Position
+            linkedTouchStart = touchFlingFrame.Position
+        end
         
         local connection
         connection = input.Changed:Connect(function()
@@ -1182,11 +1259,16 @@ end)
 UserInputService.InputChanged:Connect(function(input)
     if input == airStrafeDragInput and airStrafeDragging then
         local delta = input.Position - airStrafeDragStart
-        airStrafeFrame.Position = UDim2.new(airStrafeStartPos.X.Scale, airStrafeStartPos.X.Offset + delta.X, airStrafeStartPos.Y.Scale, airStrafeStartPos.Y.Offset + delta.Y)
+        local newPos = UDim2.new(airStrafeStartPos.X.Scale, airStrafeStartPos.X.Offset + delta.X, airStrafeStartPos.Y.Scale, airStrafeStartPos.Y.Offset + delta.Y)
+        airStrafeFrame.Position = newPos
+        if isLinkedDrag then
+            frame.Position = UDim2.new(linkedFrameStart.X.Scale, linkedFrameStart.X.Offset + delta.X, linkedFrameStart.Y.Scale, linkedFrameStart.Y.Offset + delta.Y)
+            touchFlingFrame.Position = UDim2.new(linkedTouchStart.X.Scale, linkedTouchStart.X.Offset + delta.X, linkedTouchStart.Y.Scale, linkedTouchStart.Y.Offset + delta.Y)
+        end
     end
 end)
 
--- Dragging functionality for Touch Fling GUI
+-- Dragging functionality for Noclip and Reach GUI
 local touchFlingDragging = false
 local touchFlingDragInput
 local touchFlingDragStart
@@ -1197,6 +1279,12 @@ touchFlingFrame.InputBegan:Connect(function(input)
         touchFlingDragging = true
         touchFlingDragStart = input.Position
         touchFlingStartPos = touchFlingFrame.Position
+        
+        if isLinkedDrag then
+            linkedFrameStart = frame.Position
+            linkedAirStrafeStart = airStrafeFrame.Position
+            linkedTouchStart = touchFlingFrame.Position
+        end
         
         local connection
         connection = input.Changed:Connect(function()
@@ -1217,7 +1305,12 @@ end)
 UserInputService.InputChanged:Connect(function(input)
     if input == touchFlingDragInput and touchFlingDragging then
         local delta = input.Position - touchFlingDragStart
-        touchFlingFrame.Position = UDim2.new(touchFlingStartPos.X.Scale, touchFlingStartPos.X.Offset + delta.X, touchFlingStartPos.Y.Scale, touchFlingStartPos.Y.Offset + delta.Y)
+        local newPos = UDim2.new(touchFlingStartPos.X.Scale, touchFlingStartPos.X.Offset + delta.X, touchFlingStartPos.Y.Scale, touchFlingStartPos.Y.Offset + delta.Y)
+        touchFlingFrame.Position = newPos
+        if isLinkedDrag then
+            frame.Position = UDim2.new(linkedFrameStart.X.Scale, linkedFrameStart.X.Offset + delta.X, linkedFrameStart.Y.Scale, linkedFrameStart.Y.Offset + delta.Y)
+            airStrafeFrame.Position = UDim2.new(linkedAirStrafeStart.X.Scale, linkedAirStrafeStart.X.Offset + delta.X, linkedAirStrafeStart.Y.Scale, linkedAirStrafeStart.Y.Offset + delta.Y)
+        end
     end
 end)
 
@@ -1255,6 +1348,3 @@ UserInputService.InputChanged:Connect(function(input)
         toggleButton.Position = UDim2.new(toggleStartPos.X.Scale, toggleStartPos.X.Offset + delta.X, toggleStartPos.Y.Scale, toggleStartPos.Y.Offset + delta.Y)
     end
 end)
-
--- Print credit message
-print("sub to DuplexScripts")
