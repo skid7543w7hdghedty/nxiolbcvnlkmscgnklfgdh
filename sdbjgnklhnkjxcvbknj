@@ -663,7 +663,7 @@ titleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.Text = "OverDrive H: Tab-1"
 titleBar.Font = Enum.Font.SourceSansBold
-titleBar.TextSize = 16.5
+titleBar.TextSize = 13.5
 titleBar.Parent = frame
 
 -- Minimize button for first GUI
@@ -838,7 +838,7 @@ airStrafeTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 airStrafeTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 airStrafeTitleBar.Text = "OverDrive H: Tab-2"
 airStrafeTitleBar.Font = Enum.Font.SourceSansBold
-airStrafeTitleBar.TextSize = 16.5
+airStrafeTitleBar.TextSize = 13.5
 airStrafeTitleBar.Parent = airStrafeFrame
 
 -- Minimize button for Air Strafe GUI
@@ -997,7 +997,7 @@ touchFlingTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 touchFlingTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 touchFlingTitleBar.Text = "OverDrive H: Tab-3"
 touchFlingTitleBar.Font = Enum.Font.SourceSansBold
-touchFlingTitleBar.TextSize = 16.5
+touchFlingTitleBar.TextSize = 13.5
 touchFlingTitleBar.Parent = touchFlingFrame
 
 -- Minimize button for Noclip and Reach GUI
