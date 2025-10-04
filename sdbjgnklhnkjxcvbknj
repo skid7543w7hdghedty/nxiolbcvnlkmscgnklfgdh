@@ -452,13 +452,13 @@ local function toggleFakeSpeed()
         if fakeSpeedEnabled then
             fakeSpeedConnection = humanoid.StateChanged:Connect(function(oldState, newState)
                 if newState == Enum.HumanoidStateType.Freefall then
-                    humanoid.WalkSpeed = 150
+                    humanoid.WalkSpeed = 100
                 elseif newState == Enum.HumanoidStateType.Landed then
                     humanoid.WalkSpeed = 18
                 end
             end)
             if humanoid:GetState() == Enum.HumanoidStateType.Freefall then
-                humanoid.WalkSpeed = 150
+                humanoid.WalkSpeed = 100
             end
             fakeSpeedDiedConnection = humanoid.Died:Connect(function()
                 if fakeSpeedConnection then
@@ -471,7 +471,6 @@ local function toggleFakeSpeed()
                 end
                 fakeSpeedEnabled = false
                 if button4 then
-                    button4.Text = "Fake Speed: OFF"
                 end
             end)
         else
@@ -493,6 +492,11 @@ local isLinkedDrag = false
 local linkedFrameStart
 local linkedAirStrafeStart
 local linkedTouchStart
+
+-- Lock drag variables
+local isFrameLocked = false
+local isAirStrafeLocked = false
+local isTouchFlingLocked = false
 
 -- Handle camera to ensure first-person compatibility
 local function updateCamera()
@@ -554,7 +558,6 @@ local function onCharacterAdded(char)
         end
         fakeSpeedEnabled = false
         if button4 then
-            button4.Text = "Fake Speed: OFF"
         end
         if fakeSpeedConnection then
             fakeSpeedConnection:Disconnect()
@@ -574,6 +577,21 @@ local function onCharacterAdded(char)
         end
         if linkButton3 then
             linkButton3.BackgroundColor3 = offColor
+        end
+        isFrameLocked = false
+        if lockButton1 then
+            lockButton1.Text = "🔓"
+            lockButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        end
+        isAirStrafeLocked = false
+        if lockButton2 then
+            lockButton2.Text = "🔓"
+            lockButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+        end
+        isTouchFlingLocked = false
+        if lockButton3 then
+            lockButton3.Text = "🔓"
+            lockButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         end
         isAlive = false
     end)
@@ -611,7 +629,6 @@ player.CharacterRemoving:Connect(function()
     end
     fakeSpeedEnabled = false
     if button4 then
-        button4.Text = "Fake Speed: OFF"
     end
     if fakeSpeedConnection then
         fakeSpeedConnection:Disconnect()
@@ -631,6 +648,21 @@ player.CharacterRemoving:Connect(function()
     end
     if linkButton3 then
         linkButton3.BackgroundColor3 = offColor
+    end
+    isFrameLocked = false
+    if lockButton1 then
+        lockButton1.Text = "🔓"
+        lockButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    end
+    isAirStrafeLocked = false
+    if lockButton2 then
+        lockButton2.Text = "🔓"
+        lockButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    end
+    isTouchFlingLocked = false
+    if lockButton3 then
+        lockButton3.Text = "🔓"
+        lockButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     end
     isAlive = false
 end)
@@ -658,13 +690,25 @@ frame.Parent = screenGui
 -- Title bar for first GUI
 local titleBar = Instance.new("TextLabel")
 titleBar.Name = "TitleBar"
-titleBar.Size = UDim2.new(1, -60, 0, 30)
+titleBar.Size = UDim2.new(1, -90, 0, 30)
 titleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.Text = "OverDrive H: Tab-1"
 titleBar.Font = Enum.Font.SourceSansBold
-titleBar.TextSize = 13.5
+titleBar.TextSize = 10
 titleBar.Parent = frame
+
+-- Lock button for first GUI
+local lockButton1 = Instance.new("TextButton")
+lockButton1.Name = "LockButton1"
+lockButton1.Size = UDim2.new(0, 30, 0, 30)
+lockButton1.Position = UDim2.new(1, -90, 0, 0)
+lockButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+lockButton1.TextColor3 = Color3.fromRGB(255, 255, 255)
+lockButton1.Text = "🔓"
+lockButton1.Font = Enum.Font.SourceSansBold
+lockButton1.TextSize = 18
+lockButton1.Parent = frame
 
 -- Minimize button for first GUI
 local minimizeButton = Instance.new("TextButton")
@@ -756,9 +800,9 @@ button4.Size = UDim2.new(1, 0, 0, 50)
 button4.Position = UDim2.new(0, 0, 0, 180)
 button4.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 button4.TextColor3 = Color3.fromRGB(255, 255, 255)
-button4.Text = "Fake Speed Glitch"
+button4.Text = "Fake Speed Glitch (On/Off)"
 button4.Font = Enum.Font.SourceSansBold
-button4.TextSize = 18.5
+button4.TextSize = 13.5
 button4.Parent = frame
 
 button4.MouseButton1Click:Connect(toggleFakeSpeed)
@@ -833,13 +877,25 @@ airStrafeFrame.Parent = airStrafeGui
 -- Title bar for Air Strafe GUI
 local airStrafeTitleBar = Instance.new("TextLabel")
 airStrafeTitleBar.Name = "TitleBar"
-airStrafeTitleBar.Size = UDim2.new(1, -60, 0, 30)
+airStrafeTitleBar.Size = UDim2.new(1, -90, 0, 30)
 airStrafeTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 airStrafeTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 airStrafeTitleBar.Text = "OverDrive H: Tab-2"
 airStrafeTitleBar.Font = Enum.Font.SourceSansBold
-airStrafeTitleBar.TextSize = 13.5
+airStrafeTitleBar.TextSize = 10
 airStrafeTitleBar.Parent = airStrafeFrame
+
+-- Lock button for Air Strafe GUI
+local lockButton2 = Instance.new("TextButton")
+lockButton2.Name = "LockButton2"
+lockButton2.Size = UDim2.new(0, 30, 0, 30)
+lockButton2.Position = UDim2.new(1, -90, 0, 0)
+lockButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+lockButton2.TextColor3 = Color3.fromRGB(255, 255, 255)
+lockButton2.Text = "🔓"
+lockButton2.Font = Enum.Font.SourceSansBold
+lockButton2.TextSize = 18
+lockButton2.Parent = airStrafeFrame
 
 -- Minimize button for Air Strafe GUI
 local airStrafeMinimizeButton = Instance.new("TextButton")
@@ -992,13 +1048,25 @@ touchFlingFrame.Parent = touchFlingGui
 -- Title bar for Noclip and Reach GUI
 local touchFlingTitleBar = Instance.new("TextLabel")
 touchFlingTitleBar.Name = "TitleBar"
-touchFlingTitleBar.Size = UDim2.new(1, -60, 0, 30)
+touchFlingTitleBar.Size = UDim2.new(1, -90, 0, 30)
 touchFlingTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 touchFlingTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 touchFlingTitleBar.Text = "OverDrive H: Tab-3"
 touchFlingTitleBar.Font = Enum.Font.SourceSansBold
-touchFlingTitleBar.TextSize = 13.5
+touchFlingTitleBar.TextSize = 10
 touchFlingTitleBar.Parent = touchFlingFrame
+
+-- Lock button for Noclip and Reach GUI
+local lockButton3 = Instance.new("TextButton")
+lockButton3.Name = "LockButton3"
+lockButton3.Size = UDim2.new(0, 30, 0, 30)
+lockButton3.Position = UDim2.new(1, -90, 0, 0)
+lockButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+lockButton3.TextColor3 = Color3.fromRGB(255, 255, 255)
+lockButton3.Text = "🔓"
+lockButton3.Font = Enum.Font.SourceSansBold
+lockButton3.TextSize = 18
+lockButton3.Parent = touchFlingFrame
 
 -- Minimize button for Noclip and Reach GUI
 local touchFlingMinimizeButton = Instance.new("TextButton")
@@ -1031,7 +1099,7 @@ noclipButton.Size = UDim2.new(1, 0, 0, 50)
 noclipButton.Position = UDim2.new(0, 0, 0, 30)
 noclipButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 noclipButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-noclipButton.Text = "Noclip"
+noclipButton.Text = "Noclip (On/Off)"
 noclipButton.Font = Enum.Font.SourceSansBold
 noclipButton.TextSize = 18.5
 noclipButton.Parent = touchFlingFrame
@@ -1046,7 +1114,7 @@ reachButton.Size = UDim2.new(1, 0, 0, 50)
 reachButton.Position = UDim2.new(0, 0, 0, 80)
 reachButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 reachButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-reachButton.Text = "KillAura"
+reachButton.Text = "KillAura (On/Off)"
 reachButton.Font = Enum.Font.SourceSansBold
 reachButton.TextSize = 18.5
 reachButton.Parent = touchFlingFrame
@@ -1066,6 +1134,27 @@ end
 linkButton1.MouseButton1Click:Connect(toggleLinkedDrag)
 linkButton2.MouseButton1Click:Connect(toggleLinkedDrag)
 linkButton3.MouseButton1Click:Connect(toggleLinkedDrag)
+
+-- Lock button functionality for first GUI
+lockButton1.MouseButton1Click:Connect(function()
+    isFrameLocked = not isFrameLocked
+    lockButton1.Text = isFrameLocked and "🔒" or "🔓"
+    lockButton1.BackgroundColor3 = isFrameLocked and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0, 0, 0)
+end)
+
+-- Lock button functionality for second GUI
+lockButton2.MouseButton1Click:Connect(function()
+    isAirStrafeLocked = not isAirStrafeLocked
+    lockButton2.Text = isAirStrafeLocked and "🔒" or "🔓"
+    lockButton2.BackgroundColor3 = isAirStrafeLocked and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0, 0, 0)
+end)
+
+-- Lock button functionality for third GUI
+lockButton3.MouseButton1Click:Connect(function()
+    isTouchFlingLocked = not isTouchFlingLocked
+    lockButton3.Text = isTouchFlingLocked and "🔒" or "🔓"
+    lockButton3.BackgroundColor3 = isTouchFlingLocked and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0, 0, 0)
+end)
 
 -- Create the Toggle Button ScreenGui
 local toggleGui = Instance.new("ScreenGui")
@@ -1183,6 +1272,7 @@ local dragStart
 local startPos
 
 frame.InputBegan:Connect(function(input)
+    if isFrameLocked then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
@@ -1229,6 +1319,7 @@ local airStrafeDragStart
 local airStrafeStartPos
 
 airStrafeFrame.InputBegan:Connect(function(input)
+    if isAirStrafeLocked then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         airStrafeDragging = true
         airStrafeDragStart = input.Position
@@ -1275,6 +1366,7 @@ local touchFlingDragStart
 local touchFlingStartPos
 
 touchFlingFrame.InputBegan:Connect(function(input)
+    if isTouchFlingLocked then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         touchFlingDragging = true
         touchFlingDragStart = input.Position
