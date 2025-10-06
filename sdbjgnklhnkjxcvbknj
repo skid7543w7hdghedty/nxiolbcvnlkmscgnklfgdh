@@ -443,9 +443,8 @@ local fakeSpeedEnabled = false
 local fakeSpeedConnection = nil
 local fakeSpeedDiedConnection = nil
 
--- Fake Speed Glitch toggle function
-local function toggleFakeSpeed()
-    fakeSpeedEnabled = not fakeSpeedEnabled
+-- Fake Speed Glitch setup function
+local function setupFakeSpeed()
     local character = player.Character
     if character and character:FindFirstChild("Humanoid") then
         local humanoid = character.Humanoid
@@ -469,10 +468,10 @@ local function toggleFakeSpeed()
                     fakeSpeedDiedConnection:Disconnect()
                     fakeSpeedDiedConnection = nil
                 end
-                fakeSpeedEnabled = false
-                if button4 then
-                end
             end)
+            if button4 then
+                button4.Text = "Fake Speed: ON"
+            end
         else
             if fakeSpeedConnection then
                 fakeSpeedConnection:Disconnect()
@@ -483,8 +482,17 @@ local function toggleFakeSpeed()
                 fakeSpeedDiedConnection = nil
             end
             humanoid.WalkSpeed = 18
+            if button4 then
+                button4.Text = "Fake Speed: OFF"
+            end
         end
     end
+end
+
+-- Fake Speed Glitch toggle function
+local function toggleFakeSpeed()
+    fakeSpeedEnabled = not fakeSpeedEnabled
+    setupFakeSpeed()
 end
 
 -- Linked drag variables
@@ -512,6 +520,7 @@ local function onCharacterAdded(char)
     humanoid = char:WaitForChild("Humanoid")
     rootPart = char:WaitForChild("HumanoidRootPart")
     updateCamera()
+    setupFakeSpeed()  -- Re-setup Fake Speed if enabled
     humanoid.Died:Connect(function()
         wallhopToggle = false
         button2.Text = "Wallhop: OFF"
@@ -556,9 +565,6 @@ local function onCharacterAdded(char)
             reachConnection:Disconnect()
             reachConnection = nil
         end
-        fakeSpeedEnabled = false
-        if button4 then
-        end
         if fakeSpeedConnection then
             fakeSpeedConnection:Disconnect()
             fakeSpeedConnection = nil
@@ -566,32 +572,6 @@ local function onCharacterAdded(char)
         if fakeSpeedDiedConnection then
             fakeSpeedDiedConnection:Disconnect()
             fakeSpeedDiedConnection = nil
-        end
-        isLinkedDrag = false
-        local offColor = Color3.fromRGB(0, 0, 0)
-        if linkButton1 then
-            linkButton1.BackgroundColor3 = offColor
-        end
-        if linkButton2 then
-            linkButton2.BackgroundColor3 = offColor
-        end
-        if linkButton3 then
-            linkButton3.BackgroundColor3 = offColor
-        end
-        isFrameLocked = false
-        if lockButton1 then
-            lockButton1.Text = "🔓"
-            lockButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-        end
-        isAirStrafeLocked = false
-        if lockButton2 then
-            lockButton2.Text = "🔓"
-            lockButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-        end
-        isTouchFlingLocked = false
-        if lockButton3 then
-            lockButton3.Text = "🔓"
-            lockButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
         end
         isAlive = false
     end)
@@ -627,9 +607,6 @@ player.CharacterRemoving:Connect(function()
         reachConnection:Disconnect()
         reachConnection = nil
     end
-    fakeSpeedEnabled = false
-    if button4 then
-    end
     if fakeSpeedConnection then
         fakeSpeedConnection:Disconnect()
         fakeSpeedConnection = nil
@@ -637,32 +614,6 @@ player.CharacterRemoving:Connect(function()
     if fakeSpeedDiedConnection then
         fakeSpeedDiedConnection:Disconnect()
         fakeSpeedDiedConnection = nil
-    end
-    isLinkedDrag = false
-    local offColor = Color3.fromRGB(0, 0, 0)
-    if linkButton1 then
-        linkButton1.BackgroundColor3 = offColor
-    end
-    if linkButton2 then
-        linkButton2.BackgroundColor3 = offColor
-    end
-    if linkButton3 then
-        linkButton3.BackgroundColor3 = offColor
-    end
-    isFrameLocked = false
-    if lockButton1 then
-        lockButton1.Text = "🔓"
-        lockButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    end
-    isAirStrafeLocked = false
-    if lockButton2 then
-        lockButton2.Text = "🔓"
-        lockButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-    end
-    isTouchFlingLocked = false
-    if lockButton3 then
-        lockButton3.Text = "🔓"
-        lockButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
     end
     isAlive = false
 end)
@@ -680,8 +631,8 @@ screenGui.Parent = playerGui
 -- Create the draggable Frame for first GUI
 local frame = Instance.new("Frame")
 frame.Name = "DraggableFrame"
-frame.Size = UDim2.new(0, 200, 0, 280)
-frame.Position = UDim2.new(0.5, -100, 0.5, -100)
+frame.Size = UDim2.new(0, 220, 0, 280)
+frame.Position = UDim2.new(0.5, -110, 0.5, -100)
 frame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 frame.BorderSizePixel = 0
 frame.Active = true
@@ -690,19 +641,19 @@ frame.Parent = screenGui
 -- Title bar for first GUI
 local titleBar = Instance.new("TextLabel")
 titleBar.Name = "TitleBar"
-titleBar.Size = UDim2.new(1, -90, 0, 30)
+titleBar.Size = UDim2.new(1, -120, 0, 30)
 titleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleBar.Text = "OverDrive H: Tab-1"
+titleBar.Text = "Opengl H: Tab-1"
 titleBar.Font = Enum.Font.SourceSansBold
-titleBar.TextSize = 10
+titleBar.TextSize = 11.5
 titleBar.Parent = frame
 
 -- Lock button for first GUI
 local lockButton1 = Instance.new("TextButton")
 lockButton1.Name = "LockButton1"
 lockButton1.Size = UDim2.new(0, 30, 0, 30)
-lockButton1.Position = UDim2.new(1, -90, 0, 0)
+lockButton1.Position = UDim2.new(1, -120, 0, 0)
 lockButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 lockButton1.TextColor3 = Color3.fromRGB(255, 255, 255)
 lockButton1.Text = "🔓"
@@ -714,7 +665,7 @@ lockButton1.Parent = frame
 local minimizeButton = Instance.new("TextButton")
 minimizeButton.Name = "MinimizeButton"
 minimizeButton.Size = UDim2.new(0, 30, 0, 30)
-minimizeButton.Position = UDim2.new(1, -30, 0, 0)
+minimizeButton.Position = UDim2.new(1, -60, 0, 0)
 minimizeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 minimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 minimizeButton.Text = "—"
@@ -722,14 +673,30 @@ minimizeButton.Font = Enum.Font.SourceSansBold
 minimizeButton.TextSize = 18
 minimizeButton.Parent = frame
 
+-- Close button for first GUI (new button, positioned next to Minimize as the rightmost/first in the new sequence)
+local closeButton1 = Instance.new("TextButton")
+closeButton1.Name = "CloseButton1"
+closeButton1.Size = UDim2.new(0, 30, 0, 30)
+closeButton1.Position = UDim2.new(1, -30, 0, 0)
+closeButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+closeButton1.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton1.Text = "X"
+closeButton1.Font = Enum.Font.SourceSansBold
+closeButton1.TextSize = 18
+closeButton1.Parent = frame
+
+closeButton1.MouseButton1Click:Connect(function()
+    screenGui:Destroy()
+end)
+
 -- Link button for first GUI
 local linkButton1 = Instance.new("TextButton")
 linkButton1.Name = "LinkButton1"
 linkButton1.Size = UDim2.new(0, 30, 0, 30)
-linkButton1.Position = UDim2.new(1, -60, 0, 0)
+linkButton1.Position = UDim2.new(1, -90, 0, 0)
 linkButton1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 linkButton1.TextColor3 = Color3.fromRGB(255, 255, 255)
-linkButton1.Text = "L"
+linkButton1.Text = "🗝️"
 linkButton1.Font = Enum.Font.SourceSansBold
 linkButton1.TextSize = 14
 linkButton1.Parent = frame
@@ -802,7 +769,7 @@ button4.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 button4.TextColor3 = Color3.fromRGB(255, 255, 255)
 button4.Text = "Fake Speed Glitch (On/Off)"
 button4.Font = Enum.Font.SourceSansBold
-button4.TextSize = 13.5
+button4.TextSize = 15
 button4.Parent = frame
 
 button4.MouseButton1Click:Connect(toggleFakeSpeed)
@@ -867,8 +834,8 @@ airStrafeGui.Parent = playerGui
 -- Create the draggable Frame for Air Strafe GUI
 local airStrafeFrame = Instance.new("Frame")
 airStrafeFrame.Name = "AirStrafeFrame"
-airStrafeFrame.Size = UDim2.new(0, 200, 0, 280)
-airStrafeFrame.Position = UDim2.new(0.5, -100, 0.5, 100)
+airStrafeFrame.Size = UDim2.new(0, 220, 0, 280)
+airStrafeFrame.Position = UDim2.new(0.5, -110, 0.5, 100)
 airStrafeFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 airStrafeFrame.BorderSizePixel = 0
 airStrafeFrame.Active = true
@@ -877,19 +844,19 @@ airStrafeFrame.Parent = airStrafeGui
 -- Title bar for Air Strafe GUI
 local airStrafeTitleBar = Instance.new("TextLabel")
 airStrafeTitleBar.Name = "TitleBar"
-airStrafeTitleBar.Size = UDim2.new(1, -90, 0, 30)
+airStrafeTitleBar.Size = UDim2.new(1, -120, 0, 30)
 airStrafeTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 airStrafeTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
-airStrafeTitleBar.Text = "OverDrive H: Tab-2"
+airStrafeTitleBar.Text = "Opengl H: Tab-2"
 airStrafeTitleBar.Font = Enum.Font.SourceSansBold
-airStrafeTitleBar.TextSize = 10
+airStrafeTitleBar.TextSize = 11.5
 airStrafeTitleBar.Parent = airStrafeFrame
 
 -- Lock button for Air Strafe GUI
 local lockButton2 = Instance.new("TextButton")
 lockButton2.Name = "LockButton2"
 lockButton2.Size = UDim2.new(0, 30, 0, 30)
-lockButton2.Position = UDim2.new(1, -90, 0, 0)
+lockButton2.Position = UDim2.new(1, -120, 0, 0)
 lockButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 lockButton2.TextColor3 = Color3.fromRGB(255, 255, 255)
 lockButton2.Text = "🔓"
@@ -901,7 +868,7 @@ lockButton2.Parent = airStrafeFrame
 local airStrafeMinimizeButton = Instance.new("TextButton")
 airStrafeMinimizeButton.Name = "MinimizeButton"
 airStrafeMinimizeButton.Size = UDim2.new(0, 30, 0, 30)
-airStrafeMinimizeButton.Position = UDim2.new(1, -30, 0, 0)
+airStrafeMinimizeButton.Position = UDim2.new(1, -60, 0, 0)
 airStrafeMinimizeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 airStrafeMinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 airStrafeMinimizeButton.Text = "—"
@@ -909,14 +876,30 @@ airStrafeMinimizeButton.Font = Enum.Font.SourceSansBold
 airStrafeMinimizeButton.TextSize = 18
 airStrafeMinimizeButton.Parent = airStrafeFrame
 
+-- Close button for Air Strafe GUI (new button, positioned next to Minimize as the rightmost/first in the new sequence)
+local closeButton2 = Instance.new("TextButton")
+closeButton2.Name = "CloseButton2"
+closeButton2.Size = UDim2.new(0, 30, 0, 30)
+closeButton2.Position = UDim2.new(1, -30, 0, 0)
+closeButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+closeButton2.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton2.Text = "X"
+closeButton2.Font = Enum.Font.SourceSansBold
+closeButton2.TextSize = 18
+closeButton2.Parent = airStrafeFrame
+
+closeButton2.MouseButton1Click:Connect(function()
+    airStrafeGui:Destroy()
+end)
+
 -- Link button for Air Strafe GUI
 local linkButton2 = Instance.new("TextButton")
 linkButton2.Name = "LinkButton2"
 linkButton2.Size = UDim2.new(0, 30, 0, 30)
-linkButton2.Position = UDim2.new(1, -60, 0, 0)
+linkButton2.Position = UDim2.new(1, -90, 0, 0)
 linkButton2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 linkButton2.TextColor3 = Color3.fromRGB(255, 255, 255)
-linkButton2.Text = "L"
+linkButton2.Text = "🗝️"
 linkButton2.Font = Enum.Font.SourceSansBold
 linkButton2.TextSize = 14
 linkButton2.Parent = airStrafeFrame
@@ -1038,8 +1021,8 @@ touchFlingGui.Parent = playerGui
 -- Create the draggable Frame for Noclip and Reach GUI
 local touchFlingFrame = Instance.new("Frame")
 touchFlingFrame.Name = "TouchFlingFrame"
-touchFlingFrame.Size = UDim2.new(0, 200, 0, 130) -- Reduced height for two buttons
-touchFlingFrame.Position = UDim2.new(0.5, -100, 0.5, 300)
+touchFlingFrame.Size = UDim2.new(0, 220, 0, 180) -- Increased height for three buttons
+touchFlingFrame.Position = UDim2.new(0.5, -110, 0.5, 300)
 touchFlingFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 touchFlingFrame.BorderSizePixel = 0
 touchFlingFrame.Active = true
@@ -1048,19 +1031,19 @@ touchFlingFrame.Parent = touchFlingGui
 -- Title bar for Noclip and Reach GUI
 local touchFlingTitleBar = Instance.new("TextLabel")
 touchFlingTitleBar.Name = "TitleBar"
-touchFlingTitleBar.Size = UDim2.new(1, -90, 0, 30)
+touchFlingTitleBar.Size = UDim2.new(1, -120, 0, 30)
 touchFlingTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 touchFlingTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
-touchFlingTitleBar.Text = "OverDrive H: Tab-3"
+touchFlingTitleBar.Text = "Opengl H: Tab-3"
 touchFlingTitleBar.Font = Enum.Font.SourceSansBold
-touchFlingTitleBar.TextSize = 10
+touchFlingTitleBar.TextSize = 11.5
 touchFlingTitleBar.Parent = touchFlingFrame
 
 -- Lock button for Noclip and Reach GUI
 local lockButton3 = Instance.new("TextButton")
 lockButton3.Name = "LockButton3"
 lockButton3.Size = UDim2.new(0, 30, 0, 30)
-lockButton3.Position = UDim2.new(1, -90, 0, 0)
+lockButton3.Position = UDim2.new(1, -120, 0, 0)
 lockButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 lockButton3.TextColor3 = Color3.fromRGB(255, 255, 255)
 lockButton3.Text = "🔓"
@@ -1072,7 +1055,7 @@ lockButton3.Parent = touchFlingFrame
 local touchFlingMinimizeButton = Instance.new("TextButton")
 touchFlingMinimizeButton.Name = "MinimizeButton"
 touchFlingMinimizeButton.Size = UDim2.new(0, 30, 0, 30)
-touchFlingMinimizeButton.Position = UDim2.new(1, -30, 0, 0)
+touchFlingMinimizeButton.Position = UDim2.new(1, -60, 0, 0)
 touchFlingMinimizeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 touchFlingMinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 touchFlingMinimizeButton.Text = "—"
@@ -1080,14 +1063,30 @@ touchFlingMinimizeButton.Font = Enum.Font.SourceSansBold
 touchFlingMinimizeButton.TextSize = 18
 touchFlingMinimizeButton.Parent = touchFlingFrame
 
+-- Close button for Noclip and Reach GUI (new button, positioned next to Minimize as the rightmost/first in the new sequence)
+local closeButton3 = Instance.new("TextButton")
+closeButton3.Name = "CloseButton3"
+closeButton3.Size = UDim2.new(0, 30, 0, 30)
+closeButton3.Position = UDim2.new(1, -30, 0, 0)
+closeButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+closeButton3.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton3.Text = "X"
+closeButton3.Font = Enum.Font.SourceSansBold
+closeButton3.TextSize = 18
+closeButton3.Parent = touchFlingFrame
+
+closeButton3.MouseButton1Click:Connect(function()
+    touchFlingGui:Destroy()
+end)
+
 -- Link button for Noclip and Reach GUI
 local linkButton3 = Instance.new("TextButton")
 linkButton3.Name = "LinkButton3"
 linkButton3.Size = UDim2.new(0, 30, 0, 30)
-linkButton3.Position = UDim2.new(1, -60, 0, 0)
+linkButton3.Position = UDim2.new(1, -90, 0, 0)
 linkButton3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 linkButton3.TextColor3 = Color3.fromRGB(255, 255, 255)
-linkButton3.Text = "L"
+linkButton3.Text = "🗝️"
 linkButton3.Font = Enum.Font.SourceSansBold
 linkButton3.TextSize = 14
 linkButton3.Parent = touchFlingFrame
@@ -1121,6 +1120,25 @@ reachButton.Parent = touchFlingFrame
 
 -- Reach button click functionality
 reachButton.MouseButton1Click:Connect(toggleReach)
+
+-- Add the Close All button (third button)
+local closeAllButton = Instance.new("TextButton")
+closeAllButton.Name = "CloseAllButton"
+closeAllButton.Size = UDim2.new(1, 0, 0, 50)
+closeAllButton.Position = UDim2.new(0, 0, 0, 130)
+closeAllButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+closeAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeAllButton.Text = "Destroy Gui"
+closeAllButton.Font = Enum.Font.SourceSansBold
+closeAllButton.TextSize = 18.5
+closeAllButton.Parent = touchFlingFrame
+
+closeAllButton.MouseButton1Click:Connect(function()
+    screenGui:Destroy()
+    airStrafeGui:Destroy()
+    touchFlingGui:Destroy()
+    toggleGui:Destroy()
+end)
 
 -- Link button functionality (shared for all)
 local function toggleLinkedDrag()
@@ -1183,16 +1201,16 @@ stroke.Color = Color3.fromRGB(255, 255, 255)
 stroke.Thickness = 2
 stroke.Parent = toggleButton
 
--- Add TextLabel for the "ODH" text
+-- Add TextLabel for the "OPGL" text
 local toggleText = Instance.new("TextLabel")
 toggleText.Name = "ToggleText"
 toggleText.Size = UDim2.new(1, 0, 1, 0)
 toggleText.Position = UDim2.new(0, 0, 0, 0)
 toggleText.BackgroundTransparency = 1
 toggleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleText.Text = "ODH"
+toggleText.Text = "OPGL"
 toggleText.Font = Enum.Font.SourceSansBold
-toggleText.TextSize = 18.5
+toggleText.TextSize = 17
 toggleText.Parent = toggleButton
 
 -- GUI visibility state
@@ -1210,7 +1228,7 @@ toggleButton.InputBegan:Connect(function(input)
         screenGui.Enabled = areGuisVisible
         airStrafeGui.Enabled = areGuisVisible
         touchFlingGui.Enabled = areGuisVisible
-        toggleText.Text = areGuisVisible and "ODH" or "ODH"
+        toggleText.Text = areGuisVisible and "OPGL" or "OPGL"
     end
 end)
 
@@ -1224,10 +1242,10 @@ minimizeButton.MouseButton1Click:Connect(function()
     button4.Visible = isContentVisible
     button5.Visible = isContentVisible
     if isContentVisible then
-        frame.Size = UDim2.new(0, 200, 0, 280)
+        frame.Size = UDim2.new(0, 220, 0, 280)
         minimizeButton.Text = "—"
     else
-        frame.Size = UDim2.new(0, 200, 0, 30)
+        frame.Size = UDim2.new(0, 220, 0, 30)
         minimizeButton.Text = "+"
     end
 end)
@@ -1242,10 +1260,10 @@ airStrafeMinimizeButton.MouseButton1Click:Connect(function()
     rotate180Button.Visible = isAirStrafeContentVisible
     tweenRotate180Button.Visible = isAirStrafeContentVisible
     if isAirStrafeContentVisible then
-        airStrafeFrame.Size = UDim2.new(0, 200, 0, 280)
+        airStrafeFrame.Size = UDim2.new(0, 220, 0, 280)
         airStrafeMinimizeButton.Text = "—"
     else
-        airStrafeFrame.Size = UDim2.new(0, 200, 0, 30)
+        airStrafeFrame.Size = UDim2.new(0, 220, 0, 30)
         airStrafeMinimizeButton.Text = "+"
     end
 end)
@@ -1256,11 +1274,12 @@ touchFlingMinimizeButton.MouseButton1Click:Connect(function()
     isTouchFlingContentVisible = not isTouchFlingContentVisible
     noclipButton.Visible = isTouchFlingContentVisible
     reachButton.Visible = isTouchFlingContentVisible
+    closeAllButton.Visible = isTouchFlingContentVisible
     if isTouchFlingContentVisible then
-        touchFlingFrame.Size = UDim2.new(0, 200, 0, 130)
+        touchFlingFrame.Size = UDim2.new(0, 220, 0, 180)
         touchFlingMinimizeButton.Text = "—"
     else
-        touchFlingFrame.Size = UDim2.new(0, 200, 0, 30)
+        touchFlingFrame.Size = UDim2.new(0, 220, 0, 30)
         touchFlingMinimizeButton.Text = "+"
     end
 end)
