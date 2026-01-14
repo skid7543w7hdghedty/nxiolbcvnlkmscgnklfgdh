@@ -7,9 +7,6 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
--- Touch fling gui credits to Duplex i added antifling
-loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/nbvcxnbvccvxb/refs/heads/main/dfshghkldfglk"))()
-
 -- Infinite jump variables
 local isEnabled = false
 local jumpRequestThisFrame = false
@@ -1077,11 +1074,13 @@ local isLinkedDrag = false
 local linkedFrameStart
 local linkedAirStrafeStart
 local linkedTouchStart
+local linkedFlingStart
 
 -- Lock drag variables
 local isFrameLocked = false
 local isAirStrafeLocked = false
 local isTouchFlingLocked = false
+local isFlingLocked = false
 
 -- Handle camera to ensure first-person compatibility
 local function updateCamera()
@@ -1142,6 +1141,7 @@ local function onCharacterAdded(char)
             reachConnection:Disconnect()
             reachConnection = nil
         end
+        fakeSpeedEnabled = false
         if fakeSpeedConnection then
             fakeSpeedConnection:Disconnect()
             fakeSpeedConnection = nil
@@ -1162,6 +1162,7 @@ local function onCharacterAdded(char)
             valueCalcAddedConnection:Disconnect()
             valueCalcAddedConnection = nil
         end
+        flingActive = false
         isAlive = false
     end)
 end
@@ -1216,6 +1217,7 @@ player.CharacterRemoving:Connect(function()
         valueCalcAddedConnection:Disconnect()
         valueCalcAddedConnection = nil
     end
+    flingActive = false
     isAlive = false
 end)
 
@@ -1245,7 +1247,7 @@ titleBar.Name = "TitleBar"
 titleBar.Size = UDim2.new(1, -120, 0, 30)
 titleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
-titleBar.Text = "Adrenalix X: T1"
+titleBar.Text = "Adrenalin X: T1"
 titleBar.Font = Enum.Font.SourceSansBold
 titleBar.TextSize = 12.5
 titleBar.Parent = frame
@@ -1274,7 +1276,7 @@ minimizeButton.Font = Enum.Font.SourceSansBold
 minimizeButton.TextSize = 18
 minimizeButton.Parent = frame
 
--- Close button for first GUI (new button, positioned next to Minimize as the rightmost/first in the new sequence)
+-- Close button for first GUI
 local closeButton1 = Instance.new("TextButton")
 closeButton1.Name = "CloseButton1"
 closeButton1.Size = UDim2.new(0, 30, 0, 30)
@@ -1477,7 +1479,7 @@ airStrafeMinimizeButton.Font = Enum.Font.SourceSansBold
 airStrafeMinimizeButton.TextSize = 18
 airStrafeMinimizeButton.Parent = airStrafeFrame
 
--- Close button for Air Strafe GUI (new button, positioned next to Minimize as the rightmost/first in the new sequence)
+-- Close button for Air Strafe GUI
 local closeButton2 = Instance.new("TextButton")
 closeButton2.Name = "CloseButton2"
 closeButton2.Size = UDim2.new(0, 30, 0, 30)
@@ -1622,7 +1624,7 @@ touchFlingGui.Parent = playerGui
 -- Create the draggable Frame for Noclip and Reach GUI
 local touchFlingFrame = Instance.new("Frame")
 touchFlingFrame.Name = "TouchFlingFrame"
-touchFlingFrame.Size = UDim2.new(0, 220, 0, 280) -- Increased height for five buttons
+touchFlingFrame.Size = UDim2.new(0, 220, 0, 280)
 touchFlingFrame.Position = UDim2.new(0.5, -110, 0.5, 300)
 touchFlingFrame.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 touchFlingFrame.BorderSizePixel = 0
@@ -1664,7 +1666,7 @@ touchFlingMinimizeButton.Font = Enum.Font.SourceSansBold
 touchFlingMinimizeButton.TextSize = 18
 touchFlingMinimizeButton.Parent = touchFlingFrame
 
--- Close button for Noclip and Reach GUI (new button, positioned next to Minimize as the rightmost/first in the new sequence)
+-- Close button for Noclip and Reach GUI
 local closeButton3 = Instance.new("TextButton")
 closeButton3.Name = "CloseButton3"
 closeButton3.Size = UDim2.new(0, 30, 0, 30)
@@ -1846,8 +1848,509 @@ closeAllButton.MouseButton1Click:Connect(function()
     screenGui:Destroy()
     airStrafeGui:Destroy()
     touchFlingGui:Destroy()
+    flingGui:Destroy()
     toggleGui:Destroy()
 end)
+
+-- Create the fourth ScreenGui (Multi Fling GUI)
+local flingGui = Instance.new("ScreenGui")
+flingGui.Name = "FlingGui"
+flingGui.ResetOnSpawn = false
+flingGui.Parent = playerGui
+
+-- Create the draggable Frame for Multi Fling GUI
+local flingFrame = Instance.new("Frame")
+flingFrame.Name = "FlingFrame"
+flingFrame.Size = UDim2.new(0, 300, 0, 400)
+flingFrame.Position = UDim2.new(0.5, -150, 0.5, 400)
+flingFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+flingFrame.BorderSizePixel = 0
+flingFrame.Active = true
+flingFrame.Parent = flingGui
+
+-- Title bar for Multi Fling GUI
+local flingTitleBar = Instance.new("TextLabel")
+flingTitleBar.Name = "TitleBar"
+flingTitleBar.Size = UDim2.new(1, -120, 0, 30)
+flingTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+flingTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
+flingTitleBar.Text = "Adrenalin X: T4"
+flingTitleBar.Font = Enum.Font.SourceSansBold
+flingTitleBar.TextSize = 13
+flingTitleBar.Parent = flingFrame
+
+-- Lock button for Multi Fling GUI
+local lockButton4 = Instance.new("TextButton")
+lockButton4.Name = "LockButton4"
+lockButton4.Size = UDim2.new(0, 30, 0, 30)
+lockButton4.Position = UDim2.new(1, -120, 0, 0)
+lockButton4.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+lockButton4.TextColor3 = Color3.fromRGB(255, 255, 255)
+lockButton4.Text = "🔓"
+lockButton4.Font = Enum.Font.SourceSansBold
+lockButton4.TextSize = 18
+lockButton4.Parent = flingFrame
+
+-- Minimize button for Multi Fling GUI
+local flingMinimizeButton = Instance.new("TextButton")
+flingMinimizeButton.Name = "MinimizeButton"
+flingMinimizeButton.Size = UDim2.new(0, 30, 0, 30)
+flingMinimizeButton.Position = UDim2.new(1, -60, 0, 0)
+flingMinimizeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+flingMinimizeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+flingMinimizeButton.Text = "—"
+flingMinimizeButton.Font = Enum.Font.SourceSansBold
+flingMinimizeButton.TextSize = 18
+flingMinimizeButton.Parent = flingFrame
+
+-- Close button for Multi Fling GUI
+local closeButton4 = Instance.new("TextButton")
+closeButton4.Name = "CloseButton4"
+closeButton4.Size = UDim2.new(0, 30, 0, 30)
+closeButton4.Position = UDim2.new(1, -30, 0, 0)
+closeButton4.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+closeButton4.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeButton4.Text = "X"
+closeButton4.Font = Enum.Font.SourceSansBold
+closeButton4.TextSize = 18
+closeButton4.Parent = flingFrame
+
+closeButton4.MouseButton1Click:Connect(function()
+    flingGui:Destroy()
+end)
+
+-- Link button for Multi Fling GUI
+local linkButton4 = Instance.new("TextButton")
+linkButton4.Name = "LinkButton4"
+linkButton4.Size = UDim2.new(0, 30, 0, 30)
+linkButton4.Position = UDim2.new(1, -90, 0, 0)
+linkButton4.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+linkButton4.TextColor3 = Color3.fromRGB(255, 255, 255)
+linkButton4.Text = "🗝️"
+linkButton4.Font = Enum.Font.SourceSansBold
+linkButton4.TextSize = 14
+linkButton4.Parent = flingFrame
+
+-- Status Label
+local statusLabel = Instance.new("TextLabel")
+statusLabel.Position = UDim2.new(0, 10, 0, 40)
+statusLabel.Size = UDim2.new(1, -20, 0, 25)
+statusLabel.BackgroundTransparency = 1
+statusLabel.Text = "Select targets to fling"
+statusLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+statusLabel.Font = Enum.Font.SourceSans
+statusLabel.TextSize = 16
+statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+statusLabel.Parent = flingFrame
+
+-- Player Selection Frame
+local selectionFrame = Instance.new("Frame")
+selectionFrame.Position = UDim2.new(0, 10, 0, 70)
+selectionFrame.Size = UDim2.new(1, -20, 0, 250)
+selectionFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+selectionFrame.BorderSizePixel = 0
+selectionFrame.Parent = flingFrame
+
+-- Player List ScrollFrame
+local playerScrollFrame = Instance.new("ScrollingFrame")
+playerScrollFrame.Position = UDim2.new(0, 5, 0, 5)
+playerScrollFrame.Size = UDim2.new(1, -10, 1, -10)
+playerScrollFrame.BackgroundTransparency = 1
+playerScrollFrame.BorderSizePixel = 0
+playerScrollFrame.ScrollBarThickness = 6
+playerScrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+playerScrollFrame.Parent = selectionFrame
+
+-- Start Fling Button
+local startButton = Instance.new("TextButton")
+startButton.Position = UDim2.new(0, 10, 0, 330)
+startButton.Size = UDim2.new(0.5, -15, 0, 40)
+startButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+startButton.BorderSizePixel = 0
+startButton.Text = "START FLING"
+startButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+startButton.Font = Enum.Font.SourceSansBold
+startButton.TextSize = 18
+startButton.Parent = flingFrame
+
+-- Stop Fling Button
+local stopButton = Instance.new("TextButton")
+stopButton.Position = UDim2.new(0.5, 5, 0, 330)
+stopButton.Size = UDim2.new(0.5, -15, 0, 40)
+stopButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+stopButton.BorderSizePixel = 0
+stopButton.Text = "STOP FLING"
+stopButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+stopButton.Font = Enum.Font.SourceSansBold
+stopButton.TextSize = 18
+stopButton.Parent = flingFrame
+
+-- Select All Button
+local selectAllButton = Instance.new("TextButton")
+selectAllButton.Position = UDim2.new(0, 10, 0, 380)
+selectAllButton.Size = UDim2.new(0.5, -15, 0, 30)
+selectAllButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+selectAllButton.BorderSizePixel = 0
+selectAllButton.Text = "SELECT ALL"
+selectAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+selectAllButton.Font = Enum.Font.SourceSans
+selectAllButton.TextSize = 14
+selectAllButton.Parent = flingFrame
+
+-- Deselect All Button
+local deselectAllButton = Instance.new("TextButton")
+deselectAllButton.Position = UDim2.new(0.5, 5, 0, 380)
+deselectAllButton.Size = UDim2.new(0.5, -15, 0, 30)
+deselectAllButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+deselectAllButton.BorderSizePixel = 0
+deselectAllButton.Text = "DESELECT ALL"
+deselectAllButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+deselectAllButton.Font = Enum.Font.SourceSans
+deselectAllButton.TextSize = 14
+deselectAllButton.Parent = flingFrame
+
+-- Multi-Fling variables and functions
+local selectedTargets = {}
+local playerCheckboxes = {}
+local flingActive = false
+
+getgenv().OldPos = nil
+getgenv().FPDH = workspace.FallenPartsDestroyHeight
+
+-- Refresh player list
+local function refreshPlayerList()
+    for _, child in pairs(playerScrollFrame:GetChildren()) do
+        child:Destroy()
+    end
+    playerCheckboxes = {}
+    
+    local playerList = Players:GetPlayers()
+    table.sort(playerList, function(a, b) return a.Name:lower() < b.Name:lower() end)
+    
+    local yPosition = 5
+    for _, plr in ipairs(playerList) do
+        if plr ~= player then
+            local playerEntry = Instance.new("Frame")
+            playerEntry.Size = UDim2.new(1, -10, 0, 30)
+            playerEntry.Position = UDim2.new(0, 5, 0, yPosition)
+            playerEntry.BackgroundColor3 = Color3.fromRGB(220, 220, 220)
+            playerEntry.BorderSizePixel = 0
+            playerEntry.Parent = playerScrollFrame
+            
+            local checkbox = Instance.new("TextButton")
+            checkbox.Size = UDim2.new(0, 24, 0, 24)
+            checkbox.Position = UDim2.new(0, 3, 0.5, -12)
+            checkbox.BackgroundColor3 = Color3.fromRGB(200, 200, 200)
+            checkbox.BorderSizePixel = 0
+            checkbox.Text = ""
+            checkbox.Parent = playerEntry
+            
+            local checkmark = Instance.new("TextLabel")
+            checkmark.Size = UDim2.new(1, 0, 1, 0)
+            checkmark.BackgroundTransparency = 1
+            checkmark.Text = "✓"
+            checkmark.TextColor3 = Color3.fromRGB(0, 128, 0)
+            checkmark.TextSize = 18
+            checkmark.Font = Enum.Font.SourceSansBold
+            checkmark.Visible = selectedTargets[plr.Name] ~= nil
+            checkmark.Parent = checkbox
+            
+            local nameLabel = Instance.new("TextLabel")
+            nameLabel.Size = UDim2.new(1, -35, 1, 0)
+            nameLabel.Position = UDim2.new(0, 30, 0, 0)
+            nameLabel.BackgroundTransparency = 1
+            nameLabel.Text = plr.Name
+            nameLabel.TextColor3 = Color3.fromRGB(0, 0, 0)
+            nameLabel.TextSize = 16
+            nameLabel.Font = Enum.Font.SourceSans
+            nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+            nameLabel.Parent = playerEntry
+            
+            local clickArea = Instance.new("TextButton")
+            clickArea.Size = UDim2.new(1, 0, 1, 0)
+            clickArea.BackgroundTransparency = 1
+            clickArea.Text = ""
+            clickArea.ZIndex = 2
+            clickArea.Parent = playerEntry
+            
+            clickArea.MouseButton1Click:Connect(function()
+                if selectedTargets[plr.Name] then
+                    selectedTargets[plr.Name] = nil
+                    checkmark.Visible = false
+                else
+                    selectedTargets[plr.Name] = plr
+                    checkmark.Visible = true
+                end
+                updateStatus()
+            end)
+            
+            playerCheckboxes[plr.Name] = {
+                Entry = playerEntry,
+                Checkmark = checkmark
+            }
+            
+            yPosition = yPosition + 35
+        end
+    end
+    
+    playerScrollFrame.CanvasSize = UDim2.new(0, 0, 0, yPosition + 5)
+end
+
+local function countSelectedTargets()
+    local count = 0
+    for _ in pairs(selectedTargets) do
+        count = count + 1
+    end
+    return count
+end
+
+local function updateStatus()
+    local count = countSelectedTargets()
+    if flingActive then
+        statusLabel.Text = "Flinging " .. count .. " target(s)"
+        statusLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+    else
+        statusLabel.Text = count .. " target(s) selected" 
+        statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    end
+end
+
+local function toggleAllPlayers(select)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr ~= player then
+            local cb = playerCheckboxes[plr.Name]
+            if cb then
+                if select then
+                    selectedTargets[plr.Name] = plr
+                    cb.Checkmark.Visible = true
+                else
+                    selectedTargets[plr.Name] = nil
+                    cb.Checkmark.Visible = false
+                end
+            end
+        end
+    end
+    updateStatus()
+end
+
+local function message(title, text, time)
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = title,
+        Text = text,
+        Duration = time or 5
+    })
+end
+
+local function SkidFling(TargetPlayer)
+    local Character = player.Character
+    local Humanoid = Character and Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Humanoid and Humanoid.RootPart
+    local TCharacter = TargetPlayer.Character
+    if not TCharacter then return end
+    
+    local THumanoid
+    local TRootPart
+    local THead
+    local Accessory
+    local Handle
+    if TCharacter:FindFirstChildOfClass("Humanoid") then
+        THumanoid = TCharacter:FindFirstChildOfClass("Humanoid")
+    end
+    if THumanoid and THumanoid.RootPart then
+        TRootPart = THumanoid.RootPart
+    end
+    if TCharacter:FindFirstChild("Head") then
+        THead = TCharacter.Head
+    end
+    if TCharacter:FindFirstChildOfClass("Accessory") then
+        Accessory = TCharacter:FindFirstChildOfClass("Accessory")
+    end
+    if Accessory and Accessory:FindFirstChild("Handle") then
+        Handle = Accessory.Handle
+    end
+    if Character and Humanoid and RootPart then
+        if RootPart.Velocity.Magnitude < 50 then
+            getgenv().OldPos = RootPart.CFrame
+        end
+        
+        if THumanoid and THumanoid.Sit then
+            return message("Error", TargetPlayer.Name .. " is sitting", 2)
+        end
+        
+        if THead then
+            workspace.CurrentCamera.CameraSubject = THead
+        elseif Handle then
+            workspace.CurrentCamera.CameraSubject = Handle
+        elseif THumanoid and TRootPart then
+            workspace.CurrentCamera.CameraSubject = THumanoid
+        end
+        
+        if not TCharacter:FindFirstChildWhichIsA("BasePart") then
+            return
+        end
+        
+        local FPos = function(BasePart, Pos, Ang)
+            RootPart.CFrame = CFrame.new(BasePart.Position) * Pos * Ang
+            Character:SetPrimaryPartCFrame(CFrame.new(BasePart.Position) * Pos * Ang)
+            RootPart.Velocity = Vector3.new(9e7, 9e7 * 10, 9e7)
+            RootPart.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+        end
+        
+        local SFBasePart = function(BasePart)
+            local TimeToWait = 2
+            local Time = tick()
+            local Angle = 0
+            repeat
+                if RootPart and THumanoid then
+                    if BasePart.Velocity.Magnitude < 50 then
+                        Angle = Angle + 100
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection * BasePart.Velocity.Magnitude / 1.25, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle),0 ,0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0) + THumanoid.MoveDirection, CFrame.Angles(math.rad(Angle), 0, 0))
+                        task.wait()
+                    else
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, -THumanoid.WalkSpeed), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, 1.5, THumanoid.WalkSpeed), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(math.rad(90), 0, 0))
+                        task.wait()
+                        FPos(BasePart, CFrame.new(0, -1.5, 0), CFrame.Angles(0, 0, 0))
+                        task.wait()
+                    end
+                end
+            until Time + TimeToWait < tick() or not flingActive
+        end
+        
+        workspace.FallenPartsDestroyHeight = 0/0
+        
+        local BV = Instance.new("BodyVelocity")
+        BV.Parent = RootPart
+        BV.Velocity = Vector3.new(0, 0, 0)
+        BV.MaxForce = Vector3.new(9e9, 9e9, 9e9)
+        
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, false)
+        
+        if TRootPart then
+            SFBasePart(TRootPart)
+        elseif THead then
+            SFBasePart(THead)
+        elseif Handle then
+            SFBasePart(Handle)
+        else
+            return message("Error", TargetPlayer.Name .. " has no valid parts", 2)
+        end
+        
+        BV:Destroy()
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
+        workspace.CurrentCamera.CameraSubject = Humanoid
+        
+        if getgenv().OldPos then
+            repeat
+                RootPart.CFrame = getgenv().OldPos * CFrame.new(0, .5, 0)
+                Character:SetPrimaryPartCFrame(getgenv().OldPos * CFrame.new(0, .5, 0))
+                Humanoid:ChangeState("GettingUp")
+                for _, part in pairs(Character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part.Velocity, part.RotVelocity = Vector3.new(), Vector3.new()
+                    end
+                end
+                task.wait()
+            until (RootPart.Position - getgenv().OldPos.p).Magnitude < 25
+            workspace.FallenPartsDestroyHeight = getgenv().FPDH
+        end
+    else
+        return message("Error", "Your character is not ready", 2)
+    end
+end
+
+local function startFling()
+    if flingActive then return end
+    
+    local count = countSelectedTargets()
+    if count == 0 then
+        statusLabel.Text = "No targets selected!"
+        task.wait(1)
+        updateStatus()
+        return
+    end
+    
+    flingActive = true
+    updateStatus()
+    message("Started", "Flinging " .. count .. " targets", 2)
+    
+    task.spawn(function()
+        while flingActive do
+            local validTargets = {}
+            
+            for name, plr in pairs(selectedTargets) do
+                if plr and plr.Parent then
+                    validTargets[name] = plr
+                else
+                    selectedTargets[name] = nil
+                    local cb = playerCheckboxes[name]
+                    if cb then
+                        cb.Checkmark.Visible = false
+                    end
+                end
+            end
+            
+            for _, plr in pairs(validTargets) do
+                if flingActive then
+                    SkidFling(plr)
+                    task.wait(0.1)
+                else
+                    break
+                end
+            end
+            
+            updateStatus()
+            task.wait(0.5)
+        end
+    end)
+end
+
+local function stopFling()
+    if not flingActive then return end
+    
+    flingActive = false
+    
+    updateStatus()
+    message("Stopped", "Fling has been stopped", 2)
+end
+
+startButton.MouseButton1Click:Connect(startFling)
+stopButton.MouseButton1Click:Connect(stopFling)
+selectAllButton.MouseButton1Click:Connect(function() toggleAllPlayers(true) end)
+deselectAllButton.MouseButton1Click:Connect(function() toggleAllPlayers(false) end)
+
+Players.PlayerAdded:Connect(refreshPlayerList)
+Players.PlayerRemoving:Connect(function(plr)
+    if selectedTargets[plr.Name] then
+        selectedTargets[plr.Name] = nil
+    end
+    refreshPlayerList()
+    updateStatus()
+end)
+
+refreshPlayerList()
+updateStatus()
+message("Loaded", "Multi Fling loaded!", 3)
 
 -- Link button functionality (shared for all)
 local function toggleLinkedDrag()
@@ -1856,11 +2359,13 @@ local function toggleLinkedDrag()
     if linkButton1 then linkButton1.BackgroundColor3 = color end
     if linkButton2 then linkButton2.BackgroundColor3 = color end
     if linkButton3 then linkButton3.BackgroundColor3 = color end
+    if linkButton4 then linkButton4.BackgroundColor3 = color end
 end
 
 linkButton1.MouseButton1Click:Connect(toggleLinkedDrag)
 linkButton2.MouseButton1Click:Connect(toggleLinkedDrag)
 linkButton3.MouseButton1Click:Connect(toggleLinkedDrag)
+linkButton4.MouseButton1Click:Connect(toggleLinkedDrag)
 
 -- Lock button functionality for first GUI
 lockButton1.MouseButton1Click:Connect(function()
@@ -1881,6 +2386,13 @@ lockButton3.MouseButton1Click:Connect(function()
     isTouchFlingLocked = not isTouchFlingLocked
     lockButton3.Text = isTouchFlingLocked and "🔒" or "🔓"
     lockButton3.BackgroundColor3 = isTouchFlingLocked and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0, 0, 0)
+end)
+
+-- Lock button functionality for fourth GUI
+lockButton4.MouseButton1Click:Connect(function()
+    isFlingLocked = not isFlingLocked
+    lockButton4.Text = isFlingLocked and "🔒" or "🔓"
+    lockButton4.BackgroundColor3 = isFlingLocked and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(0, 0, 0)
 end)
 
 -- Create the Toggle Button ScreenGui
@@ -1937,6 +2449,7 @@ toggleButton.InputBegan:Connect(function(input)
         screenGui.Enabled = areGuisVisible
         airStrafeGui.Enabled = areGuisVisible
         touchFlingGui.Enabled = areGuisVisible
+        flingGui.Enabled = areGuisVisible
         toggleText.Text = areGuisVisible and "ADR:X" or "ADR:X"
     end
 end)
@@ -1995,6 +2508,25 @@ touchFlingMinimizeButton.MouseButton1Click:Connect(function()
     end
 end)
 
+-- Minimize button functionality for Multi Fling GUI
+local isFlingContentVisible = true
+flingMinimizeButton.MouseButton1Click:Connect(function()
+    isFlingContentVisible = not isFlingContentVisible
+    statusLabel.Visible = isFlingContentVisible
+    selectionFrame.Visible = isFlingContentVisible
+    startButton.Visible = isFlingContentVisible
+    stopButton.Visible = isFlingContentVisible
+    selectAllButton.Visible = isFlingContentVisible
+    deselectAllButton.Visible = isFlingContentVisible
+    if isFlingContentVisible then
+        flingFrame.Size = UDim2.new(0, 300, 0, 400)
+        flingMinimizeButton.Text = "—"
+    else
+        flingFrame.Size = UDim2.new(0, 300, 0, 30)
+        flingMinimizeButton.Text = "+"
+    end
+end)
+
 -- Dragging functionality for first GUI
 local dragging = false
 local dragInput
@@ -2012,6 +2544,7 @@ frame.InputBegan:Connect(function(input)
             linkedFrameStart = frame.Position
             linkedAirStrafeStart = airStrafeFrame.Position
             linkedTouchStart = touchFlingFrame.Position
+            linkedFlingStart = flingFrame.Position
         end
         
         local connection
@@ -2027,18 +2560,6 @@ end)
 frame.InputChanged:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
         dragInput = input
-    end
-end)
-
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        local delta = input.Position - dragStart
-        local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-        frame.Position = newPos
-        if isLinkedDrag then
-            airStrafeFrame.Position = UDim2.new(linkedAirStrafeStart.X.Scale, linkedAirStrafeStart.X.Offset + delta.X, linkedAirStrafeStart.Y.Scale, linkedAirStrafeStart.Y.Offset + delta.Y)
-            touchFlingFrame.Position = UDim2.new(linkedTouchStart.X.Scale, linkedTouchStart.X.Offset + delta.X, linkedTouchStart.Y.Scale, linkedTouchStart.Y.Offset + delta.Y)
-        end
     end
 end)
 
@@ -2059,6 +2580,7 @@ airStrafeFrame.InputBegan:Connect(function(input)
             linkedFrameStart = frame.Position
             linkedAirStrafeStart = airStrafeFrame.Position
             linkedTouchStart = touchFlingFrame.Position
+            linkedFlingStart = flingFrame.Position
         end
         
         local connection
@@ -2077,19 +2599,7 @@ airStrafeFrame.InputChanged:Connect(function(input)
     end
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if input == airStrafeDragInput and airStrafeDragging then
-        local delta = input.Position - airStrafeDragStart
-        local newPos = UDim2.new(airStrafeStartPos.X.Scale, airStrafeStartPos.X.Offset + delta.X, airStrafeStartPos.Y.Scale, airStrafeStartPos.Y.Offset + delta.Y)
-        airStrafeFrame.Position = newPos
-        if isLinkedDrag then
-            frame.Position = UDim2.new(linkedFrameStart.X.Scale, linkedFrameStart.X.Offset + delta.X, linkedFrameStart.Y.Scale, linkedFrameStart.Y.Offset + delta.Y)
-            touchFlingFrame.Position = UDim2.new(linkedTouchStart.X.Scale, linkedTouchStart.X.Offset + delta.X, linkedTouchStart.Y.Scale, linkedTouchStart.Y.Offset + delta.Y)
-        end
-    end
-end)
-
--- Dragging functionality for Noclip and Reach GUI
+-- Dragging functionality for Touch Fling GUI
 local touchFlingDragging = false
 local touchFlingDragInput
 local touchFlingDragStart
@@ -2106,6 +2616,7 @@ touchFlingFrame.InputBegan:Connect(function(input)
             linkedFrameStart = frame.Position
             linkedAirStrafeStart = airStrafeFrame.Position
             linkedTouchStart = touchFlingFrame.Position
+            linkedFlingStart = flingFrame.Position
         end
         
         local connection
@@ -2124,14 +2635,78 @@ touchFlingFrame.InputChanged:Connect(function(input)
     end
 end)
 
+-- Dragging functionality for Multi Fling GUI
+local flingDragging = false
+local flingDragInput
+local flingDragStart
+local flingStartPos
+
+flingFrame.InputBegan:Connect(function(input)
+    if isFlingLocked then return end
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        flingDragging = true
+        flingDragStart = input.Position
+        flingStartPos = flingFrame.Position
+        
+        if isLinkedDrag then
+            linkedFrameStart = frame.Position
+            linkedAirStrafeStart = airStrafeFrame.Position
+            linkedTouchStart = touchFlingFrame.Position
+            linkedFlingStart = flingFrame.Position
+        end
+        
+        local connection
+        connection = input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then
+                flingDragging = false
+                connection:Disconnect()
+            end
+        end)
+    end
+end)
+
+flingFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+        flingDragInput = input
+    end
+end)
+
 UserInputService.InputChanged:Connect(function(input)
-    if input == touchFlingDragInput and touchFlingDragging then
+    if dragging and input == dragInput then
+        local delta = input.Position - dragStart
+        local newPos = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        frame.Position = newPos
+        if isLinkedDrag then
+            airStrafeFrame.Position = UDim2.new(linkedAirStrafeStart.X.Scale, linkedAirStrafeStart.X.Offset + delta.X, linkedAirStrafeStart.Y.Scale, linkedAirStrafeStart.Y.Offset + delta.Y)
+            touchFlingFrame.Position = UDim2.new(linkedTouchStart.X.Scale, linkedTouchStart.X.Offset + delta.X, linkedTouchStart.Y.Scale, linkedTouchStart.Y.Offset + delta.Y)
+            flingFrame.Position = UDim2.new(linkedFlingStart.X.Scale, linkedFlingStart.X.Offset + delta.X, linkedFlingStart.Y.Scale, linkedFlingStart.Y.Offset + delta.Y)
+        end
+    elseif airStrafeDragging and input == airStrafeDragInput then
+        local delta = input.Position - airStrafeDragStart
+        local newPos = UDim2.new(airStrafeStartPos.X.Scale, airStrafeStartPos.X.Offset + delta.X, airStrafeStartPos.Y.Scale, airStrafeStartPos.Y.Offset + delta.Y)
+        airStrafeFrame.Position = newPos
+        if isLinkedDrag then
+            frame.Position = UDim2.new(linkedFrameStart.X.Scale, linkedFrameStart.X.Offset + delta.X, linkedFrameStart.Y.Scale, linkedFrameStart.Y.Offset + delta.Y)
+            touchFlingFrame.Position = UDim2.new(linkedTouchStart.X.Scale, linkedTouchStart.X.Offset + delta.X, linkedTouchStart.Y.Scale, linkedTouchStart.Y.Offset + delta.Y)
+            flingFrame.Position = UDim2.new(linkedFlingStart.X.Scale, linkedFlingStart.X.Offset + delta.X, linkedFlingStart.Y.Scale, linkedFlingStart.Y.Offset + delta.Y)
+        end
+    elseif touchFlingDragging and input == touchFlingDragInput then
         local delta = input.Position - touchFlingDragStart
         local newPos = UDim2.new(touchFlingStartPos.X.Scale, touchFlingStartPos.X.Offset + delta.X, touchFlingStartPos.Y.Scale, touchFlingStartPos.Y.Offset + delta.Y)
         touchFlingFrame.Position = newPos
         if isLinkedDrag then
             frame.Position = UDim2.new(linkedFrameStart.X.Scale, linkedFrameStart.X.Offset + delta.X, linkedFrameStart.Y.Scale, linkedFrameStart.Y.Offset + delta.Y)
             airStrafeFrame.Position = UDim2.new(linkedAirStrafeStart.X.Scale, linkedAirStrafeStart.X.Offset + delta.X, linkedAirStrafeStart.Y.Scale, linkedAirStrafeStart.Y.Offset + delta.Y)
+            flingFrame.Position = UDim2.new(linkedFlingStart.X.Scale, linkedFlingStart.X.Offset + delta.X, linkedFlingStart.Y.Scale, linkedFlingStart.Y.Offset + delta.Y)
+        end
+    elseif flingDragging and input == flingDragInput then
+        local delta = input.Position - flingDragStart
+        local newPos = UDim2.new(flingStartPos.X.Scale, flingStartPos.X.Offset + delta.X, flingStartPos.Y.Scale, flingStartPos.Y.Offset + delta.Y)
+        flingFrame.Position = newPos
+        if isLinkedDrag then
+            frame.Position = UDim2.new(linkedFrameStart.X.Scale, linkedFrameStart.X.Offset + delta.X, linkedFrameStart.Y.Scale, linkedFrameStart.Y.Offset + delta.Y)
+            airStrafeFrame.Position = UDim2.new(linkedAirStrafeStart.X.Scale, linkedAirStrafeStart.X.Offset + delta.X, linkedAirStrafeStart.Y.Scale, linkedAirStrafeStart.Y.Offset + delta.Y)
+            touchFlingFrame.Position = UDim2.new(linkedTouchStart.X.Scale, linkedTouchStart.X.Offset + delta.X, linkedTouchStart.Y.Scale, linkedTouchStart.Y.Offset + delta.Y)
         end
     end
 end)
