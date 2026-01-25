@@ -1874,7 +1874,7 @@ flingTitleBar.Name = "TitleBar"
 flingTitleBar.Size = UDim2.new(1, -120, 0, 30)
 flingTitleBar.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 flingTitleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
-flingTitleBar.Text = "Adrenalin X: T4"
+flingTitleBar.Text = "Adrenalin X: T4 - Fling"
 flingTitleBar.Font = Enum.Font.SourceSansBold
 flingTitleBar.TextSize = 13
 flingTitleBar.Parent = flingFrame
@@ -2745,3 +2745,27 @@ UserInputService.InputChanged:Connect(function(input)
         toggleButton.Position = UDim2.new(toggleStartPos.X.Scale, toggleStartPos.X.Offset + delta.X, toggleStartPos.Y.Scale, toggleStartPos.Y.Offset + delta.Y)
     end
 end)
+
+-- T5: NewGen Desync
+local ReGui = loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/pyhixdkljcvkl/refs/heads/main/bmncxvm"))()
+
+local Window = ReGui:Window({
+    Title = "Adrenalin X: T5 - Desync",
+    Size = UDim2.fromOffset(240, 140),
+})
+
+local desyncEnabled = false
+local statusLabel = Window:Label({
+    Text = "Status: OFF"
+})
+
+Window:Button({
+    Text = "Activate Desync",
+    Callback = function()
+        desyncEnabled = not desyncEnabled
+        if Raknet then
+            Raknet.desync(desyncEnabled)
+        end
+        statusLabel.Text = desyncEnabled and "Status: ON" or "Status: OFF"
+    end
+})
