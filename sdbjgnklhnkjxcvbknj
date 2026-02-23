@@ -1905,6 +1905,7 @@ touchFlingMinimizeButton.MouseButton1Click:Connect(function()
     noclipButton.Visible = isTouchFlingContentVisible
     reachButton.Visible = isTouchFlingContentVisible
     touchFlingButton.Visible = isTouchFlingContentVisible
+    desyncButton.Visible = isAirStrafeContentVisible
     valueCalcButton.Visible = isTouchFlingContentVisible
     if isTouchFlingContentVisible then
         touchFlingFrame.Size = UDim2.new(0, 220, 0, 280)
@@ -2540,6 +2541,7 @@ local isAirStrafeContentVisible = true
 airStrafeMinimizeButton.MouseButton1Click:Connect(function()
     isAirStrafeContentVisible = not isAirStrafeContentVisible
     airStrafeButton.Visible = isAirStrafeContentVisible
+    desyncButton.Visible = isAirStrafeContentVisible
     antiAimButton.Visible = isAirStrafeContentVisible
     rotate90Button.Visible = isAirStrafeContentVisible
     rotate180Button.Visible = isAirStrafeContentVisible
