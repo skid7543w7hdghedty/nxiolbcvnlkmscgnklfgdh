@@ -510,75 +510,75 @@ end
 -- Value Calculator variables
 local ancientValues = {
 	["Corrupt"] = 800,
-    ["Gingerscope"] = 17000,
-    ["Traveler's Axe"] = 7900,
+    ["Gingerscope"] = 19000,
+    ["Traveler's Axe"] = 8000,
     ["Harvester"] = 400,
-    ["Celestial"] = 1825,
+    ["Celestial"] = 1775,
     ["Icepiercer"] = 300,
-    ["Vampire's Axe"] = 950,
-    ["Icebreaker"] = 115,
+    ["Vampire's Axe"] = 925,
+    ["Icebreaker"] = 110,
     ["Swirly Axe"] = 55,
-    ["Batwing"] = 57,
+    ["Batwing"] = 55,
     ["Elderwood Scythe"] = 55,
-    ["Hallowscythe"] = 45,
+    ["Hallowscythe"] = 40,
     ["Logchopper"] = 20,
     ["Icewing"] = 13,
-	["Traveler's Gun"] = 4300,
-	["Evergun"] = 3800,
-	["Turkey"] = 1800,
-	["Evergreen"] = 2950,
-	["Blossom"] = 950,
-	["Sakura"] = 940,
+	["Traveler's Gun"] = 4400,
+	["Evergun"] = 3550,
+	["Turkey"] = 1825,
+	["Evergreen"] = 2700,
+	["Blossom"] = 985,
+	["Sakura"] = 975,
 	["Vampire's Gun"] = 1800,
-	["Constellation"] = 3250,
-	["Bauble"] = 850,
+	["Constellation"] = 3000,
+	["Bauble"] = 925,
 	["Darkshot"] = 1060,
 	["Darksword"] = 1040,
-    ["Bloom"] = 265,
-    ["Flora"] = 275,
-    ["Treat"] = 475,
-    ["Heart Wand"] = 1800,
-    ["Sweet"] = 475,
-	["Bat"] = 215,
-    ["Alienbeam"] = 1025,
-    ["Raygun"] = 550,
-    ["Sunrise"] = 550,
+    ["Bloom"] = 255,
+    ["Flora"] = 265,
+    ["Treat"] = 225,
+    ["Heart Wand"] = 250,
+    ["Sweet"] = 225,
+	["Bat"] = 205,
+    ["Alienbeam"] = 1100,
+    ["Raygun"] = 650,
+    ["Sunrise"] = 575,
     ["Sunset"] = 275,
-    ["Snowcannon"] = 270,
-    ["Snow Dagger"] = 220,
-    ["Blizzard"] = 155,
-    ["Snowstorm"] = 155,
+    ["Snowcannon"] = 325,
+    ["Snow Dagger"] = 215,
+    ["Blizzard"] = 150,
+    ["Snowstorm"] = 150,
     ["Xenoknife"] = 150,
     ["Xenoshot"] = 150,
-	["Rainbow Gun"] = 265,
-	["Rainbow"] = 260,
-	["Candy"] = 145,
-	["Heartblade"] = 115,
-	["Flowerwood Gun"] = 155,
-	["Ocean"] = 145,
-	["Soul"] = 300,
-	["Spirit"] = 290,
-	["Flowerwood"] = 150,
-	["Waves"] = 140,
+	["Rainbow Gun"] = 305 ,
+	["Rainbow"] = 295,
+	["Candy"] = 115,
+	["Heartblade"] = 110,
+	["Flowerwood Gun"] = 185,
+	["Ocean"] = 150,
+	["Soul"] = 310,
+	["Spirit"] = 300,
+	["Flowerwood"] = 180,
+	["Waves"] = 145,
 	["Borealis"] = 105,
-	["Sugar"] = 60,
+	["Sugar"] = 55,
 	["Australis"] = 100,
-	["Luger"] = 60,
-	["Red Luger"] = 50,
+	["Luger"] = 55,
+	["Red Luger"] = 45,
 	["Swirly Gun"] = 40,
-	["Iceblaster"] = 60,
-	["Candleflame"] = 55,
-	["Elderwood Blade"] = 55,
-	["Makeshift"] = 55,
+	["Iceblaster"] = 50,
+	["Candleflame"] = 50,
+	["Elderwood Blade"] = 50,
+	["Makeshift"] = 50,
 	["Watergun"] = 115,
-	["Pearl"] = 60,
-	["Pearlshine"] = 60,
-	["Darkbringer"] = 55,
-	["Elderwood Revolver"] = 55,
-	["Phantom"] = 55,
-	["Spectre"] = 55,
-	["Lightbringer"] = 60,
-    ["Ornament"] = 55,
+	["Pearl"] = 55,
+	["Pearlshine"] = 55,
+	["Darkbringer"] = 50,
+	["Elderwood Revolver"] = 50,
+	["Phantom"] = 50,
+	["Spectre"] = 50,
+	["Lightbringer"] = 45,
+    ["Ornament"] = 40,
 	["Swirly Blade"] = 25,
 	["Green Luger"] = 30,
 	["Hallowgun"] = 27,
@@ -645,22 +645,22 @@ local ancientValues = {
 	["Seer"] = 3,
 	["Orange Seer"] = 2,
 	["Yellow Seer"] = 2,
-	["Chroma Traveler's Gun"] = 180000,
-    ["Chroma Evergun"] = 85000,
-    ["Chroma Evergreen"] = 58000,
-    ["Chroma Vampire's Gun"] = 44000,
-    ["Chroma Bauble"] = 56000,
-    ["Chroma Constellation"] = 41000,
+	["Chroma Traveler's Gun"] = 220000,
+    ["Chroma Evergun"] = 95000,
+    ["Chroma Evergreen"] = 64000,
+    ["Chroma Vampire's Gun"] = 40000,
+    ["Chroma Bauble"] = 47500,
+    ["Chroma Constellation"] = 37000,
     ["Chroma AlienBeam"] = 23000,
-    ["Chroma Raygun"] = 13250,
-    ["Chroma Blizzard"] = 16500,
+    ["Chroma Raygun"] = 16000,
+    ["Chroma Blizzard"] = 14500,
     ["Chroma Sunrise"] = 10500,
-    ["Chroma Snowstorm"] = 11250,
-    ["Chroma Snowcannon"] = 8500,
-    ["Chroma Snow Dagger"] = 6750,
-    ["Chroma Sunset"] = 6750,
+    ["Chroma Snowstorm"] = 8500,
+    ["Chroma Snowcannon"] = 8250,
+    ["Chroma Snow Dagger"] = 6000,
+    ["Chroma Sunset"] = 6200,
     ["Chroma Ornament"] = 4200,
-    ["Chroma Watergun"] = 3200,
+    ["Chroma Watergun"] = 3400,
     ["Chroma Darkbringer"] = 95,
     ["Chroma Lightbringer"] = 90,
     ["Chroma Luger"] = 60,
@@ -690,8 +690,8 @@ local ancientValues = {
     ["Golden"] = 4,
     ["Splitter"] = 3,
     ["JD"] = 35,
-    ["Latte Gun"] = 125,
-    ["Latte Knife"] = 125,
+    ["Latte Gun"] = 130,
+    ["Latte Knife"] = 130,
     ["Cotton Candy"] = 40,
     ["Beach"] = 30,
     ["Cavern Knife"] = 7,
@@ -777,11 +777,11 @@ local ancientValues = {
     ["Wrapped Gun"] = 1,
     ["Wrapped Knife"] = 1,
     ["Gifted"] = 1,
-    ["Cane"] = 575,
-    ["Silent Night"] = 60,
+    ["Cane"] = 675,
+    ["Silent Night"] = 50,
     ["Aurora"] = 28,
     ["Icicles"] = 25,
-    ["Dungeon"] = 20,
+    ["Dungeon"] = 30,
     ["Candy Swirl"] = 20,
     ["Toxic"] = 20,
     ["Snakebite"] = 17,
@@ -795,8 +795,8 @@ local ancientValues = {
     ["Starry"] = 2,
     ["Darkknife"] = 1,
     ["Mummy"] = 1,
-    ["Glitch2"] = 60,
-    ["Glitch1"] = 60,
+    ["Glitch2"] = 55,
+    ["Glitch1"] = 75,
     ["Bats"] = 170,
     ["Gifts"] = 140,
     ["Pine"] = 140,
@@ -1905,7 +1905,6 @@ touchFlingMinimizeButton.MouseButton1Click:Connect(function()
     noclipButton.Visible = isTouchFlingContentVisible
     reachButton.Visible = isTouchFlingContentVisible
     touchFlingButton.Visible = isTouchFlingContentVisible
-    desyncButton.Visible = isAirStrafeContentVisible
     valueCalcButton.Visible = isTouchFlingContentVisible
     if isTouchFlingContentVisible then
         touchFlingFrame.Size = UDim2.new(0, 220, 0, 280)
@@ -2541,7 +2540,6 @@ local isAirStrafeContentVisible = true
 airStrafeMinimizeButton.MouseButton1Click:Connect(function()
     isAirStrafeContentVisible = not isAirStrafeContentVisible
     airStrafeButton.Visible = isAirStrafeContentVisible
-    desyncButton.Visible = isAirStrafeContentVisible
     antiAimButton.Visible = isAirStrafeContentVisible
     rotate90Button.Visible = isAirStrafeContentVisible
     rotate180Button.Visible = isAirStrafeContentVisible
@@ -2794,3 +2792,278 @@ UserInputService.InputChanged:Connect(function(input)
         toggleButton.Position = UDim2.new(toggleStartPos.X.Scale, toggleStartPos.X.Offset + delta.X, toggleStartPos.Y.Scale, toggleStartPos.Y.Offset + delta.Y)
     end
 end)
+
+-- GUI contents
+Buttons = {79480770273758, "Anti-Aim", 77094699387328, "Glitch Spin", 121966805049108, "Hit the Griddy", 79757971761739, "Shattered", 83265734904502, "Take the L",
+115518346414107, "Gangnam Style", 114400428765989, "180° flip", 128334204821841, "Skib toilert", 101625387064604, "I alone am the Honored One", 110146282544198, "Organe Justice", 
+10714340543, "The Floss", 77984841414450, "Deltarune dance or smthn", 109873544976020, "Biblically Accurate Emote", 90333292347820, "The Worm", 88130117312312, "Fake Death", 111251252458517, "Uuuuuhhh",
+84623954062978, "Peter nooooo", 108747312576405, "And I turn into a convertable. Les goooo", 93014787120483, "Garry's Dance", 92618727772186, "IShowSpeed Dance", 99499783161907, "Aura farm",
+80177289449617, "Snow angel", 70432904702322, "Get skinwalked", 123916423751437, "Rat Dance", 129537633250603, "It's Peanut Butter Jelly Time"}
+
+-- General Variables
+CursedMode = false
+Player = game.Players.LocalPlayer
+Mouse = Player:GetMouse()
+HeaderSize = 25
+PlayingId = 0
+
+Red = Color3.fromRGB(255,0,0)
+Green = Color3.fromRGB(0,200,0)
+Black = Color3.fromRGB(0,0,0)
+White = Color3.fromRGB(255,255,255)
+
+-- Setting up GUI
+ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "AdrenalinX_Animations"
+ScreenGui.Parent = Player:WaitForChild("PlayerGui")
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+Frame = Instance.new("ScrollingFrame")
+Frame.Size = UDim2.new(0,230,0,300)
+Frame.Position = UDim2.new(0,20,0,200)
+Frame.BackgroundColor3 = White
+Frame.BorderSizePixel = 0
+Frame.CanvasSize = UDim2.new(0,0,0,0)
+Frame.Parent = ScreenGui
+Instance.new("UICorner",Frame)
+
+Layout = Instance.new("UIListLayout",Frame)
+Layout.FillDirection = Enum.FillDirection.Horizontal
+Layout.Wraps = true
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- DragBar
+DragBar = Instance.new("TextButton")
+DragBar.Size = UDim2.new(0,230,0,25)
+DragBar.Position = UDim2.new(0,20,0,175)
+DragBar.BackgroundColor3 = Black
+DragBar.Text = "Adrenalin X : T5 - Anim"
+DragBar.TextColor3 = White
+DragBar.Font = Enum.Font.SourceSansBold
+DragBar.TextSize = 16
+DragBar.AutoButtonColor = false
+DragBar.Parent = ScreenGui
+Instance.new("UICorner",DragBar)
+
+-- Close button
+CloseButton = Instance.new("TextButton")
+CloseButton.Size = UDim2.new(0,25,0,25)
+CloseButton.Position = UDim2.new(0,20,0,175)
+CloseButton.BackgroundColor3 = Black
+CloseButton.Text = "X"
+CloseButton.TextColor3 = White
+CloseButton.Font = Enum.Font.SourceSansBold
+CloseButton.TextSize = 18
+CloseButton.Parent = ScreenGui
+Instance.new("UICorner",CloseButton)
+
+-- Animation instance
+Anim = Instance.new("Animation", script)
+
+Track = nil
+
+-- UI style
+function Style(Button)
+    Instance.new("UICorner").Parent = Button
+    Button.TextColor3 = White
+    Button.Font = Enum.Font.SourceSansBold
+    Button.TextScaled = true
+end
+
+-- Create elements
+function CreateInteractable(Size,Name,Text,Color,Button,Class)
+
+    local Element = Instance.new(Class,Frame)
+
+    if Button then
+        Element.Name = Name.."Button"
+        Element.Text = Text
+    else
+        Element.Name = Name.."Box"
+        Element.Text = ""
+        Element.PlaceholderText = Text
+        Frame.CanvasSize += UDim2.new(0,0,0,Size.Y.Offset)
+    end
+
+    Element.Size = Size
+    Element.BackgroundColor3 = Color
+    Element.RichText = true
+
+    Style(Element)
+
+    return Element
+end
+
+-- Animation player
+function PlayAnimation(ID,Speed)
+
+    while not Player.Character do task.wait() end
+
+    local Character = Player.Character
+
+    Anim.AnimationId = ID
+
+    Track = Character:WaitForChild("Humanoid"):LoadAnimation(Anim)
+    Track:Play()
+    Track.Looped = true
+
+    if tonumber(Speed) then
+        Track:AdjustSpeed(tonumber(Speed))
+    else
+        Track:AdjustSpeed(1)
+    end
+
+    Track.Priority = Enum.AnimationPriority.Action
+
+end
+
+-- Button creator
+function CreateButton(Size,Color,Text,Name,ID)
+
+    local Button = CreateInteractable(Size,Name,Text,Color,true,"TextButton")
+
+    local Toggled = false
+
+    Button.MouseButton1Click:Connect(function()
+
+        if not (PlayingId == ID or PlayingId == 0) and not CursedMode then return end
+
+        Toggled = not Toggled
+
+        if Track and not CursedMode then
+            Track:Stop()
+        end
+
+        if Toggled then
+
+            PlayingId = ID
+            Button.BackgroundColor3 = Green
+
+            PlayAnimation("rbxassetid://"..ID,Frame:WaitForChild(Name.."Box").Text)
+
+        else
+
+            Button.BackgroundColor3 = Black
+            PlayingId = 0
+
+        end
+
+    end)
+
+end
+
+-- Speed textbox
+function TextboxSpeedAdjust(Box,ID)
+
+    Box.Changed:Connect(function(Property)
+
+        if Property == "Text" and Track then
+
+            if tonumber(Box.Text) then
+
+                if not (PlayingId == ID or PlayingId == 0) and not CursedMode then return end
+
+                Track:AdjustSpeed(tonumber(Box.Text))
+
+            else
+
+                Track:AdjustSpeed(1)
+
+            end
+
+        end
+
+    end)
+
+end
+
+function CreateTextbox(Size,Color,Name,ID)
+
+    local Box = CreateInteractable(Size,Name,"Play speed (default 1)",Color,false,"TextBox")
+
+    TextboxSpeedAdjust(Box,ID)
+
+end
+
+-- Drag system
+DragBar.MouseButton1Down:Connect(function()
+
+    local Offset = Mouse.X - Frame.AbsolutePosition.X
+
+    while game:GetService("UserInputService"):IsMouseButtonPressed(Enum.UserInputType.MouseButton1) do
+
+        task.wait(0.01)
+
+        Frame.Position = UDim2.new(0,Mouse.X-Offset,0,Mouse.Y)
+
+        DragBar.Position = UDim2.new(0,Frame.AbsolutePosition.X,0,Frame.AbsolutePosition.Y-HeaderSize)
+
+        CloseButton.Position = DragBar.Position
+
+    end
+
+end)
+
+-- Close button
+CloseButton.MouseButton1Click:Connect(function()
+
+    ScreenGui:Destroy()
+    script:Destroy()
+
+end)
+
+-- Search bar
+Searchbar = CreateInteractable(
+    UDim2.new(0.95,0,0,45),
+    "Searchbar",
+    "Search animations",
+    Black,
+    false,
+    "TextBox"
+)
+
+-- Search logic
+Searchbar.Changed:Connect(function()
+
+    local Search = string.lower(Searchbar.Text)
+
+    for _,Button in Frame:GetChildren() do
+
+        if (Button:IsA("TextButton") or Button:IsA("TextBox")) and Button.Name ~= "SearchbarBox" then
+
+            if string.find(string.lower(Button.Name),Search) then
+                Button.Visible = true
+            else
+                Button.Visible = false
+            end
+
+        end
+
+    end
+
+end)
+
+-- Create buttons
+Counter = 0
+
+for i = 1,#Buttons/2 do
+
+    CreateTextbox(
+        UDim2.new(0.45,0,0,45),
+        Black,
+        Buttons[Counter+2],
+        Buttons[Counter+1]
+    )
+
+    CreateButton(
+        UDim2.new(0.45,0,0,45),
+        Black,
+        Buttons[Counter+2],
+        Buttons[Counter+2],
+        Buttons[Counter+1]
+    )
+
+    Counter += 2
+
+end
