@@ -514,12 +514,12 @@ end
 
 -- Value Calculator variables
 local ancientValues = {
-	["Corrupt"] = 775,
-    ["Gingerscope"] = 18250,
+	["Corrupt"] = 600,
+    ["Gingerscope"] = 18500,
     ["Traveler's Axe"] = 7700,
-    ["Harvester"] = 365,
+    ["Harvester"] = 340,
     ["Celestial"] = 1775,
-    ["Icepiercer"] = 265,
+    ["Icepiercer"] = 240,
     ["Vampire's Axe"] = 925,
     ["Icebreaker"] = 105,
     ["Swirly Axe"] = 52,
@@ -532,29 +532,29 @@ local ancientValues = {
 	["Evergun"] = 3550,
 	["Turkey"] = 1825,
 	["Evergreen"] = 2700,
-	["Blossom"] = 1060,
-	["Sakura"] = 1050,
-	["Vampire's Gun"] = 1800,
+	["Blossom"] = 1080,
+	["Sakura"] = 1070,
+	["Vampire's Gun"] = 1775,
 	["Constellation"] = 3000,
 	["Bauble"] = 925,
-	["Darkshot"] = 1180,
-	["Darksword"] = 1160,
+	["Darkshot"] = 1200,
+	["Darksword"] = 1180,
     ["Bloom"] = 255,
     ["Flora"] = 265,
-    ["Treat"] = 245,
-    ["Heart Wand"] = 250,
-    ["Sweet"] = 240,
-	["Bat"] = 170,
-    ["Alienbeam"] = 1375,
+    ["Treat"] = 235,
+    ["Heart Wand"] = 240,
+    ["Sweet"] = 230,
+	["Bat"] = 165,
+    ["Alienbeam"] = 1425,
     ["Raygun"] = 925,
-    ["Sunrise"] = 650,
-    ["Sunset"] = 285,
+    ["Sunrise"] = 700,
+    ["Sunset"] = 325,
     ["Snowcannon"] = 500,
     ["Snow Dagger"] = 185,
     ["Blizzard"] = 150,
     ["Snowstorm"] = 150,
-    ["Xenoknife"] = 185,
-    ["Xenoshot"] = 185,
+    ["Xenoknife"] = 190,
+    ["Xenoshot"] = 190,
 	["Rainbow Gun"] = 300 ,
 	["Rainbow"] = 290,
 	["Candy"] = 105,
@@ -2874,24 +2874,6 @@ toggleText.Parent = toggleButton
 -- GUI visibility state
 local areGuisVisible = true
 
--- Toggle button click functionality with effect
-toggleButton.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-        toggleButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
-        task.spawn(function()
-            task.wait(0.1)
-            toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-        end)
-        areGuisVisible = not areGuisVisible
-        screenGui.Enabled = areGuisVisible
-        airStrafeGui.Enabled = areGuisVisible
-        touchFlingGui.Enabled = areGuisVisible
-        flingGui.Enabled = areGuisVisible
-        ScreenGui.Enabled = areGuisVisible
-        toggleText.Text = areGuisVisible and "ADR-X" or "ADR-X"
-    end
-end)
-
 -- Minimize button functionality for first GUI
 local isContentVisible = true
 minimizeButton.MouseButton1Click:Connect(function()
@@ -3207,18 +3189,36 @@ local toggleDragging = false
 local toggleDragInput
 local toggleDragStart
 local toggleStartPos
+local toggleDidMove = false  -- flag: did we drag or just click?
+local DRAG_THRESHOLD = 5     -- pixels of movement to count as a drag
 
 toggleButton.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         toggleDragging = true
+        toggleDidMove = false
         toggleDragStart = input.Position
         toggleStartPos = toggleButton.Position
-        
+
         local connection
         connection = input.Changed:Connect(function()
             if input.UserInputState == Enum.UserInputState.End then
                 toggleDragging = false
                 connection:Disconnect()
+
+                -- Only fire the toggle if the user didn't drag
+                if not toggleDidMove then
+                    toggleButton.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+                    task.spawn(function()
+                        task.wait(0.1)
+                        toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+                    end)
+                    areGuisVisible = not areGuisVisible
+                    screenGui.Enabled = areGuisVisible
+                    airStrafeGui.Enabled = areGuisVisible
+                    touchFlingGui.Enabled = areGuisVisible
+                    flingGui.Enabled = areGuisVisible
+                    ScreenGui.Enabled = areGuisVisible
+                end
             end
         end)
     end
@@ -3233,6 +3233,15 @@ end)
 UserInputService.InputChanged:Connect(function(input)
     if input == toggleDragInput and toggleDragging then
         local delta = input.Position - toggleDragStart
-        toggleButton.Position = UDim2.new(toggleStartPos.X.Scale, toggleStartPos.X.Offset + delta.X, toggleStartPos.Y.Scale, toggleStartPos.Y.Offset + delta.Y)
+        -- If movement exceeds threshold, mark as a drag
+        if delta.Magnitude >= DRAG_THRESHOLD then
+            toggleDidMove = true
+        end
+        toggleButton.Position = UDim2.new(
+            toggleStartPos.X.Scale,
+            toggleStartPos.X.Offset + delta.X,
+            toggleStartPos.Y.Scale,
+            toggleStartPos.Y.Offset + delta.Y
+        )
     end
 end)
