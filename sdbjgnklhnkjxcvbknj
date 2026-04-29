@@ -1735,7 +1735,7 @@ toggleGui.Parent = playerGui
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
 mainFrame.Size = UDim2.new(0, 260, 0, 440)
-mainFrame.Position = UDim2.new(0.5, 735, 0.5, -210)
+mainFrame.Position = UDim2.new(0.5, -1285, 0.5, 250)
 mainFrame.BackgroundColor3 = Color3.fromRGB(12, 12, 12)
 mainFrame.BorderSizePixel = 0
 mainFrame.Active = true
@@ -1849,7 +1849,7 @@ padding.PaddingTop = UDim.new(0, 2)
 padding.PaddingBottom = UDim.new(0, 2)
 padding.Parent = contentFrame
 
-local function createSection(text)
+local function createSection(text, layoutOrder)
 	local label = Instance.new("TextLabel")
 	label.Size = UDim2.new(1, 0, 0, 24)
 	label.BackgroundTransparency = 1
@@ -1858,11 +1858,12 @@ local function createSection(text)
 	label.Text = text
 	label.Font = Enum.Font.SourceSansBold
 	label.TextSize = 15
+	if layoutOrder then label.LayoutOrder = layoutOrder end
 	label.Parent = contentFrame
 	return label
 end
 
-local function createButton(name, text)
+local function createButton(name, text, layoutOrder)
 	local btn = Instance.new("TextButton")
 	btn.Name = name
 	btn.Size = UDim2.new(1, 0, 0, 42)
@@ -1872,6 +1873,7 @@ local function createButton(name, text)
 	btn.Font = Enum.Font.SourceSansBold
 	btn.TextSize = 17
 	btn.AutoButtonColor = true
+	if layoutOrder then btn.LayoutOrder = layoutOrder end
 	btn.Parent = contentFrame
 
 	local btnCorner = Instance.new("UICorner")
@@ -1881,11 +1883,12 @@ local function createButton(name, text)
 	return btn
 end
 
-local function createDualRow(buttonName, buttonText, placeholder, startValue)
+local function createDualRow(buttonName, buttonText, placeholder, startValue, layoutOrder)
 	local row = Instance.new("Frame")
 	row.Name = buttonName .. "Row"
 	row.Size = UDim2.new(1, 0, 0, 42)
 	row.BackgroundTransparency = 1
+	if layoutOrder then row.LayoutOrder = layoutOrder end
 	row.Parent = contentFrame
 
 	local rowButton = Instance.new("TextButton")
@@ -1929,21 +1932,24 @@ local function setToggleState(btn, state, onText, offText)
 	btn.TextColor3 = state and Color3.fromRGB(85, 255, 127) or Color3.fromRGB(255, 255, 255)
 end
 
-createSection("Movement")
+-- ============================================
+-- SECTION 1: Movement (LayoutOrder 100-199)
+-- ============================================
+createSection("Movement", 100)
 
-button1 = createButton("InfiniteJumpButton", "Infinite Jump: OFF")
+button1 = createButton("InfiniteJumpButton", "Infinite Jump: OFF", 101)
 button1.MouseButton1Click:Connect(function()
 	isEnabled = not isEnabled
 	setToggleState(button1, isEnabled, "Infinite Jump: ON", "Infinite Jump: OFF")
 end)
 
-button2 = createButton("WallhopButton", "Wallhop: OFF")
+button2 = createButton("WallhopButton", "Wallhop: OFF", 102)
 button2.MouseButton1Click:Connect(function()
 	wallhopToggle = not wallhopToggle
 	setToggleState(button2, wallhopToggle, "Wallhop: ON", "Wallhop: OFF")
 end)
 
-button3 = createButton("JumpBoostButton", "Jump Boost")
+button3 = createButton("JumpBoostButton", "Jump Boost", 103)
 button3.MouseButton1Click:Connect(function()
 	local character = player.Character
 	if character and character:FindFirstChild("Humanoid") then
@@ -1956,7 +1962,7 @@ button3.MouseButton1Click:Connect(function()
 	end
 end)
 
-button4, speedInputBox = createDualRow("SpeedButton", "Speed: OFF", "Speed", FAKE_SPEED_CFRAME_SPEED)
+button4, speedInputBox = createDualRow("SpeedButton", "Speed: OFF", "Speed", FAKE_SPEED_CFRAME_SPEED, 104)
 button4.MouseButton1Click:Connect(function()
 	toggleFakeSpeed()
 	setToggleState(button4, fakeSpeedEnabled, "Speed: ON", "Speed: OFF")
@@ -1971,7 +1977,7 @@ speedInputBox.FocusLost:Connect(function()
 	end
 end)
 
-button5 = createButton("InvisButton", "Invis: OFF")
+button5 = createButton("InvisButton", "Invis: OFF", 105)
 local invis_on = false
 button5.MouseButton1Click:Connect(function()
 	invis_on = not invis_on
@@ -2003,15 +2009,18 @@ button5.MouseButton1Click:Connect(function()
 	end
 end)
 
-createSection("Flick")
+-- ============================================
+-- SECTION 2: Flick (LayoutOrder 200-299)
+-- ============================================
+createSection("Flick", 200)
 
-airStrafeButton = createButton("AirStrafeButton", "Air Strafe: OFF")
+airStrafeButton = createButton("AirStrafeButton", "Air Strafe: OFF", 201)
 airStrafeButton.MouseButton1Click:Connect(function()
 	isScriptEnabled = not isScriptEnabled
 	updateFlickButtons()
 end)
 
-rotate90Button = createButton("Rotate90Button", "90 Flick: OFF")
+rotate90Button = createButton("Rotate90Button", "90 Flick: OFF", 202)
 rotate90Button.MouseButton1Click:Connect(function()
 	isRotate90Enabled = not isRotate90Enabled
 	if isRotate90Enabled then
@@ -2021,7 +2030,7 @@ rotate90Button.MouseButton1Click:Connect(function()
 	updateFlickButtons()
 end)
 
-rotate180Button = createButton("Rotate180Button", "180 Flick: OFF")
+rotate180Button = createButton("Rotate180Button", "180 Flick: OFF", 203)
 rotate180Button.MouseButton1Click:Connect(function()
 	isRotate180Enabled = not isRotate180Enabled
 	if isRotate180Enabled then
@@ -2031,7 +2040,7 @@ rotate180Button.MouseButton1Click:Connect(function()
 	updateFlickButtons()
 end)
 
-tweenRotate180Button = createButton("TweenRotate180Button", "360 Flick: OFF")
+tweenRotate180Button = createButton("TweenRotate180Button", "360 Flick: OFF", 204)
 tweenRotate180Button.MouseButton1Click:Connect(function()
 	isTweenRotate180Enabled = not isTweenRotate180Enabled
 	if isTweenRotate180Enabled then
@@ -2041,7 +2050,190 @@ tweenRotate180Button.MouseButton1Click:Connect(function()
 	updateFlickButtons()
 end)
 
-createSection("Multi Fling")
+-- ============================================
+-- SECTION 3: Combat (LayoutOrder 300-399)
+-- ============================================
+createSection("Combat", 300)
+
+desyncButton = createButton("DesyncButton", "Desync: OFF", 301)
+desyncButton.MouseButton1Click:Connect(function()
+	PastedSources = not PastedSources
+	setToggleState(desyncButton, PastedSources, "Desync: ON", "Desync: OFF")
+end)
+
+clumsyButton = createButton("ClumsyButton", "Clumsy: OFF", 302)
+clumsyButton.MouseButton1Click:Connect(function()
+	clumsy_on = not clumsy_on
+	if clumsy_on then
+		local savedpos = game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame
+		task.wait()
+		game.Players.LocalPlayer.Character:MoveTo(savedpos.Position)
+		task.wait(0.15)
+		local Seat = Instance.new("Seat", game.Workspace)
+		Seat.Anchored = false
+		Seat.CanCollide = false
+		Seat.Name = "clumsychair"
+		Seat.Transparency = 1
+		Seat.CFrame = savedpos
+		local Weld = Instance.new("Weld", Seat)
+		Weld.Part0 = Seat
+		Weld.Part1 = game.Players.LocalPlayer.Character:FindFirstChild("Torso") or game.Players.LocalPlayer.Character.UpperTorso
+		task.wait()
+		Seat.CFrame = savedpos
+		game.StarterGui:SetCore("SendNotification", {Title = "Clumsy On"; Duration = 1; Text = "";})
+		setToggleState(clumsyButton, true, "Clumsy: ON", "Clumsy: OFF")
+	else
+		local chair = workspace:FindFirstChild("clumsychair")
+		if chair then
+			chair:Destroy()
+		end
+		game.StarterGui:SetCore("SendNotification", {Title = "Clumsy Off"; Duration = 1; Text = "";})
+		setToggleState(clumsyButton, false, "Clumsy: ON", "Clumsy: OFF")
+	end
+end)
+
+noclipButton = createButton("NoclipButton", "Noclip: OFF", 303)
+noclipButton.MouseButton1Click:Connect(function()
+	toggleNoclip()
+	setToggleState(noclipButton, noclipEnabled, "Noclip: ON", "Noclip: OFF")
+end)
+
+reachButton, rangeInputBox = createDualRow("ReachButton", "KillAura: OFF", "Range", range, 304)
+reachButton.MouseButton1Click:Connect(function()
+	toggleReach()
+	setToggleState(reachButton, reachEnabled, "KillAura: ON", "KillAura: OFF")
+end)
+
+rangeInputBox.FocusLost:Connect(function()
+	local val = tonumber(rangeInputBox.Text)
+	if val and val > 0 then
+		range = val
+	else
+		rangeInputBox.Text = tostring(range)
+	end
+end)
+
+touchFlingButton = createButton("TouchFlingButton", "Touch Fling: OFF", 305)
+local hiddenfling = false
+local flingThread
+
+if not ReplicatedStorage:FindFirstChild("juisdfj0i32i0eidsuf0iok") then
+	local detection = Instance.new("Decal")
+	detection.Name = "juisdfj0i32i0eidsuf0iok"
+	detection.Parent = ReplicatedStorage
+end
+
+local function fling()
+	local lp = Players.LocalPlayer
+	local c, hrp, vel, movel = nil, nil, nil, 0.1
+	while hiddenfling do
+		RunService.Heartbeat:Wait()
+		c = lp.Character
+		hrp = c and c:FindFirstChild("HumanoidRootPart")
+		if hrp then
+			vel = hrp.Velocity
+			hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
+			RunService.RenderStepped:Wait()
+			hrp.Velocity = vel
+			RunService.Stepped:Wait()
+			hrp.Velocity = vel + Vector3.new(0, movel, 0)
+			movel = -movel
+		end
+	end
+end
+
+touchFlingButton.MouseButton1Click:Connect(function()
+	hiddenfling = not hiddenfling
+	setToggleState(touchFlingButton, hiddenfling, "Touch Fling: ON", "Touch Fling: OFF")
+	if hiddenfling then
+		flingThread = coroutine.create(fling)
+		coroutine.resume(flingThread)
+	end
+end)
+
+espButton = createButton("EspButton", "Esp: OFF", 306)
+espButton.MouseButton1Click:Connect(function()
+	toggleEsp()
+	setToggleState(espButton, espEnabled, "Esp: ON", "Esp: OFF")
+end)
+
+antiFlingButton = createButton("AntiFlingButton", "Anti-Fling: OFF", 307)
+antiFlingButton.MouseButton1Click:Connect(function()
+	toggleAntiFling()
+	setToggleState(antiFlingButton, antiFlingEnabled, "Anti-Fling: ON", "Anti-Fling: OFF")
+end)
+
+antiVoidButton = createButton("AntiVoidButton", "Anti-Void: OFF", 308)
+antiVoidButton.MouseButton1Click:Connect(function()
+	toggleAntiVoid()
+	setToggleState(antiVoidButton, antiVoidEnabled, "Anti-Void: ON", "Anti-Void: OFF")
+end)
+
+antiAimButton = createButton("AntiAimButton", "Anti-Aim: OFF", 309)
+antiAimButton.MouseButton1Click:Connect(cycleMode)
+updateAntiAimButtonVisual()
+
+-- ============================================
+-- SECTION 4: Utility (LayoutOrder 400-499)
+-- ============================================
+createSection("Utility", 400)
+
+valueCalcButton = createButton("ValueCalcButton", "Trade Helper: OFF", 401)
+valueCalcButton.MouseButton1Click:Connect(function()
+	isValueCalcEnabled = not isValueCalcEnabled
+
+	if isValueCalcEnabled then
+		valueCalcAddedConnection = playerGui.ChildAdded:Connect(function(child)
+			if child.Name == "TradeGUI" or child.Name == "TradeGUI_Phone" then
+				setupValueCalculator(child)
+			end
+		end)
+
+		local tg = playerGui:FindFirstChild("TradeGUI")
+		if tg then
+			setupValueCalculator(tg)
+		end
+
+		local tgp = playerGui:FindFirstChild("TradeGUI_Phone")
+		if tgp then
+			setupValueCalculator(tgp)
+		end
+
+		if firstValueCalc then
+			local function callback(Text)
+				if Text == "Supreme Values" then
+					setclipboard("https://supremevalues.com/")
+				end
+			end
+
+			local NotificationBindable = Instance.new("BindableFunction")
+			NotificationBindable.OnInvoke = callback
+
+			game.StarterGui:SetCore("SendNotification", {
+				Title = "Trade Helper";
+				Text = "Cracked by: Who? D A R K";
+				Icon = "";
+				Duration = 5;
+				Button1 = "Supreme Values";
+				Callback = NotificationBindable;
+			})
+
+			firstValueCalc = false
+		end
+	else
+		if valueCalcAddedConnection then
+			valueCalcAddedConnection:Disconnect()
+			valueCalcAddedConnection = nil
+		end
+	end
+
+	setToggleState(valueCalcButton, isValueCalcEnabled, "Trade Helper: ON", "Trade Helper: OFF")
+end)
+
+-- ============================================
+-- SECTION 5: Multi Fling (LayoutOrder 500-599) - ПРЕДПОСЛЕДНИЙ
+-- ============================================
+createSection("Multi Fling", 500)
 
 multiFlingStatusLabel = Instance.new("TextLabel")
 multiFlingStatusLabel.Name = "MultiFlingStatusLabel"
@@ -2052,6 +2244,7 @@ multiFlingStatusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
 multiFlingStatusLabel.TextXAlignment = Enum.TextXAlignment.Left
 multiFlingStatusLabel.Font = Enum.Font.SourceSansBold
 multiFlingStatusLabel.TextSize = 15
+multiFlingStatusLabel.LayoutOrder = 501
 multiFlingStatusLabel.Parent = contentFrame
 
 local multiFlingFrame = Instance.new("Frame")
@@ -2059,6 +2252,7 @@ multiFlingFrame.Name = "MultiFlingFrame"
 multiFlingFrame.Size = UDim2.new(1, 0, 0, 220)
 multiFlingFrame.BackgroundColor3 = Color3.fromRGB(14, 14, 14)
 multiFlingFrame.BorderSizePixel = 0
+multiFlingFrame.LayoutOrder = 502
 multiFlingFrame.Parent = contentFrame
 
 local multiFlingCorner = Instance.new("UICorner")
@@ -2155,7 +2349,10 @@ deselectAllButton.MouseButton1Click:Connect(function()
 	toggleAllPlayers(false)
 end)
 
-createSection("Animations")
+-- ============================================
+-- SECTION 6: Animations (LayoutOrder 600-999) - ПОСЛЕДНИЙ
+-- ============================================
+createSection("Animations", 600)
 
 local animationSearchBox = Instance.new("TextBox")
 animationSearchBox.Name = "AnimationSearchBox"
@@ -2168,12 +2365,14 @@ animationSearchBox.Text = ""
 animationSearchBox.Font = Enum.Font.SourceSansBold
 animationSearchBox.TextSize = 16
 animationSearchBox.ClearTextOnFocus = false
+animationSearchBox.LayoutOrder = 601
 animationSearchBox.Parent = contentFrame
 
 local animationSearchCorner = Instance.new("UICorner")
 animationSearchCorner.CornerRadius = UDim.new(0, 6)
 animationSearchCorner.Parent = animationSearchBox
 
+local animLayoutOrder = 602
 for index = 1, #animationButtons, 2 do
 	local animationId = animationButtons[index]
 	local animationName = animationButtons[index + 1]
@@ -2181,7 +2380,9 @@ for index = 1, #animationButtons, 2 do
 	animationRow.Name = "AnimRow_" .. animationName:gsub("%W", "")
 	animationRow.Size = UDim2.new(1, 0, 0, 42)
 	animationRow.BackgroundTransparency = 1
+	animationRow.LayoutOrder = animLayoutOrder
 	animationRow.Parent = contentFrame
+	animLayoutOrder = animLayoutOrder + 1
 
 	local animationButton = Instance.new("TextButton")
 	animationButton.Name = "AnimButton_" .. animationName:gsub("%W", "")
@@ -2253,180 +2454,6 @@ refreshPlayerList()
 updateFlingStatus()
 updateFlickButtons()
 
-createSection("Combat")
-
-desyncButton = createButton("DesyncButton", "Desync: OFF")
-desyncButton.MouseButton1Click:Connect(function()
-	PastedSources = not PastedSources
-	setToggleState(desyncButton, PastedSources, "Desync: ON", "Desync: OFF")
-end)
-
-clumsyButton = createButton("ClumsyButton", "Clumsy: OFF")
-clumsyButton.MouseButton1Click:Connect(function()
-	clumsy_on = not clumsy_on
-	if clumsy_on then
-		local savedpos = game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame
-		task.wait()
-		game.Players.LocalPlayer.Character:MoveTo(savedpos.Position)
-		task.wait(0.15)
-		local Seat = Instance.new("Seat", game.Workspace)
-		Seat.Anchored = false
-		Seat.CanCollide = false
-		Seat.Name = "clumsychair"
-		Seat.Transparency = 1
-		Seat.CFrame = savedpos
-		local Weld = Instance.new("Weld", Seat)
-		Weld.Part0 = Seat
-		Weld.Part1 = game.Players.LocalPlayer.Character:FindFirstChild("Torso") or game.Players.LocalPlayer.Character.UpperTorso
-		task.wait()
-		Seat.CFrame = savedpos
-		game.StarterGui:SetCore("SendNotification", {Title = "Clumsy On"; Duration = 1; Text = "";})
-		setToggleState(clumsyButton, true, "Clumsy: ON", "Clumsy: OFF")
-	else
-		local chair = workspace:FindFirstChild("clumsychair")
-		if chair then
-			chair:Destroy()
-		end
-		game.StarterGui:SetCore("SendNotification", {Title = "Clumsy Off"; Duration = 1; Text = "";})
-		setToggleState(clumsyButton, false, "Clumsy: ON", "Clumsy: OFF")
-	end
-end)
-
-noclipButton = createButton("NoclipButton", "Noclip: OFF")
-noclipButton.MouseButton1Click:Connect(function()
-	toggleNoclip()
-	setToggleState(noclipButton, noclipEnabled, "Noclip: ON", "Noclip: OFF")
-end)
-
-reachButton, rangeInputBox = createDualRow("ReachButton", "KillAura: OFF", "Range", range)
-reachButton.MouseButton1Click:Connect(function()
-	toggleReach()
-	setToggleState(reachButton, reachEnabled, "KillAura: ON", "KillAura: OFF")
-end)
-
-rangeInputBox.FocusLost:Connect(function()
-	local val = tonumber(rangeInputBox.Text)
-	if val and val > 0 then
-		range = val
-	else
-		rangeInputBox.Text = tostring(range)
-	end
-end)
-
-touchFlingButton = createButton("TouchFlingButton", "Touch Fling: OFF")
-local hiddenfling = false
-local flingThread
-
-if not ReplicatedStorage:FindFirstChild("juisdfj0i32i0eidsuf0iok") then
-	local detection = Instance.new("Decal")
-	detection.Name = "juisdfj0i32i0eidsuf0iok"
-	detection.Parent = ReplicatedStorage
-end
-
-local function fling()
-	local lp = Players.LocalPlayer
-	local c, hrp, vel, movel = nil, nil, nil, 0.1
-	while hiddenfling do
-		RunService.Heartbeat:Wait()
-		c = lp.Character
-		hrp = c and c:FindFirstChild("HumanoidRootPart")
-		if hrp then
-			vel = hrp.Velocity
-			hrp.Velocity = vel * 10000 + Vector3.new(0, 10000, 0)
-			RunService.RenderStepped:Wait()
-			hrp.Velocity = vel
-			RunService.Stepped:Wait()
-			hrp.Velocity = vel + Vector3.new(0, movel, 0)
-			movel = -movel
-		end
-	end
-end
-
-touchFlingButton.MouseButton1Click:Connect(function()
-	hiddenfling = not hiddenfling
-	setToggleState(touchFlingButton, hiddenfling, "Touch Fling: ON", "Touch Fling: OFF")
-	if hiddenfling then
-		flingThread = coroutine.create(fling)
-		coroutine.resume(flingThread)
-	end
-end)
-
-espButton = createButton("EspButton", "Esp: OFF")
-espButton.MouseButton1Click:Connect(function()
-	toggleEsp()
-	setToggleState(espButton, espEnabled, "Esp: ON", "Esp: OFF")
-end)
-
-antiFlingButton = createButton("AntiFlingButton", "Anti-Fling: OFF")
-antiFlingButton.MouseButton1Click:Connect(function()
-	toggleAntiFling()
-	setToggleState(antiFlingButton, antiFlingEnabled, "Anti-Fling: ON", "Anti-Fling: OFF")
-end)
-
-antiVoidButton = createButton("AntiVoidButton", "Anti-Void: OFF")
-antiVoidButton.MouseButton1Click:Connect(function()
-	toggleAntiVoid()
-	setToggleState(antiVoidButton, antiVoidEnabled, "Anti-Void: ON", "Anti-Void: OFF")
-end)
-
-antiAimButton = createButton("AntiAimButton", "Anti-Aim: OFF")
-antiAimButton.MouseButton1Click:Connect(cycleMode)
-updateAntiAimButtonVisual()
-
-createSection("Utility")
-
-valueCalcButton = createButton("ValueCalcButton", "Trade Helper: OFF")
-valueCalcButton.MouseButton1Click:Connect(function()
-	isValueCalcEnabled = not isValueCalcEnabled
-
-	if isValueCalcEnabled then
-		valueCalcAddedConnection = playerGui.ChildAdded:Connect(function(child)
-			if child.Name == "TradeGUI" or child.Name == "TradeGUI_Phone" then
-				setupValueCalculator(child)
-			end
-		end)
-
-		local tg = playerGui:FindFirstChild("TradeGUI")
-		if tg then
-			setupValueCalculator(tg)
-		end
-
-		local tgp = playerGui:FindFirstChild("TradeGUI_Phone")
-		if tgp then
-			setupValueCalculator(tgp)
-		end
-
-		if firstValueCalc then
-			local function callback(Text)
-				if Text == "Supreme Values" then
-					setclipboard("https://supremevalues.com/")
-				end
-			end
-
-			local NotificationBindable = Instance.new("BindableFunction")
-			NotificationBindable.OnInvoke = callback
-
-			game.StarterGui:SetCore("SendNotification", {
-				Title = "Trade Helper";
-				Text = "Cracked by: Who? D A R K";
-				Icon = "";
-				Duration = 5;
-				Button1 = "Supreme Values";
-				Callback = NotificationBindable;
-			})
-
-			firstValueCalc = false
-		end
-	else
-		if valueCalcAddedConnection then
-			valueCalcAddedConnection:Disconnect()
-			valueCalcAddedConnection = nil
-		end
-	end
-
-	setToggleState(valueCalcButton, isValueCalcEnabled, "Trade Helper: ON", "Trade Helper: OFF")
-end)
-
 local menuVisible = true
 local contentVisible = true
 local isFrameLocked = false
@@ -2452,7 +2479,7 @@ end)
 local toggleButton = Instance.new("Frame")
 toggleButton.Name = "ToggleButton"
 toggleButton.Size = UDim2.new(0, 60, 0, 60)
-toggleButton.Position = UDim2.new(0.5, 900, 0.5, -465)
+toggleButton.Position = UDim2.new(0.5, -1275, 0.5, 185)
 toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 toggleButton.Active = true
 toggleButton.Parent = toggleGui
