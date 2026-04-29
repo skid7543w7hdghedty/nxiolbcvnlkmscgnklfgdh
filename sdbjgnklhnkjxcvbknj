@@ -1759,6 +1759,7 @@ autoGrabGunEnabled = false
 autoGrabGunConnections = {}
 autoGrabGunProcessed = {}
 autoGrabGunConnectedModels = {}
+autoGrabGunMagnets = {}
 
 autoGrabGunTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
@@ -1770,6 +1771,39 @@ function autoGrabGetRoot()
 	local char = player.Character
 	if not char then return nil end
 	return char:FindFirstChild("HumanoidRootPart")
+end
+
+function autoGrabStartMagnet(drop)
+	if autoGrabGunMagnets[drop] then return end
+	autoGrabGunMagnets[drop] = RunService.Heartbeat:Connect(function()
+		if not drop or not drop.Parent then
+			if autoGrabGunMagnets[drop] then
+				autoGrabGunMagnets[drop]:Disconnect()
+				autoGrabGunMagnets[drop] = nil
+			end
+			return
+		end
+		local root = autoGrabGetRoot()
+		if not root then return end
+		local cf = root.CFrame
+		if drop:IsA("BasePart") then
+			drop.CFrame = cf
+		elseif drop:IsA("Model") then
+			drop:PivotTo(cf)
+		else
+			local part = drop:FindFirstChildWhichIsA("BasePart", true)
+			if part then
+				part.CFrame = cf
+			end
+		end
+	end)
+end
+
+function autoGrabStopMagnet(drop)
+	if autoGrabGunMagnets[drop] then
+		autoGrabGunMagnets[drop]:Disconnect()
+		autoGrabGunMagnets[drop] = nil
+	end
 end
 
 function autoGrabClaimDrop(drop)
@@ -1807,6 +1841,13 @@ function autoGrabClaimDrop(drop)
 		end
 		drop.Parent = char
 	end
+	autoGrabStartMagnet(drop)
+	drop.AncestryChanged:Connect(function()
+		if not drop.Parent or drop.Parent == Workspace then
+			autoGrabStopMagnet(drop)
+			autoGrabGunProcessed[drop] = nil
+		end
+	end)
 end
 
 function autoGrabConnectModel(model)
@@ -1847,6 +1888,10 @@ function enableAutoGrabGun()
 	autoGrabGunEnabled = true
 	autoGrabGunProcessed = {}
 	autoGrabGunConnectedModels = {}
+	for drop, conn in pairs(autoGrabGunMagnets) do
+		conn:Disconnect()
+	end
+	autoGrabGunMagnets = {}
 	for model, conn in pairs(autoGrabGunConnections) do
 		if conn then conn:Disconnect() end
 	end
@@ -1873,6 +1918,10 @@ function enableAutoGrabGun()
 
 	table.insert(autoGrabGunConnections, player.CharacterAdded:Connect(function(char)
 		if not autoGrabGunEnabled then return end
+		for drop, conn in pairs(autoGrabGunMagnets) do
+			conn:Disconnect()
+		end
+		autoGrabGunMagnets = {}
 		autoGrabGunProcessed = {}
 		autoGrabGunConnectedModels = {}
 		char:WaitForChild("HumanoidRootPart")
@@ -1897,6 +1946,12 @@ function disableAutoGrabGun()
 		end
 	end
 	autoGrabGunConnections = {}
+	for drop, conn in pairs(autoGrabGunMagnets) do
+		if conn and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	autoGrabGunMagnets = {}
 	autoGrabGunProcessed = {}
 	autoGrabGunConnectedModels = {}
 end
@@ -1913,6 +1968,253 @@ btn.autoGrabGun = createButton("AutoGrabGunButton", "AutoGrab Gun: OFF", 107)
 btn.autoGrabGun.MouseButton1Click:Connect(function()
 	toggleAutoGrabGun()
 	setToggleState(btn.autoGrabGun, autoGrabGunEnabled, "AutoGrab Gun: ON", "AutoGrab Gun: OFF")
+end)
+
+-- Gun Aura
+gunAuraEnabled = false
+gunAuraConnections = {}
+gunAuraConnectedModels = {}
+gunAuraTrackedDrops = {}
+gunAuraMagnets = {}
+
+MAGNET_DISTANCE = 10
+
+gunAuraTargets = {
+	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
+	House2 = true, Workplace = true, Hospital = true, MilBase = true,
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
+}
+
+function gunAuraGetRoot()
+	local char = player.Character
+	if not char then return nil end
+	return char:FindFirstChild("HumanoidRootPart")
+end
+
+function gunAuraGetDropPosition(drop)
+	if drop:IsA("BasePart") then
+		return drop.Position
+	elseif drop:IsA("Model") then
+		local primary = drop.PrimaryPart
+		if primary then return primary.Position end
+		local part = drop:FindFirstChildWhichIsA("BasePart", true)
+		if part then return part.Position end
+	else
+		local part = drop:FindFirstChildWhichIsA("BasePart", true)
+		if part then return part.Position end
+	end
+	return nil
+end
+
+function gunAuraTeleportDrop(drop, cf)
+	if drop:IsA("BasePart") then
+		drop.CFrame = cf
+		drop.CanCollide = false
+		drop.Transparency = 1
+	elseif drop:IsA("Model") then
+		drop:PivotTo(cf)
+		for _, v in ipairs(drop:GetDescendants()) do
+			if v:IsA("BasePart") then
+				v.CanCollide = false
+				v.Transparency = 1
+			end
+		end
+	else
+		local part = drop:FindFirstChildWhichIsA("BasePart", true)
+		if part then
+			part.CFrame = cf
+			part.CanCollide = false
+			part.Transparency = 1
+		end
+	end
+end
+
+function gunAuraStartMagnet(drop)
+	if gunAuraMagnets[drop] then return end
+	gunAuraMagnets[drop] = RunService.Heartbeat:Connect(function()
+		if not drop or not drop.Parent then
+			if gunAuraMagnets[drop] then
+				gunAuraMagnets[drop]:Disconnect()
+				gunAuraMagnets[drop] = nil
+			end
+			gunAuraTrackedDrops[drop] = nil
+			return
+		end
+		local root = gunAuraGetRoot()
+		if not root then return end
+		gunAuraTeleportDrop(drop, root.CFrame)
+	end)
+end
+
+function gunAuraStopMagnet(drop)
+	if gunAuraMagnets[drop] then
+		gunAuraMagnets[drop]:Disconnect()
+		gunAuraMagnets[drop] = nil
+	end
+end
+
+function gunAuraTrackDrop(drop)
+	if gunAuraTrackedDrops[drop] then return end
+	gunAuraTrackedDrops[drop] = true
+	drop.AncestryChanged:Connect(function()
+		if not drop.Parent then
+			gunAuraTrackedDrops[drop] = nil
+			gunAuraStopMagnet(drop)
+		end
+	end)
+end
+
+function gunAuraConnectModel(model)
+	if gunAuraConnectedModels[model] then return end
+	gunAuraConnectedModels[model] = true
+	for _, child in ipairs(model:GetDescendants()) do
+		if child.Name == "GunDrop" then
+			gunAuraTrackDrop(child)
+		end
+	end
+	local conn = model.DescendantAdded:Connect(function(descendant)
+		if not gunAuraEnabled then return end
+		if descendant.Name == "GunDrop" then
+			gunAuraTrackDrop(descendant)
+		end
+	end)
+	gunAuraConnections[model] = conn
+	model.AncestryChanged:Connect(function()
+		if not model.Parent then
+			if gunAuraConnections[model] then
+				gunAuraConnections[model]:Disconnect()
+				gunAuraConnections[model] = nil
+				gunAuraConnectedModels[model] = nil
+			end
+		end
+	end)
+end
+
+function gunAuraScanWorkspace()
+	for _, obj in ipairs(Workspace:GetDescendants()) do
+		if obj:IsA("Model") and gunAuraTargets[obj.Name] then
+			gunAuraConnectModel(obj)
+		end
+	end
+end
+
+function enableGunAura()
+	gunAuraEnabled = true
+	gunAuraTrackedDrops = {}
+	gunAuraConnectedModels = {}
+	for drop, conn in pairs(gunAuraMagnets) do
+		conn:Disconnect()
+	end
+	gunAuraMagnets = {}
+	for model, conn in pairs(gunAuraConnections) do
+		if conn then conn:Disconnect() end
+	end
+	gunAuraConnections = {}
+
+	gunAuraScanWorkspace()
+
+	table.insert(gunAuraConnections, Workspace.DescendantAdded:Connect(function(obj)
+		if not gunAuraEnabled then return end
+		if obj:IsA("Model") and gunAuraTargets[obj.Name] then
+			gunAuraConnectModel(obj)
+		end
+		if obj.Name == "GunDrop" then
+			local parent = obj.Parent
+			while parent and parent ~= Workspace do
+				if gunAuraTargets[parent.Name] then
+					gunAuraTrackDrop(obj)
+					break
+				end
+				parent = parent.Parent
+			end
+		end
+	end))
+
+	table.insert(gunAuraConnections, player.CharacterAdded:Connect(function(char)
+		if not gunAuraEnabled then return end
+		for drop, conn in pairs(gunAuraMagnets) do
+			conn:Disconnect()
+		end
+		gunAuraMagnets = {}
+		gunAuraTrackedDrops = {}
+		gunAuraConnectedModels = {}
+		char:WaitForChild("HumanoidRootPart")
+		gunAuraScanWorkspace()
+	end))
+
+	-- Главный цикл проверки расстояния
+	table.insert(gunAuraConnections, RunService.Heartbeat:Connect(function()
+		if not gunAuraEnabled then return end
+		local root = gunAuraGetRoot()
+		if not root then return end
+		local playerPos = root.Position
+		local cf = root.CFrame
+		for drop in pairs(gunAuraTrackedDrops) do
+			if not drop or not drop.Parent then
+				gunAuraTrackedDrops[drop] = nil
+				gunAuraStopMagnet(drop)
+				continue
+			end
+			if gunAuraMagnets[drop] then continue end
+			local dropPos = gunAuraGetDropPosition(drop)
+			if not dropPos then continue end
+			local distance = (playerPos - dropPos).Magnitude
+			if distance <= MAGNET_DISTANCE then
+				gunAuraTeleportDrop(drop, cf)
+				gunAuraStartMagnet(drop)
+			end
+		end
+	end))
+
+	task.spawn(function()
+		while gunAuraEnabled do
+			task.wait(10)
+			if gunAuraEnabled then
+				gunAuraScanWorkspace()
+			end
+		end
+	end)
+end
+
+function disableGunAura()
+	gunAuraEnabled = false
+	for model, conn in pairs(gunAuraConnections) do
+		if typeof(conn) == "RBXScriptConnection" and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	gunAuraConnections = {}
+	for drop, conn in pairs(gunAuraMagnets) do
+		if conn and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	gunAuraMagnets = {}
+	gunAuraTrackedDrops = {}
+	gunAuraConnectedModels = {}
+end
+
+function toggleGunAura()
+	if gunAuraEnabled then
+		disableGunAura()
+	else
+		enableGunAura()
+	end
+end
+
+btn.gunAura, ui.magnetDistInput = createDualRow("GunAuraButton", "Gun Aura: OFF", "Dist", MAGNET_DISTANCE, 108)
+btn.gunAura.MouseButton1Click:Connect(function()
+	toggleGunAura()
+	setToggleState(btn.gunAura, gunAuraEnabled, "Gun Aura: ON", "Gun Aura: OFF")
+end)
+
+ui.magnetDistInput.FocusLost:Connect(function()
+	local val = tonumber(ui.magnetDistInput.Text)
+	if val and val > 0 then
+		MAGNET_DISTANCE = val
+	else
+		ui.magnetDistInput.Text = tostring(MAGNET_DISTANCE)
+	end
 end)
 
 -- Auto Delete Coins
@@ -2015,7 +2317,7 @@ function toggleAutoDeleteCoins()
 	end
 end
 
-btn.autoDeleteCoins = createButton("AutoDeleteCoinsButton", "Auto Delete Coins: OFF", 108)
+btn.autoDeleteCoins = createButton("AutoDeleteCoinsButton", "Auto Delete Coins: OFF", 109)
 btn.autoDeleteCoins.MouseButton1Click:Connect(function()
 	toggleAutoDeleteCoins()
 	setToggleState(btn.autoDeleteCoins, autoDeleteCoinsEnabled, "Auto Delete Coins: ON", "Auto Delete Coins: OFF")
