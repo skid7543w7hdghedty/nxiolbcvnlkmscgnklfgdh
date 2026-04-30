@@ -423,33 +423,33 @@ end
 -- ============================================
 -- ESP variables and functions
 -- ============================================
-local espEnabled = false
+espEnabled = false
 
-local ESP_HL_TAG = "_WH"
-local ESP_BB_TAG = "_WBB"
-local ESP_GUN_HL_TAG = "_GunHL"
-local ESP_GUN_BB_TAG = "_GunBB"
+ESP_DEFAULT_COLOR  = Color3.fromRGB(0, 255, 100)
+ESP_MURDERER_COLOR = Color3.fromRGB(255, 0, 0)
+ESP_SHERIFF_COLOR  = Color3.fromRGB(0, 100, 255)
+ESP_HERO_COLOR     = Color3.fromRGB(255, 215, 0)
+ESP_GUN_COLOR      = Color3.fromRGB(255, 170, 0)
+ESP_FILL_ALPHA     = 1
+ESP_OUTLINE_ALPHA  = 0
 
-local ESP_DEFAULT_COLOR  = Color3.fromRGB(0, 255, 100)
-local ESP_MURDERER_COLOR = Color3.fromRGB(255, 0, 0)
-local ESP_SHERIFF_COLOR  = Color3.fromRGB(0, 100, 255)
-local ESP_HERO_COLOR     = Color3.fromRGB(255, 215, 0)
-local ESP_GUN_COLOR      = Color3.fromRGB(255, 140, 0)
-local ESP_FILL_ALPHA     = 1
-local ESP_OUTLINE_ALPHA  = 0
+ESP_HL_TAG     = "_WH"
+ESP_BB_TAG     = "_WBB"
+ESP_GUN_HL_TAG = "_GunHL"
+ESP_GUN_BB_TAG = "_GunBB"
 
-local espTrackedData = {}
-local espTrackedGuns = {}
-local espConnections = {}
-local espRoles = nil
+espTrackedData = {}
+espTrackedGuns = {}
+espConnections = {}
+espRoles = nil
 
-local ESP_MAP_NAMES = {
+ESP_MAP_NAMES = {
 	"Hotel", "Factory", "BioLab", "Mansion2", "House2",
 	"Workplace", "Hospital", "MilBase", "Bank2", "Office3",
 	"ResearchFacility"
 }
 
-local function espGetRoleColor(plr)
+function espGetRoleColor(plr)
 	if not espRoles then return ESP_DEFAULT_COLOR end
 	local data = espRoles[plr.Name]
 	if not data then return ESP_DEFAULT_COLOR end
@@ -459,7 +459,7 @@ local function espGetRoleColor(plr)
 	else return ESP_DEFAULT_COLOR end
 end
 
-local function espGetRoleName(plr)
+function espGetRoleName(plr)
 	if not espRoles then return "" end
 	local data = espRoles[plr.Name]
 	if not data then return "" end
@@ -470,18 +470,20 @@ local function espGetRoleName(plr)
 	else return "" end
 end
 
-local function espGetDistFromPos(position)
+function espGetDist(character)
+	local c = player.Character
+	if not c or not c:FindFirstChild("HumanoidRootPart") then return nil end
+	if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
+	return math.floor((c.HumanoidRootPart.Position - character.HumanoidRootPart.Position).Magnitude)
+end
+
+function espGetDistFromPos(position)
 	local c = player.Character
 	if not c or not c:FindFirstChild("HumanoidRootPart") then return nil end
 	return math.floor((c.HumanoidRootPart.Position - position).Magnitude)
 end
 
-local function espGetDist(character)
-	if not character or not character:FindFirstChild("HumanoidRootPart") then return nil end
-	return espGetDistFromPos(character.HumanoidRootPart.Position)
-end
-
-local function espGetOrMakeHighlight(character)
+function espGetOrMakeHighlight(character)
 	local h = character:FindFirstChild(ESP_HL_TAG)
 	if h and h:IsA("Highlight") then return h end
 	if h then h:Destroy() end
@@ -497,7 +499,7 @@ local function espGetOrMakeHighlight(character)
 	return hl
 end
 
-local function espGetOrMakeBillboard(character)
+function espGetOrMakeBillboard(character)
 	local head = character:FindFirstChild("Head")
 	if not head then return nil, nil end
 	local bb = head:FindFirstChild(ESP_BB_TAG)
@@ -516,7 +518,6 @@ local function espGetOrMakeBillboard(character)
 	local nameLabel = Instance.new("TextLabel")
 	nameLabel.Name = "NameLabel"
 	nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
-	nameLabel.Position = UDim2.new(0, 0, 0, 0)
 	nameLabel.BackgroundTransparency = 1
 	nameLabel.Text = ""
 	nameLabel.Font = Enum.Font.GothamBold
@@ -540,66 +541,66 @@ local function espGetOrMakeBillboard(character)
 	return nameLabel, distLabel
 end
 
-local function espGetGunPosition(gunDrop)
-	local primary = gunDrop.PrimaryPart
-	if primary then return primary.Position end
-	for _, part in ipairs(gunDrop:GetDescendants()) do
-		if part:IsA("BasePart") then return part.Position end
+function espGetGunPosition(gunDrop)
+	if gunDrop:IsA("BasePart") then return gunDrop.Position end
+	if gunDrop.PrimaryPart then return gunDrop.PrimaryPart.Position end
+	for _, child in ipairs(gunDrop:GetDescendants()) do
+		if child:IsA("BasePart") then return child.Position end
 	end
 	return nil
 end
 
-local function espCreateGunHighlight(gunDrop)
-	local h = gunDrop:FindFirstChild(ESP_GUN_HL_TAG)
-	if h and h:IsA("Highlight") then return h end
-	if h then h:Destroy() end
+function espCreateGunHighlight(gunDrop)
+	local existing = gunDrop:FindFirstChild(ESP_GUN_HL_TAG)
+	if existing then existing:Destroy() end
 	local hl = Instance.new("Highlight")
 	hl.Name = ESP_GUN_HL_TAG
 	hl.Adornee = gunDrop
 	hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-	hl.FillTransparency = ESP_FILL_ALPHA
-	hl.OutlineTransparency = ESP_OUTLINE_ALPHA
+	hl.FillTransparency = 0.5
+	hl.OutlineTransparency = 0
 	hl.FillColor = ESP_GUN_COLOR
 	hl.OutlineColor = ESP_GUN_COLOR
 	hl.Parent = gunDrop
 	return hl
 end
 
-local function espCreateGunBillboard(gunDrop)
-	local adornee = gunDrop.PrimaryPart
-	if not adornee then
-		for _, part in ipairs(gunDrop:GetDescendants()) do
-			if part:IsA("BasePart") then adornee = part break end
+function espCreateGunBillboard(gunDrop)
+	local adornee = nil
+	if gunDrop:IsA("BasePart") then
+		adornee = gunDrop
+	elseif gunDrop.PrimaryPart then
+		adornee = gunDrop.PrimaryPart
+	else
+		for _, child in ipairs(gunDrop:GetDescendants()) do
+			if child:IsA("BasePart") then adornee = child break end
 		end
 	end
 	if not adornee then return nil, nil end
-	local bb = adornee:FindFirstChild(ESP_GUN_BB_TAG)
-	if bb and bb:IsA("BillboardGui") then
-		return bb:FindFirstChild("GunLabel"), bb:FindFirstChild("GunDistLabel")
-	end
-	if bb then bb:Destroy() end
+	local existing = adornee:FindFirstChild(ESP_GUN_BB_TAG)
+	if existing then existing:Destroy() end
 	local billboard = Instance.new("BillboardGui")
 	billboard.Name = ESP_GUN_BB_TAG
 	billboard.Adornee = adornee
 	billboard.AlwaysOnTop = true
-	billboard.Size = UDim2.new(0, 160, 0, 40)
+	billboard.Size = UDim2.new(0, 200, 0, 40)
 	billboard.StudsOffset = Vector3.new(0, 2, 0)
 	billboard.ResetOnSpawn = false
 	billboard.Parent = adornee
-	local gunLabel = Instance.new("TextLabel")
-	gunLabel.Name = "GunLabel"
-	gunLabel.Size = UDim2.new(1, 0, 0.5, 0)
-	gunLabel.Position = UDim2.new(0, 0, 0, 0)
-	gunLabel.BackgroundTransparency = 1
-	gunLabel.Text = "🔫 GUN"
-	gunLabel.Font = Enum.Font.GothamBold
-	gunLabel.TextSize = 14
-	gunLabel.TextColor3 = ESP_GUN_COLOR
-	gunLabel.TextStrokeTransparency = 1
-	gunLabel.TextScaled = false
-	gunLabel.Parent = billboard
+	local nameLabel = Instance.new("TextLabel")
+	nameLabel.Name = "NameLabel"
+	nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
+	nameLabel.BackgroundTransparency = 1
+	nameLabel.Text = "🔫 GUN"
+	nameLabel.Font = Enum.Font.GothamBold
+	nameLabel.TextSize = 14
+	nameLabel.TextColor3 = ESP_GUN_COLOR
+	nameLabel.TextStrokeTransparency = 0.5
+	nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	nameLabel.TextScaled = false
+	nameLabel.Parent = billboard
 	local distLabel = Instance.new("TextLabel")
-	distLabel.Name = "GunDistLabel"
+	distLabel.Name = "DistLabel"
 	distLabel.Size = UDim2.new(1, 0, 0.5, 0)
 	distLabel.Position = UDim2.new(0, 0, 0.5, 0)
 	distLabel.BackgroundTransparency = 1
@@ -607,71 +608,51 @@ local function espCreateGunBillboard(gunDrop)
 	distLabel.Font = Enum.Font.Gotham
 	distLabel.TextSize = 11
 	distLabel.TextColor3 = ESP_GUN_COLOR
-	distLabel.TextStrokeTransparency = 1
+	distLabel.TextStrokeTransparency = 0.5
+	distLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
 	distLabel.TextScaled = false
 	distLabel.Parent = billboard
-	return gunLabel, distLabel
+	return nameLabel, distLabel
 end
 
-local function espCleanGun(gunDrop)
+function espCleanGun(gunDrop)
+	if not gunDrop then return end
 	local hl = gunDrop:FindFirstChild(ESP_GUN_HL_TAG)
 	if hl then hl:Destroy() end
-	for _, part in ipairs(gunDrop:GetDescendants()) do
-		if part:IsA("BasePart") then
-			local bb = part:FindFirstChild(ESP_GUN_BB_TAG)
+	for _, child in ipairs(gunDrop:GetDescendants()) do
+		if child:IsA("BasePart") then
+			local bb = child:FindFirstChild(ESP_GUN_BB_TAG)
 			if bb then bb:Destroy() end
 		end
 	end
+	if gunDrop:IsA("BasePart") then
+		local bb = gunDrop:FindFirstChild(ESP_GUN_BB_TAG)
+		if bb then bb:Destroy() end
+	end
 end
 
-local function espUpdateGun(gunDrop)
-	if not gunDrop or not gunDrop.Parent then
-		espCleanGun(gunDrop)
-		return
-	end
+function espHookGunDrop(gunDrop)
+	if espTrackedGuns[gunDrop] then return end
 	espCreateGunHighlight(gunDrop)
 	local _, distLabel = espCreateGunBillboard(gunDrop)
-	if distLabel then
-		local pos = espGetGunPosition(gunDrop)
-		if pos then
-			local dist = espGetDistFromPos(pos)
-			distLabel.Text = dist and "[" .. tostring(dist) .. "m]" or ""
-		end
-	end
-end
-
-local function espScanForGuns()
-	local found = {}
-	for _, mapName in ipairs(ESP_MAP_NAMES) do
-		local map = Workspace:FindFirstChild(mapName)
-		if map then
-			for _, obj in ipairs(map:GetDescendants()) do
-				if obj.Name == "GunDrop" and obj:IsA("Model") then
-					table.insert(found, obj)
-				end
-			end
-		end
-	end
-	for _, obj in ipairs(Workspace:GetChildren()) do
-		if obj.Name == "GunDrop" and obj:IsA("Model") then
-			table.insert(found, obj)
-		end
-	end
-	return found
-end
-
-local function espHookGunDrop(gunDrop)
-	if espTrackedGuns[gunDrop] then return end
 	local conn = RunService.Heartbeat:Connect(function()
 		if not espEnabled then return end
 		if not gunDrop or not gunDrop.Parent then return end
-		espUpdateGun(gunDrop)
+		if distLabel then
+			local pos = espGetGunPosition(gunDrop)
+			if pos then
+				local dist = espGetDistFromPos(pos)
+				distLabel.Text = dist and ("[" .. tostring(dist) .. "m]") or ""
+			end
+		end
 	end)
-	espTrackedGuns[gunDrop] = conn
+	espTrackedGuns[gunDrop] = { conn = conn }
 	gunDrop.AncestryChanged:Connect(function(_, parent)
 		if not parent then
 			if espTrackedGuns[gunDrop] then
-				espTrackedGuns[gunDrop]:Disconnect()
+				if espTrackedGuns[gunDrop].conn then
+					espTrackedGuns[gunDrop].conn:Disconnect()
+				end
 				espTrackedGuns[gunDrop] = nil
 			end
 			espCleanGun(gunDrop)
@@ -679,7 +660,31 @@ local function espHookGunDrop(gunDrop)
 	end)
 end
 
-local function espUpdatePlayer(plr)
+function espFindGunDropsInModel(mapModel)
+	for _, child in ipairs(mapModel:GetDescendants()) do
+		if child.Name == "GunDrop" then
+			task.spawn(espHookGunDrop, child)
+		end
+	end
+	local mapConn = mapModel.DescendantAdded:Connect(function(descendant)
+		if not espEnabled then return end
+		if descendant.Name == "GunDrop" then
+			task.spawn(espHookGunDrop, descendant)
+		end
+	end)
+	table.insert(espConnections, mapConn)
+end
+
+function espScanForMaps()
+	for _, mapName in ipairs(ESP_MAP_NAMES) do
+		local mapModel = Workspace:FindFirstChild(mapName)
+		if mapModel then
+			espFindGunDropsInModel(mapModel)
+		end
+	end
+end
+
+function espUpdatePlayer(plr)
 	if plr == player then return end
 	local character = plr.Character
 	if not character or not character:FindFirstChild("HumanoidRootPart") then return end
@@ -700,7 +705,7 @@ local function espUpdatePlayer(plr)
 	end
 end
 
-local function espCleanCharacter(character)
+function espCleanCharacter(character)
 	if not character then return end
 	local oldHl = character:FindFirstChild(ESP_HL_TAG)
 	if oldHl then oldHl:Destroy() end
@@ -711,7 +716,7 @@ local function espCleanCharacter(character)
 	end
 end
 
-local function espHookCharacter(plr, character)
+function espHookCharacter(plr, character)
 	character:WaitForChild("HumanoidRootPart", 10)
 	local conn = RunService.Heartbeat:Connect(function()
 		if not espEnabled then return end
@@ -731,7 +736,7 @@ local function espHookCharacter(plr, character)
 	end)
 end
 
-local function espHookPlayer(plr)
+function espHookPlayer(plr)
 	if plr == player then return end
 	if plr.Character then task.spawn(espHookCharacter, plr, plr.Character) end
 	local charAddedConn = plr.CharacterAdded:Connect(function(character)
@@ -740,42 +745,41 @@ local function espHookPlayer(plr)
 	table.insert(espConnections, charAddedConn)
 end
 
-local function espCleanAll()
+function espCleanAll()
 	for plr, data in pairs(espTrackedData) do
 		if data.conn then data.conn:Disconnect() end
 		espCleanCharacter(data.character)
 	end
 	espTrackedData = {}
-	for gunDrop, conn in pairs(espTrackedGuns) do
-		if conn then conn:Disconnect() end
+	for gunDrop, data in pairs(espTrackedGuns) do
+		if data.conn then data.conn:Disconnect() end
 		espCleanGun(gunDrop)
 	end
 	espTrackedGuns = {}
 	for _, conn in ipairs(espConnections) do
-		conn:Disconnect()
+		if typeof(conn) == "RBXScriptConnection" and conn.Connected then
+			conn:Disconnect()
+		end
 	end
 	espConnections = {}
 	espRoles = nil
 end
 
-local function espEnableAll()
+function espEnableAll()
+	-- Hook players
 	for _, plr in ipairs(Players:GetPlayers()) do
 		task.spawn(espHookPlayer, plr)
 	end
-
-	local addedConn = Players.PlayerAdded:Connect(function(plr)
+	table.insert(espConnections, Players.PlayerAdded:Connect(function(plr)
 		espHookPlayer(plr)
-	end)
-	table.insert(espConnections, addedConn)
-
-	local removingConn = Players.PlayerRemoving:Connect(function(plr)
+	end))
+	table.insert(espConnections, Players.PlayerRemoving:Connect(function(plr)
 		local data = espTrackedData[plr]
 		if not data then return end
 		if data.conn then data.conn:Disconnect() end
 		espCleanCharacter(data.character)
 		espTrackedData[plr] = nil
-	end)
-	table.insert(espConnections, removingConn)
+	end))
 
 	-- Roles loop
 	task.spawn(function()
@@ -790,59 +794,40 @@ local function espEnableAll()
 		end
 	end)
 
-	-- Gun scan loop
-	task.spawn(function()
-		while espEnabled do
-			local guns = espScanForGuns()
-			for _, gunDrop in ipairs(guns) do
-				espHookGunDrop(gunDrop)
-			end
-			task.wait(1)
-		end
-	end)
+	-- Gun ESP: scan existing maps
+	espScanForMaps()
 
-	-- New maps and GunDrops in Workspace
-	local wsConn = Workspace.ChildAdded:Connect(function(obj)
+	-- Gun ESP: watch for new maps
+	table.insert(espConnections, Workspace.ChildAdded:Connect(function(child)
 		if not espEnabled then return end
-		if table.find(ESP_MAP_NAMES, obj.Name) then
-			task.wait(1)
-			obj.DescendantAdded:Connect(function(desc)
-				if not espEnabled then return end
-				if desc.Name == "GunDrop" and desc:IsA("Model") then
-					task.wait(0.5)
-					espHookGunDrop(desc)
-				end
-			end)
-			for _, desc in ipairs(obj:GetDescendants()) do
-				if desc.Name == "GunDrop" and desc:IsA("Model") then
-					espHookGunDrop(desc)
-				end
+		for _, mapName in ipairs(ESP_MAP_NAMES) do
+			if child.Name == mapName then
+				task.wait(0.5)
+				espFindGunDropsInModel(child)
+				break
 			end
 		end
-		if obj.Name == "GunDrop" and obj:IsA("Model") then
-			task.wait(0.5)
-			espHookGunDrop(obj)
-		end
-	end)
-	table.insert(espConnections, wsConn)
+	end))
 
-	-- Hook existing maps
-	for _, mapName in ipairs(ESP_MAP_NAMES) do
-		local map = Workspace:FindFirstChild(mapName)
-		if map then
-			local mapConn = map.DescendantAdded:Connect(function(obj)
-				if not espEnabled then return end
-				if obj.Name == "GunDrop" and obj:IsA("Model") then
-					task.wait(0.5)
-					espHookGunDrop(obj)
+	-- Gun ESP: watch for GunDrop anywhere inside map hierarchy
+	table.insert(espConnections, Workspace.DescendantAdded:Connect(function(descendant)
+		if not espEnabled then return end
+		if descendant.Name == "GunDrop" then
+			local parent = descendant.Parent
+			while parent and parent ~= Workspace do
+				for _, mapName in ipairs(ESP_MAP_NAMES) do
+					if parent.Name == mapName then
+						task.spawn(espHookGunDrop, descendant)
+						return
+					end
 				end
-			end)
-			table.insert(espConnections, mapConn)
+				parent = parent.Parent
+			end
 		end
-	end
+	end))
 end
 
-local function toggleEsp()
+function toggleEsp()
 	espEnabled = not espEnabled
 	if espEnabled then
 		espEnableAll()
@@ -2014,6 +1999,7 @@ autoGrabGunEnabled = false
 autoGrabGunConnections = {}
 autoGrabGunProcessed = {}
 autoGrabGunConnectedModels = {}
+autoGrabGunMagnets = {}
 
 autoGrabGunTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
@@ -2025,6 +2011,39 @@ function autoGrabGetRoot()
 	local char = player.Character
 	if not char then return nil end
 	return char:FindFirstChild("HumanoidRootPart")
+end
+
+function autoGrabStartMagnet(drop)
+	if autoGrabGunMagnets[drop] then return end
+	autoGrabGunMagnets[drop] = RunService.Heartbeat:Connect(function()
+		if not drop or not drop.Parent then
+			if autoGrabGunMagnets[drop] then
+				autoGrabGunMagnets[drop]:Disconnect()
+				autoGrabGunMagnets[drop] = nil
+			end
+			return
+		end
+		local root = autoGrabGetRoot()
+		if not root then return end
+		local cf = root.CFrame
+		if drop:IsA("BasePart") then
+			drop.CFrame = cf
+		elseif drop:IsA("Model") then
+			drop:PivotTo(cf)
+		else
+			local part = drop:FindFirstChildWhichIsA("BasePart", true)
+			if part then
+				part.CFrame = cf
+			end
+		end
+	end)
+end
+
+function autoGrabStopMagnet(drop)
+	if autoGrabGunMagnets[drop] then
+		autoGrabGunMagnets[drop]:Disconnect()
+		autoGrabGunMagnets[drop] = nil
+	end
 end
 
 function autoGrabClaimDrop(drop)
@@ -2062,6 +2081,13 @@ function autoGrabClaimDrop(drop)
 		end
 		drop.Parent = char
 	end
+	autoGrabStartMagnet(drop)
+	drop.AncestryChanged:Connect(function()
+		if not drop.Parent or drop.Parent == Workspace then
+			autoGrabStopMagnet(drop)
+			autoGrabGunProcessed[drop] = nil
+		end
+	end)
 end
 
 function autoGrabConnectModel(model)
@@ -2102,6 +2128,10 @@ function enableAutoGrabGun()
 	autoGrabGunEnabled = true
 	autoGrabGunProcessed = {}
 	autoGrabGunConnectedModels = {}
+	for drop, conn in pairs(autoGrabGunMagnets) do
+		conn:Disconnect()
+	end
+	autoGrabGunMagnets = {}
 	for model, conn in pairs(autoGrabGunConnections) do
 		if conn then conn:Disconnect() end
 	end
@@ -2128,6 +2158,10 @@ function enableAutoGrabGun()
 
 	table.insert(autoGrabGunConnections, player.CharacterAdded:Connect(function(char)
 		if not autoGrabGunEnabled then return end
+		for drop, conn in pairs(autoGrabGunMagnets) do
+			conn:Disconnect()
+		end
+		autoGrabGunMagnets = {}
 		autoGrabGunProcessed = {}
 		autoGrabGunConnectedModels = {}
 		char:WaitForChild("HumanoidRootPart")
@@ -2152,6 +2186,12 @@ function disableAutoGrabGun()
 		end
 	end
 	autoGrabGunConnections = {}
+	for drop, conn in pairs(autoGrabGunMagnets) do
+		if conn and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	autoGrabGunMagnets = {}
 	autoGrabGunProcessed = {}
 	autoGrabGunConnectedModels = {}
 end
@@ -2168,6 +2208,253 @@ btn.autoGrabGun = createButton("AutoGrabGunButton", "AutoGrab Gun: OFF", 107)
 btn.autoGrabGun.MouseButton1Click:Connect(function()
 	toggleAutoGrabGun()
 	setToggleState(btn.autoGrabGun, autoGrabGunEnabled, "AutoGrab Gun: ON", "AutoGrab Gun: OFF")
+end)
+
+-- Gun Aura
+gunAuraEnabled = false
+gunAuraConnections = {}
+gunAuraConnectedModels = {}
+gunAuraTrackedDrops = {}
+gunAuraMagnets = {}
+
+MAGNET_DISTANCE = 10
+
+gunAuraTargets = {
+	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
+	House2 = true, Workplace = true, Hospital = true, MilBase = true,
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
+}
+
+function gunAuraGetRoot()
+	local char = player.Character
+	if not char then return nil end
+	return char:FindFirstChild("HumanoidRootPart")
+end
+
+function gunAuraGetDropPosition(drop)
+	if drop:IsA("BasePart") then
+		return drop.Position
+	elseif drop:IsA("Model") then
+		local primary = drop.PrimaryPart
+		if primary then return primary.Position end
+		local part = drop:FindFirstChildWhichIsA("BasePart", true)
+		if part then return part.Position end
+	else
+		local part = drop:FindFirstChildWhichIsA("BasePart", true)
+		if part then return part.Position end
+	end
+	return nil
+end
+
+function gunAuraTeleportDrop(drop, cf)
+	if drop:IsA("BasePart") then
+		drop.CFrame = cf
+		drop.CanCollide = false
+		drop.Transparency = 1
+	elseif drop:IsA("Model") then
+		drop:PivotTo(cf)
+		for _, v in ipairs(drop:GetDescendants()) do
+			if v:IsA("BasePart") then
+				v.CanCollide = false
+				v.Transparency = 1
+			end
+		end
+	else
+		local part = drop:FindFirstChildWhichIsA("BasePart", true)
+		if part then
+			part.CFrame = cf
+			part.CanCollide = false
+			part.Transparency = 1
+		end
+	end
+end
+
+function gunAuraStartMagnet(drop)
+	if gunAuraMagnets[drop] then return end
+	gunAuraMagnets[drop] = RunService.Heartbeat:Connect(function()
+		if not drop or not drop.Parent then
+			if gunAuraMagnets[drop] then
+				gunAuraMagnets[drop]:Disconnect()
+				gunAuraMagnets[drop] = nil
+			end
+			gunAuraTrackedDrops[drop] = nil
+			return
+		end
+		local root = gunAuraGetRoot()
+		if not root then return end
+		gunAuraTeleportDrop(drop, root.CFrame)
+	end)
+end
+
+function gunAuraStopMagnet(drop)
+	if gunAuraMagnets[drop] then
+		gunAuraMagnets[drop]:Disconnect()
+		gunAuraMagnets[drop] = nil
+	end
+end
+
+function gunAuraTrackDrop(drop)
+	if gunAuraTrackedDrops[drop] then return end
+	gunAuraTrackedDrops[drop] = true
+	drop.AncestryChanged:Connect(function()
+		if not drop.Parent then
+			gunAuraTrackedDrops[drop] = nil
+			gunAuraStopMagnet(drop)
+		end
+	end)
+end
+
+function gunAuraConnectModel(model)
+	if gunAuraConnectedModels[model] then return end
+	gunAuraConnectedModels[model] = true
+	for _, child in ipairs(model:GetDescendants()) do
+		if child.Name == "GunDrop" then
+			gunAuraTrackDrop(child)
+		end
+	end
+	local conn = model.DescendantAdded:Connect(function(descendant)
+		if not gunAuraEnabled then return end
+		if descendant.Name == "GunDrop" then
+			gunAuraTrackDrop(descendant)
+		end
+	end)
+	gunAuraConnections[model] = conn
+	model.AncestryChanged:Connect(function()
+		if not model.Parent then
+			if gunAuraConnections[model] then
+				gunAuraConnections[model]:Disconnect()
+				gunAuraConnections[model] = nil
+				gunAuraConnectedModels[model] = nil
+			end
+		end
+	end)
+end
+
+function gunAuraScanWorkspace()
+	for _, obj in ipairs(Workspace:GetDescendants()) do
+		if obj:IsA("Model") and gunAuraTargets[obj.Name] then
+			gunAuraConnectModel(obj)
+		end
+	end
+end
+
+function enableGunAura()
+	gunAuraEnabled = true
+	gunAuraTrackedDrops = {}
+	gunAuraConnectedModels = {}
+	for drop, conn in pairs(gunAuraMagnets) do
+		conn:Disconnect()
+	end
+	gunAuraMagnets = {}
+	for model, conn in pairs(gunAuraConnections) do
+		if conn then conn:Disconnect() end
+	end
+	gunAuraConnections = {}
+
+	gunAuraScanWorkspace()
+
+	table.insert(gunAuraConnections, Workspace.DescendantAdded:Connect(function(obj)
+		if not gunAuraEnabled then return end
+		if obj:IsA("Model") and gunAuraTargets[obj.Name] then
+			gunAuraConnectModel(obj)
+		end
+		if obj.Name == "GunDrop" then
+			local parent = obj.Parent
+			while parent and parent ~= Workspace do
+				if gunAuraTargets[parent.Name] then
+					gunAuraTrackDrop(obj)
+					break
+				end
+				parent = parent.Parent
+			end
+		end
+	end))
+
+	table.insert(gunAuraConnections, player.CharacterAdded:Connect(function(char)
+		if not gunAuraEnabled then return end
+		for drop, conn in pairs(gunAuraMagnets) do
+			conn:Disconnect()
+		end
+		gunAuraMagnets = {}
+		gunAuraTrackedDrops = {}
+		gunAuraConnectedModels = {}
+		char:WaitForChild("HumanoidRootPart")
+		gunAuraScanWorkspace()
+	end))
+
+	-- Главный цикл проверки расстояния
+	table.insert(gunAuraConnections, RunService.Heartbeat:Connect(function()
+		if not gunAuraEnabled then return end
+		local root = gunAuraGetRoot()
+		if not root then return end
+		local playerPos = root.Position
+		local cf = root.CFrame
+		for drop in pairs(gunAuraTrackedDrops) do
+			if not drop or not drop.Parent then
+				gunAuraTrackedDrops[drop] = nil
+				gunAuraStopMagnet(drop)
+				continue
+			end
+			if gunAuraMagnets[drop] then continue end
+			local dropPos = gunAuraGetDropPosition(drop)
+			if not dropPos then continue end
+			local distance = (playerPos - dropPos).Magnitude
+			if distance <= MAGNET_DISTANCE then
+				gunAuraTeleportDrop(drop, cf)
+				gunAuraStartMagnet(drop)
+			end
+		end
+	end))
+
+	task.spawn(function()
+		while gunAuraEnabled do
+			task.wait(10)
+			if gunAuraEnabled then
+				gunAuraScanWorkspace()
+			end
+		end
+	end)
+end
+
+function disableGunAura()
+	gunAuraEnabled = false
+	for model, conn in pairs(gunAuraConnections) do
+		if typeof(conn) == "RBXScriptConnection" and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	gunAuraConnections = {}
+	for drop, conn in pairs(gunAuraMagnets) do
+		if conn and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	gunAuraMagnets = {}
+	gunAuraTrackedDrops = {}
+	gunAuraConnectedModels = {}
+end
+
+function toggleGunAura()
+	if gunAuraEnabled then
+		disableGunAura()
+	else
+		enableGunAura()
+	end
+end
+
+btn.gunAura, ui.magnetDistInput = createDualRow("GunAuraButton", "Gun Aura: OFF", "Dist", MAGNET_DISTANCE, 108)
+btn.gunAura.MouseButton1Click:Connect(function()
+	toggleGunAura()
+	setToggleState(btn.gunAura, gunAuraEnabled, "Gun Aura: ON", "Gun Aura: OFF")
+end)
+
+ui.magnetDistInput.FocusLost:Connect(function()
+	local val = tonumber(ui.magnetDistInput.Text)
+	if val and val > 0 then
+		MAGNET_DISTANCE = val
+	else
+		ui.magnetDistInput.Text = tostring(MAGNET_DISTANCE)
+	end
 end)
 
 -- Auto Delete Coins
@@ -2270,7 +2557,7 @@ function toggleAutoDeleteCoins()
 	end
 end
 
-btn.autoDeleteCoins = createButton("AutoDeleteCoinsButton", "Auto Delete Coins: OFF", 108)
+btn.autoDeleteCoins = createButton("AutoDeleteCoinsButton", "Auto Delete Coins: OFF", 109)
 btn.autoDeleteCoins.MouseButton1Click:Connect(function()
 	toggleAutoDeleteCoins()
 	setToggleState(btn.autoDeleteCoins, autoDeleteCoinsEnabled, "Auto Delete Coins: ON", "Auto Delete Coins: OFF")
