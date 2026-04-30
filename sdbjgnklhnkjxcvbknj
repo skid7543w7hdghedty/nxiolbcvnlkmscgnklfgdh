@@ -425,10 +425,10 @@ end
 -- ============================================
 espEnabled = false
 
-ESP_DEFAULT_COLOR  = Color3.fromRGB(0, 255, 100)
+ESP_DEFAULT_COLOR  = Color3.fromRGB(0, 255, 0)
 ESP_MURDERER_COLOR = Color3.fromRGB(255, 0, 0)
-ESP_SHERIFF_COLOR  = Color3.fromRGB(0, 100, 255)
-ESP_HERO_COLOR     = Color3.fromRGB(255, 215, 0)
+ESP_SHERIFF_COLOR  = Color3.fromRGB(0, 0, 255)
+ESP_HERO_COLOR     = Color3.fromRGB(255, 255, 0)
 ESP_GUN_COLOR      = Color3.fromRGB(255, 170, 0)
 ESP_FILL_ALPHA     = 1
 ESP_OUTLINE_ALPHA  = 0
@@ -1053,7 +1053,7 @@ function applyGodmode(char)
 	end))
 	for _, part in pairs(char:GetDescendants()) do
 		if part:IsA("BasePart") then
-			part.CanTouch = false
+			part.CanTouch = true
 			part.CanQuery = false
 		end
 	end
@@ -1074,7 +1074,7 @@ function enableSecondLife()
 		if part:IsA("BasePart") then
 			local name = part.Name:lower()
 			if name:match("kill") or name:match("lava") or name:match("fire") or name:match("damage") or name:match("hurt") or name:match("death") or name:match("spike") then
-				part.CanTouch = false
+				part.CanTouch = true
 				part.CanQuery = false
 			end
 		end
@@ -1537,7 +1537,7 @@ end
 		end
 		fakeSpeedEnabled = false
 		if button4 then
-			button4.Text = "Speed: OFF"
+			button4.Text = "Speed Glitch: OFF"
 			button4.TextColor3 = Color3.fromRGB(255, 255, 255)
 		end
 		if fakeSpeedRenderConnection then fakeSpeedRenderConnection:Disconnect() fakeSpeedRenderConnection = nil end
@@ -1582,7 +1582,7 @@ end
 		-- Invis off
 		invis_on = false
 		if button5 then
-			button5.Text = "Invis: OFF"
+			button5.Text = "Invisibility: OFF"
 			button5.TextColor3 = Color3.fromRGB(255, 255, 255)
 		end
 	end)
@@ -1612,7 +1612,7 @@ player.CharacterRemoving:Connect(function()
 	if reachConnection then reachConnection:Disconnect() reachConnection = nil end
 	fakeSpeedEnabled = false
 	if button4 then
-		button4.Text = "Speed: OFF"
+		button4.Text = "Speed Glitch: OFF"
 		button4.TextColor3 = Color3.fromRGB(255, 255, 255)
 	end
 	if fakeSpeedRenderConnection then fakeSpeedRenderConnection:Disconnect() fakeSpeedRenderConnection = nil end
@@ -1941,10 +1941,10 @@ ui.jumpBoostInput.FocusLost:Connect(function()
 	end
 end)
 
-button4, speedInputBox = createDualRow("SpeedButton", "Speed: OFF", "Speed", FAKE_SPEED_CFRAME_SPEED, 104)
+button4, speedInputBox = createDualRow("SpeedButton", "Speed Glitch: OFF", "Speed", FAKE_SPEED_CFRAME_SPEED, 104)
 button4.MouseButton1Click:Connect(function()
 	toggleFakeSpeed()
-	setToggleState(button4, fakeSpeedEnabled, "Speed: ON", "Speed: OFF")
+	setToggleState(button4, fakeSpeedEnabled, "Speed Glitch: ON", "Speed Glitch: OFF")
 end)
 
 speedInputBox.FocusLost:Connect(function()
@@ -1962,7 +1962,7 @@ secondLifeButton.MouseButton1Click:Connect(function()
 	setToggleState(secondLifeButton, secondLifeEnabled, "Second Life: ON", "Second Life: OFF")
 end)
 
-button5 = createButton("InvisButton", "Invis: OFF", 106)
+button5 = createButton("InvisButton", "Invisibility: OFF", 106)
 local invis_on = false
 button5.MouseButton1Click:Connect(function()
 	invis_on = not invis_on
@@ -1982,15 +1982,15 @@ button5.MouseButton1Click:Connect(function()
 		Weld.Part1 = game.Players.LocalPlayer.Character:FindFirstChild("Torso") or game.Players.LocalPlayer.Character.UpperTorso
 		task.wait()
 		Seat.CFrame = savedpos
-		game.StarterGui:SetCore("SendNotification", {Title = "Invis On"; Duration = 1; Text = "";})
-		setToggleState(button5, true, "Invis: ON", "Invis: OFF")
+		game.StarterGui:SetCore("SendNotification", {Title = "Invisibility On"; Duration = 1; Text = "";})
+		setToggleState(button5, true, "Invisibility: ON", "Invisibility: OFF")
 	else
 		local chair = workspace:FindFirstChild("invischair")
 		if chair then
 			chair:Destroy()
 		end
-		game.StarterGui:SetCore("SendNotification", {Title = "Invis Off"; Duration = 1; Text = "";})
-		setToggleState(button5, false, "Invis: ON", "Invis: OFF")
+		game.StarterGui:SetCore("SendNotification", {Title = "Invisibility Off"; Duration = 1; Text = "";})
+		setToggleState(button5, false, "Invisibility: ON", "Invisibility: OFF")
 	end
 end)
 
@@ -2575,14 +2575,159 @@ desyncButton.MouseButton1Click:Connect(function()
 end)
 
 clumsyButton = createButton("ClumsyButton", "Clumsy: OFF", 202)
+-- Добавь вверху рядом с clumsyGhost
+local clumsyGhostAdornments = {}
+
+local function clearClumsyAdornments()
+	for _, ad in ipairs(clumsyGhostAdornments) do
+		if ad and ad.Parent then
+			ad:Destroy()
+		end
+	end
+	table.clear(clumsyGhostAdornments)
+end
+
+function removeClumsyGhost()
+	clearClumsyAdornments()
+	if clumsyGhost and clumsyGhost.Parent then
+		clumsyGhost:Destroy()
+	end
+	clumsyGhost = nil
+end
+
+function createClumsyGhost(position)
+	removeClumsyGhost()
+	local char = player.Character
+	if not char then return end
+
+	local ghost = Instance.new("Model")
+	ghost.Name = "ClumsyGhost"
+
+	for _, part in pairs(char:GetChildren()) do
+		if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+			local clone = part:Clone()
+			clone.CanCollide = false
+			clone.Anchored = true
+			clone.Transparency = 0.6
+			clone.Material = Enum.Material.ForceField
+			clone.Color = Color3.fromRGB(150, 0, 255)
+			-- Убираем всё лишнее из клона
+			for _, child in pairs(clone:GetChildren()) do
+				if not child:IsA("SpecialMesh") and not child:IsA("DataModelMesh") then
+					child:Destroy()
+				end
+			end
+			clone.Parent = ghost
+		end
+	end
+
+	-- Копируем аксессуары
+	for _, acc in pairs(char:GetChildren()) do
+		if acc:IsA("Accessory") then
+			local handle = acc:FindFirstChild("Handle")
+			if handle then
+				local clone = handle:Clone()
+				clone.CanCollide = false
+				clone.Anchored = true
+				clone.Transparency = 0.6
+				clone.Material = Enum.Material.ForceField
+				clone.Color = Color3.fromRGB(150, 0, 255)
+				for _, child in pairs(clone:GetChildren()) do
+					if not child:IsA("SpecialMesh") and not child:IsA("DataModelMesh") and not child:IsA("StringValue") then
+						child:Destroy()
+					end
+				end
+				clone.Name = acc.Name .. "_Handle"
+				clone.Parent = ghost
+			end
+		end
+	end
+
+	-- Добавляем билборд с текстом
+	local billboard = Instance.new("BillboardGui")
+	billboard.Name = "GhostLabel"
+	billboard.AlwaysOnTop = true
+	billboard.Size = UDim2.new(0, 150, 0, 30)
+	billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+
+	local label = Instance.new("TextLabel")
+	label.Size = UDim2.new(1, 0, 1, 0)
+	label.BackgroundTransparency = 1
+	label.Text = "Server Position"
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 14
+	label.TextColor3 = Color3.fromRGB(150, 0, 255)
+	label.TextStrokeTransparency = 0.5
+	label.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	label.Parent = billboard
+
+	-- Позиционируем части призрака
+	local charCF = CFrame.new(position)
+	for _, part in pairs(ghost:GetChildren()) do
+		if part:IsA("BasePart") then
+			local originalPart = char:FindFirstChild(part.Name)
+			if originalPart and originalPart:IsA("BasePart") then
+				local offset = char.HumanoidRootPart.CFrame:ToObjectSpace(originalPart.CFrame)
+				part.CFrame = charCF * offset
+			end
+		end
+	end
+
+	-- Билборд на голову призрака
+	local ghostHead = ghost:FindFirstChild("Head")
+	if ghostHead then
+		billboard.Adornee = ghostHead
+		billboard.Parent = ghostHead
+	end
+
+	-- Highlight чтобы было видно через стены
+	local ghostHighlight = Instance.new("Highlight")
+ghostHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+ghostHighlight.FillTransparency = 0
+ghostHighlight.OutlineTransparency = 0
+ghostHighlight.FillColor = Color3.fromRGB(170, 0, 255)
+ghostHighlight.OutlineColor = Color3.fromRGB(220, 120, 255)
+ghostHighlight.Enabled = true
+	
+	for _, p in ipairs(ghost:GetDescendants()) do
+	if p:IsA("BasePart") then
+		p.Material = Enum.Material.Neon
+		p.Transparency = 0.15
+		p.Color = Color3.fromRGB(170, 0, 255)
+		p.CastShadow = false
+
+		local adorn = Instance.new("BoxHandleAdornment")
+		adorn.Name = "GhostWallBox"
+		adorn.Adornee = p
+		adorn.AlwaysOnTop = true
+		adorn.ZIndex = 10
+		adorn.Transparency = 0.35
+		adorn.Color3 = Color3.fromRGB(170, 0, 255)
+		adorn.Size = p.Size + Vector3.new(0.03, 0.03, 0.03)
+		adorn.Parent = p
+		table.insert(clumsyGhostAdornments, adorn)
+	end
+end
+
+	ghost.Parent = workspace
+	clumsyGhost = ghost
+end
+
+function removeClumsyGhost()
+	if clumsyGhost and clumsyGhost.Parent then
+		clumsyGhost:Destroy()
+	end
+	clumsyGhost = nil
+end
+
 clumsyButton.MouseButton1Click:Connect(function()
 	clumsy_on = not clumsy_on
 	if clumsy_on then
-		local savedpos = game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame
+		local savedpos = player.Character.HumanoidRootPart.CFrame
 		task.wait()
-		game.Players.LocalPlayer.Character:MoveTo(savedpos.Position)
+		player.Character:MoveTo(savedpos.Position)
 		task.wait(0.15)
-		local Seat = Instance.new("Seat", game.Workspace)
+		local Seat = Instance.new("Seat", workspace)
 		Seat.Anchored = false
 		Seat.CanCollide = false
 		Seat.Name = "clumsychair"
@@ -2590,9 +2735,13 @@ clumsyButton.MouseButton1Click:Connect(function()
 		Seat.CFrame = savedpos
 		local Weld = Instance.new("Weld", Seat)
 		Weld.Part0 = Seat
-		Weld.Part1 = game.Players.LocalPlayer.Character:FindFirstChild("Torso") or game.Players.LocalPlayer.Character.UpperTorso
+		Weld.Part1 = player.Character:FindFirstChild("Torso") or player.Character.UpperTorso
 		task.wait()
 		Seat.CFrame = savedpos
+
+		-- Создаём призрак на серверной позиции
+		createClumsyGhost(savedpos.Position)
+
 		game.StarterGui:SetCore("SendNotification", {Title = "Clumsy On"; Duration = 1; Text = "";})
 		setToggleState(clumsyButton, true, "Clumsy: ON", "Clumsy: OFF")
 	else
@@ -2600,6 +2749,7 @@ clumsyButton.MouseButton1Click:Connect(function()
 		if chair then
 			chair:Destroy()
 		end
+		removeClumsyGhost()
 		game.StarterGui:SetCore("SendNotification", {Title = "Clumsy Off"; Duration = 1; Text = "";})
 		setToggleState(clumsyButton, false, "Clumsy: ON", "Clumsy: OFF")
 	end
@@ -3058,4 +3208,9 @@ toggleClickButton.InputEnded:Connect(function(input)
 		toggleDragging = false
 		toggleDidMove = false
 	end
-end)
+end)		clumsy_on = false
+		removeClumsyGhost()
+		if clumsyButton then
+			clumsyButton.Text = "Clumsy: OFF"
+			clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		end
