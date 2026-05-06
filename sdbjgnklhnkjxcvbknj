@@ -445,7 +445,7 @@ espRoles = nil
 
 ESP_MAP_NAMES = {
 	"Hotel", "Factory", "BioLab", "Mansion2", "House2",
-	"Workplace", "Hospital", "MilBase", "Bank2", "Office3",
+	"Workplace", "Hospital3", "MilBase", "Bank2", "Office3",
 	"ResearchFacility"
 }
 
@@ -591,7 +591,7 @@ function espCreateGunBillboard(gunDrop)
 	nameLabel.Name = "NameLabel"
 	nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
 	nameLabel.BackgroundTransparency = 1
-	nameLabel.Text = "🔫 GUN"
+	nameLabel.Text = "GUN DROP"
 	nameLabel.Font = Enum.Font.GothamBold
 	nameLabel.TextSize = 14
 	nameLabel.TextColor3 = ESP_GUN_COLOR
@@ -1744,9 +1744,9 @@ titleBar.Position = UDim2.new(0, 10, 0, 0)
 titleBar.BackgroundTransparency = 1
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.TextXAlignment = Enum.TextXAlignment.Left
-titleBar.Text = "Adrenalin X"
+titleBar.Text = "Adrenalin.win V3.5"
 titleBar.Font = Enum.Font.SourceSansBold
-titleBar.TextSize = 18
+titleBar.TextSize = 16.5
 titleBar.Parent = topBar
 
 local lockButton = Instance.new("TextButton")
@@ -1994,7 +1994,7 @@ button5.MouseButton1Click:Connect(function()
 	end
 end)
 
--- AutoGrab Gun
+-- AutoGrab Gun (Ultra Speed)
 autoGrabGunEnabled = false
 autoGrabGunConnections = {}
 autoGrabGunProcessed = {}
@@ -2058,53 +2058,108 @@ function autoGrabClaimDrop(drop)
 	end
 	local char = player.Character
 	local cf = root.CFrame
-	if drop:IsA("BasePart") then
-		drop.CFrame = cf
-		drop.CanCollide = false
-		drop.Transparency = 1
-		drop.Parent = char
-	elseif drop:IsA("Model") then
-		drop:PivotTo(cf)
-		drop.Parent = char
-		for _, v in ipairs(drop:GetDescendants()) do
-			if v:IsA("BasePart") then
-				v.CanCollide = false
-				v.Transparency = 1
+
+	-- Мгновенная многократная телепортация для максимальной скорости
+	for i = 1, 5 do
+		if not drop or not drop.Parent then break end
+		if drop:IsA("BasePart") then
+			drop.CFrame = cf
+			drop.CanCollide = false
+			drop.Transparency = 1
+			drop.Parent = char
+		elseif drop:IsA("Model") then
+			drop:PivotTo(cf)
+			drop.Parent = char
+			for _, v in ipairs(drop:GetDescendants()) do
+				if v:IsA("BasePart") then
+					v.CanCollide = false
+					v.Transparency = 1
+					v.CFrame = cf
+				end
 			end
+		else
+			local part = drop:FindFirstChildWhichIsA("BasePart", true)
+			if part then
+				part.CFrame = cf
+				part.CanCollide = false
+				part.Transparency = 1
+			end
+			drop.Parent = char
 		end
-	else
-		local part = drop:FindFirstChildWhichIsA("BasePart", true)
-		if part then
-			part.CFrame = cf
-			part.CanCollide = false
-			part.Transparency = 1
-		end
-		drop.Parent = char
 	end
+
+	-- Запускаем магнит
 	autoGrabStartMagnet(drop)
+
 	drop.AncestryChanged:Connect(function()
 		if not drop.Parent or drop.Parent == Workspace then
 			autoGrabStopMagnet(drop)
 			autoGrabGunProcessed[drop] = nil
 		end
 	end)
+
+	-- Касание всех частей для подбора
+	if char then
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		if hrp and drop then
+			local parts = {}
+			if drop:IsA("BasePart") then
+				table.insert(parts, drop)
+			elseif drop:IsA("Model") then
+				for _, v in ipairs(drop:GetDescendants()) do
+					if v:IsA("BasePart") then
+						table.insert(parts, v)
+					end
+				end
+			end
+			for _, part in ipairs(parts) do
+				pcall(function()
+					firetouchinterest(hrp, part, 0)
+					firetouchinterest(hrp, part, 1)
+				end)
+			end
+		end
+	end
 end
 
 function autoGrabConnectModel(model)
 	if autoGrabGunConnectedModels[model] then return end
 	autoGrabGunConnectedModels[model] = true
+
+	-- Мгновенная проверка существующих
 	for _, child in ipairs(model:GetDescendants()) do
 		if child.Name == "GunDrop" then
 			autoGrabClaimDrop(child)
 		end
 	end
+
+	-- DescendantAdded для моментального перехвата
 	local conn = model.DescendantAdded:Connect(function(descendant)
 		if not autoGrabGunEnabled then return end
 		if descendant.Name == "GunDrop" then
+			-- Без задержки — мгновенный захват
 			autoGrabClaimDrop(descendant)
 		end
 	end)
 	autoGrabGunConnections[model] = conn
+
+	-- ChildAdded тоже для скорости
+	local conn2 = model.ChildAdded:Connect(function(child)
+		if not autoGrabGunEnabled then return end
+		if child.Name == "GunDrop" then
+			autoGrabClaimDrop(child)
+		end
+		-- Проверяем потомков нового ребёнка
+		if child:IsA("Model") or child:IsA("Folder") then
+			for _, desc in ipairs(child:GetDescendants()) do
+				if desc.Name == "GunDrop" then
+					autoGrabClaimDrop(desc)
+				end
+			end
+		end
+	end)
+	table.insert(autoGrabGunConnections, conn2)
+
 	model.AncestryChanged:Connect(function()
 		if not model.Parent then
 			if autoGrabGunConnections[model] then
@@ -2120,6 +2175,10 @@ function autoGrabScanWorkspace()
 	for _, obj in ipairs(Workspace:GetDescendants()) do
 		if obj:IsA("Model") and autoGrabGunTargets[obj.Name] then
 			autoGrabConnectModel(obj)
+		end
+		-- Также ловим GunDrop напрямую
+		if obj.Name == "GunDrop" then
+			autoGrabClaimDrop(obj)
 		end
 	end
 end
@@ -2139,20 +2198,25 @@ function enableAutoGrabGun()
 
 	autoGrabScanWorkspace()
 
+	-- Workspace.DescendantAdded — мгновенный перехват
 	table.insert(autoGrabGunConnections, Workspace.DescendantAdded:Connect(function(obj)
 		if not autoGrabGunEnabled then return end
 		if obj:IsA("Model") and autoGrabGunTargets[obj.Name] then
 			autoGrabConnectModel(obj)
 		end
 		if obj.Name == "GunDrop" then
-			local parent = obj.Parent
-			while parent and parent ~= Workspace do
-				if autoGrabGunTargets[parent.Name] then
-					autoGrabClaimDrop(obj)
-					break
-				end
-				parent = parent.Parent
-			end
+			autoGrabClaimDrop(obj)
+		end
+	end))
+
+	-- Workspace.ChildAdded — дополнительный перехват верхнего уровня
+	table.insert(autoGrabGunConnections, Workspace.ChildAdded:Connect(function(obj)
+		if not autoGrabGunEnabled then return end
+		if obj.Name == "GunDrop" then
+			autoGrabClaimDrop(obj)
+		end
+		if obj:IsA("Model") and autoGrabGunTargets[obj.Name] then
+			autoGrabConnectModel(obj)
 		end
 	end))
 
@@ -2168,9 +2232,10 @@ function enableAutoGrabGun()
 		autoGrabScanWorkspace()
 	end))
 
+	-- Быстрый цикл сканирования — каждые 3 секунды
 	task.spawn(function()
 		while autoGrabGunEnabled do
-			task.wait(10)
+			task.wait(3)
 			if autoGrabGunEnabled then
 				autoGrabScanWorkspace()
 			end
@@ -2221,7 +2286,7 @@ MAGNET_DISTANCE = 10
 
 gunAuraTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
-	House2 = true, Workplace = true, Hospital = true, MilBase = true,
+	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
 	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
 }
 
@@ -2457,13 +2522,13 @@ ui.magnetDistInput.FocusLost:Connect(function()
 	end
 end)
 
--- Auto Delete Coins
+-- Auto Remove Coins
 autoDeleteCoinsEnabled = false
 autoDeleteCoinsConnections = {}
 
 autoDeleteCoinsTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
-	House2 = true, Workplace = true, Hospital = true, MilBase = true,
+	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
 	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
 }
 
@@ -2557,15 +2622,619 @@ function toggleAutoDeleteCoins()
 	end
 end
 
-btn.autoDeleteCoins = createButton("AutoDeleteCoinsButton", "Auto Delete Coins: OFF", 109)
+btn.autoDeleteCoins = createButton("AutoDeleteCoinsButton", "Auto Remove Coins: OFF", 109)
 btn.autoDeleteCoins.MouseButton1Click:Connect(function()
 	toggleAutoDeleteCoins()
-	setToggleState(btn.autoDeleteCoins, autoDeleteCoinsEnabled, "Auto Delete Coins: ON", "Auto Delete Coins: OFF")
+	setToggleState(btn.autoDeleteCoins, autoDeleteCoinsEnabled, "Auto Remove Coins: ON", "Auto Remove Coins: OFF")
+end)
+
+btn.tpLobby = createButton("TpLobbyButton", "TP to Lobby", 110)
+btn.tpLobby.MouseButton1Click:Connect(function()
+	local myChar = player.Character
+	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if myHrp then
+		myHrp.CFrame = CFrame.new(23, 505, -34)
+		notify("Teleported", "Teleported to Lobby", 2)
+	else
+		notify("Error", "Character not found", 2)
+	end
+end)
+
+-- TP to Sheriff / TP to Murderer
+tpRoles = nil
+
+function tpGetRoles()
+	local ok, result = pcall(function()
+		return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+	end)
+	if ok and result then
+		tpRoles = result
+	end
+end
+
+function tpToRole(roleName)
+	tpGetRoles()
+	if not tpRoles then
+		notify("Error", "Could not get roles", 2)
+		return
+	end
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player then
+			local data = tpRoles[plr.Name]
+			if data then
+				local isTarget = false
+
+				if roleName == "Sheriff" then
+					isTarget = (data.Role == "Sheriff" or data.HasGun)
+				elseif roleName == "Hero" then
+					isTarget = (data.Role == "Hero")
+				elseif roleName == "Murderer" then
+					isTarget = (data.Role == "Murderer")
+				end
+
+				if isTarget then
+					local char = plr.Character
+					local hrp = char and char:FindFirstChild("HumanoidRootPart")
+					local myChar = player.Character
+					local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+					if hrp and myHrp then
+						local targetCF = hrp.CFrame * CFrame.new(0, 0, 3)
+						-- Многократная телепортация для гарантии
+						for i = 1, 10 do
+							myHrp.CFrame = targetCF
+							myChar:SetPrimaryPartCFrame(targetCF)
+							myHrp.Velocity = Vector3.new(0, 0, 0)
+							myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+							myHrp.RotVelocity = Vector3.new(0, 0, 0)
+						end
+						-- Фиксируем позицию через Heartbeat на 1 кадр
+						local fixConn
+						fixConn = RunService.Heartbeat:Connect(function()
+							myHrp.CFrame = targetCF
+							myHrp.Velocity = Vector3.new(0, 0, 0)
+							myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+							fixConn:Disconnect()
+						end)
+						notify("Teleported", "TP to " .. roleName .. ": " .. plr.Name, 2)
+					end
+					return
+				end
+			end
+		end
+	end
+
+	notify("Error", "No " .. roleName .. " found", 2)
+end
+
+-- TP to Map
+tpMapCoords = {
+	Hotel = Vector3.new(59, 294, 9012),
+	Bank2 = Vector3.new(-34, 295, 8952),
+	Mansion2 = Vector3.new(-61, 272, 8970),
+	Factory = Vector3.new(18, 274, 8878),
+	BioLab = Vector3.new(603, 269, 9622),
+	Office3 = Vector3.new(-1, 305, 8968),
+	ResearchFacility = Vector3.new(-108, 292, 8946),
+	Hospital3 = Vector3.new(-16, 300, 8963),
+	House2 = Vector3.new(49, 265, 9057),
+	MilBase = Vector3.new(85, 202, 9195),
+	Workplace = Vector3.new(19, 292, 8936),
+	PoliceStation = Vector3.new(-31, 289, 8927)
+}
+
+function tpToMap()
+	local myChar = player.Character
+	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not myHrp then
+		notify("Error", "Character not found", 2)
+		return
+	end
+
+	for mapName, coords in pairs(tpMapCoords) do
+		if Workspace:FindFirstChild(mapName) then
+			local targetCF = CFrame.new(coords)
+			for i = 1, 10 do
+				myHrp.CFrame = targetCF
+				myChar:SetPrimaryPartCFrame(targetCF)
+				myHrp.Velocity = Vector3.new(0, 0, 0)
+				myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				myHrp.RotVelocity = Vector3.new(0, 0, 0)
+			end
+			local fixConn
+			fixConn = RunService.Heartbeat:Connect(function()
+				myHrp.CFrame = targetCF
+				myHrp.Velocity = Vector3.new(0, 0, 0)
+				myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				fixConn:Disconnect()
+			end)
+			notify("Teleported", "TP to " .. mapName, 2)
+			return
+		end
+	end
+
+	notify("Error", "No map found", 2)
+end
+
+btn.tpMap = createButton("TpMapButton", "TP to Map", 111)
+btn.tpMap.MouseButton1Click:Connect(function()
+	tpToMap()
+end)
+
+-- TP Above Map
+tpAboveMapCoords = {
+	Hotel = Vector3.new(-1, 330, 9000),
+	Office3 = Vector3.new(-44, 328, 9050),
+	Factory = Vector3.new(-10, 333, 8888),
+	ResearchFacility = Vector3.new(-47, 330, 9060),
+	Hospital3 = Vector3.new(-10, 317, 8972),
+	Mansion2 = Vector3.new(-10, 291, 9035),
+	House2 = Vector3.new(10, 293, 8939),
+	MilBase = Vector3.new(5, 318, 9075),
+	Workplace = Vector3.new(-3, 319, 9002),
+	PoliceStation = Vector3.new(-14, 307, 8934),
+	Bank2 = Vector3.new(-5, 328, 9008),
+	BioLab = Vector3.new(539, 322, 9856)
+}
+
+function tpAboveMap()
+	local myChar = player.Character
+	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not myHrp then
+		notify("Error", "Character not found", 2)
+		return
+	end
+
+	for mapName, coords in pairs(tpAboveMapCoords) do
+		if Workspace:FindFirstChild(mapName) then
+			local targetCF = CFrame.new(coords)
+			for i = 1, 10 do
+				myHrp.CFrame = targetCF
+				myChar:SetPrimaryPartCFrame(targetCF)
+				myHrp.Velocity = Vector3.new(0, 0, 0)
+				myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				myHrp.RotVelocity = Vector3.new(0, 0, 0)
+			end
+			local fixConn
+			fixConn = RunService.Heartbeat:Connect(function()
+				myHrp.CFrame = targetCF
+				myHrp.Velocity = Vector3.new(0, 0, 0)
+				myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				fixConn:Disconnect()
+			end)
+			notify("Teleported", "TP above " .. mapName, 2)
+			return
+		end
+	end
+
+	notify("Error", "No map found", 2)
+end
+
+btn.tpAboveMap = createButton("TpAboveMapButton", "TP Above Map", 112)
+btn.tpAboveMap.MouseButton1Click:Connect(function()
+	tpAboveMap()
+end)
+
+btn.tpSheriff = createButton("TpSheriffButton", "TP to Sheriff", 113)
+btn.tpSheriff.MouseButton1Click:Connect(function()
+	tpGetRoles()
+	if not tpRoles then
+		notify("Error", "Could not get roles", 2)
+		return
+	end
+
+	-- Проверяем есть ли Sheriff
+	local hasSheriff = false
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player then
+			local data = tpRoles[plr.Name]
+			if data and (data.Role == "Sheriff" or data.HasGun) then
+				hasSheriff = true
+				break
+			end
+		end
+	end
+
+	if hasSheriff then
+		tpToRole("Sheriff")
+	else
+		tpToRole("Hero")
+	end
+end)
+
+btn.tpMurderer = createButton("TpMurdererButton", "TP to Murderer", 114)
+btn.tpMurderer.MouseButton1Click:Connect(function()
+	tpToRole("Murderer")
+end)
+
+btn.gameNotif = createButton("GameNotifButton", "Notifications: ON", 115)
+btn.gameNotif.MouseButton1Click:Connect(function()
+	gameNotifEnabled = not gameNotifEnabled
+	setToggleState(btn.gameNotif, gameNotifEnabled, "Notifications: ON", "Notifications: OFF")
+end)
+
+-- Auto Delete Corpses
+autoDeleteCorpsesEnabled = false
+autoDeleteCorpsesConnections = {}
+
+autoDeleteCorpsesTargets = {
+	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
+	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
+	Bank2 = true, Office3 = true, ResearchFacility = true
+}
+
+function deleteCorpsesInModel(model)
+	for _, desc in ipairs(model:GetDescendants()) do
+		if desc.Name == "Raggy" then
+			desc:Destroy()
+		end
+	end
+end
+
+function enableAutoDeleteCorpses()
+	autoDeleteCorpsesEnabled = true
+
+	-- Удаляем существующие
+	for _, obj in ipairs(Workspace:GetDescendants()) do
+		if obj.Name == "Raggy" then
+			local parent = obj.Parent
+			while parent and parent ~= Workspace do
+				if autoDeleteCorpsesTargets[parent.Name] then
+					obj:Destroy()
+					break
+				end
+				parent = parent.Parent
+			end
+		end
+	end
+
+	-- Следим за новыми Raggy
+	local descConn = Workspace.DescendantAdded:Connect(function(obj)
+		if not autoDeleteCorpsesEnabled then return end
+		if obj.Name == "Raggy" then
+			task.defer(function()
+				if not autoDeleteCorpsesEnabled then return end
+				if not obj or not obj.Parent then return end
+				local parent = obj.Parent
+				while parent and parent ~= Workspace do
+					if autoDeleteCorpsesTargets[parent.Name] then
+						obj:Destroy()
+						break
+					end
+					parent = parent.Parent
+				end
+			end)
+		end
+	end)
+	table.insert(autoDeleteCorpsesConnections, descConn)
+
+	-- Следим за появлением новых карт
+	local childConn = Workspace.ChildAdded:Connect(function(child)
+		if not autoDeleteCorpsesEnabled then return end
+		if autoDeleteCorpsesTargets[child.Name] then
+			task.wait(0.5)
+			if child and child.Parent and autoDeleteCorpsesEnabled then
+				deleteCorpsesInModel(child)
+				local mapConn = child.DescendantAdded:Connect(function(desc)
+					if not autoDeleteCorpsesEnabled then return end
+					if desc.Name == "Raggy" then
+						task.defer(function()
+							if desc and desc.Parent then
+								desc:Destroy()
+							end
+						end)
+					end
+				end)
+				table.insert(autoDeleteCorpsesConnections, mapConn)
+			end
+		end
+	end)
+	table.insert(autoDeleteCorpsesConnections, childConn)
+
+	-- Подключаемся к существующим картам
+	for mapName in pairs(autoDeleteCorpsesTargets) do
+		local map = Workspace:FindFirstChild(mapName)
+		if map then
+			local mapConn = map.DescendantAdded:Connect(function(desc)
+				if not autoDeleteCorpsesEnabled then return end
+				if desc.Name == "Raggy" then
+					task.defer(function()
+						if desc and desc.Parent then
+							desc:Destroy()
+						end
+					end)
+				end
+			end)
+			table.insert(autoDeleteCorpsesConnections, mapConn)
+		end
+	end
+
+	-- Периодическая проверка
+	task.spawn(function()
+		while autoDeleteCorpsesEnabled do
+			task.wait(5)
+			if autoDeleteCorpsesEnabled then
+				for _, obj in ipairs(Workspace:GetDescendants()) do
+					if obj.Name == "Raggy" then
+						local parent = obj.Parent
+						while parent and parent ~= Workspace do
+							if autoDeleteCorpsesTargets[parent.Name] then
+								obj:Destroy()
+								break
+							end
+							parent = parent.Parent
+						end
+					end
+				end
+			end
+		end
+	end)
+end
+
+function disableAutoDeleteCorpses()
+	autoDeleteCorpsesEnabled = false
+	for _, conn in ipairs(autoDeleteCorpsesConnections) do
+		if conn and conn.Connected then
+			conn:Disconnect()
+		end
+	end
+	autoDeleteCorpsesConnections = {}
+end
+
+function toggleAutoDeleteCorpses()
+	if autoDeleteCorpsesEnabled then
+		disableAutoDeleteCorpses()
+	else
+		enableAutoDeleteCorpses()
+	end
+end
+
+btn.autoDeleteCorpses = createButton("AutoDeleteCorpsesButton", "Auto Delete Corpses: OFF", 116)
+btn.autoDeleteCorpses.MouseButton1Click:Connect(function()
+	toggleAutoDeleteCorpses()
+	setToggleState(btn.autoDeleteCorpses, autoDeleteCorpsesEnabled, "Auto Delete Corpses: ON", "Auto Delete Corpses: OFF")
 end)
 
 -- ============================================
--- SECTION 3: Combat (LayoutOrder 300-399)
+-- Game Notifications System
 -- ============================================
+gameNotifEnabled = true
+gameNotifLastRound = ""
+gameNotifLastGunAlert = 0
+gameNotifLastRoleAlert = 0
+gameNotifPrevRoles = nil
+gameNotifGunDrops = {}
+gameNotifQueue = {}
+gameNotifShowing = false
+
+function gameNotifProcess()
+	if gameNotifShowing then return end
+	if #gameNotifQueue == 0 then return end
+	gameNotifShowing = true
+	local msg = table.remove(gameNotifQueue, 1)
+	
+	-- Создаём уведомление в правом нижнем углу
+	local notifGui = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("GameNotifGui")
+	if not notifGui then
+		notifGui = Instance.new("ScreenGui")
+		notifGui.Name = "GameNotifGui"
+		notifGui.ResetOnSpawn = false
+		notifGui.DisplayOrder = 100
+		notifGui.Parent = player.PlayerGui
+	end
+	
+	local frame = Instance.new("Frame")
+	frame.Size = UDim2.new(0, 340, 0, 0)
+	frame.Position = UDim2.new(1, -350, 1, -10)
+	frame.AnchorPoint = Vector2.new(0, 1)
+	frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+	frame.BorderSizePixel = 0
+	frame.ClipsDescendants = true
+	frame.Parent = notifGui
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = frame
+	
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = msg.color or Color3.fromRGB(255, 255, 255)
+	stroke.Thickness = 1
+	stroke.Parent = frame
+	
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.Size = UDim2.new(1, -20, 0, 24)
+	titleLabel.Position = UDim2.new(0, 10, 0,10)
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Text = msg.title or ""
+	titleLabel.Font = Enum.Font.GothamBold
+	titleLabel.TextSize = 15
+	titleLabel.TextColor3 = msg.color or Color3.fromRGB(255, 255, 255)
+	titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	titleLabel.TextScaled = false
+	titleLabel.Parent = frame
+	
+	local textLabel = Instance.new("TextLabel")
+	textLabel.Size = UDim2.new(1, -20, 0, 40)
+	textLabel.Position = UDim2.new(0, 10, 0, 32)
+	textLabel.BackgroundTransparency = 1
+	textLabel.Text = msg.text or ""
+	textLabel.Font = Enum.Font.Gotham
+	textLabel.TextSize = 14
+	textLabel.TextColor3 = Color3.fromRGB(220, 220, 220)
+	textLabel.TextXAlignment = Enum.TextXAlignment.Left
+	textLabel.TextWrapped = true
+	textLabel.TextScaled = false
+	textLabel.Parent = frame
+	
+	-- Анимация появления
+	local targetSize = UDim2.new(0, 340, 0, 80)
+	TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = targetSize
+	}):Play()
+	
+	task.delay(3.5, function()
+		-- Анимация исчезновения
+		local fadeOut = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Size = UDim2.new(0, 340, 0, 0)
+		})
+		fadeOut:Play()
+		fadeOut.Completed:Wait()
+		frame:Destroy()
+		gameNotifShowing = false
+		gameNotifProcess()
+	end)
+end
+
+function gameNotifSend(title, text, color)
+	table.insert(gameNotifQueue, {
+		title = title,
+		text = text,
+		color = color
+	})
+	gameNotifProcess()
+end
+
+-- Отслеживание ролей и GunDrop
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		if not gameNotifEnabled then continue end
+		
+		local ok, result = pcall(function()
+			return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+		end)
+		
+		if ok and result then
+			-- Проверяем начало раунда — роли изменились
+			local currentMurderer = nil
+			local currentSheriff = nil
+			
+			for name, data in pairs(result) do
+				if data.Role == "Murderer" then
+					currentMurderer = name
+				elseif data.Role == "Sheriff" then
+					currentSheriff = name
+				end
+			end
+			
+			local roundKey = (currentMurderer or "") .. "_" .. (currentSheriff or "")
+			
+			if roundKey ~= gameNotifLastRound and currentMurderer and currentSheriff then
+				gameNotifLastRound = roundKey
+				gameNotifSend("⚔️ Round Started", "Murderer: " .. currentMurderer .. "\nSheriff: " .. currentSheriff, Color3.fromRGB(255, 200, 0))
+			end
+			
+			-- Проверяем смерть шерифа/героя
+			if gameNotifPrevRoles then
+				for name, prevData in pairs(gameNotifPrevRoles) do
+					local newData = result[name]
+					if prevData.Role == "Sheriff" or prevData.HasGun then
+						if not newData or (not newData.HasGun and newData.Role ~= "Sheriff") then
+							-- Проверяем что игрок мёртв
+							local plr = Players:FindFirstChild(name)
+							if plr then
+								local char = plr.Character
+								local hum = char and char:FindFirstChild("Humanoid")
+								if not char or not hum or hum.Health <= 0 then
+									if tick() - gameNotifLastRoleAlert > 3 then
+										gameNotifLastRoleAlert = tick()
+										gameNotifSend("💀 Sheriff Died", name .. " has died!", Color3.fromRGB(0, 100, 255))
+									end
+								end
+							end
+						end
+					end
+					if prevData.Role == "Hero" then
+						if not newData or newData.Role ~= "Hero" then
+							local plr = Players:FindFirstChild(name)
+							if plr then
+								local char = plr.Character
+								local hum = char and char:FindFirstChild("Humanoid")
+								if not char or not hum or hum.Health <= 0 then
+									if tick() - gameNotifLastRoleAlert > 3 then
+										gameNotifLastRoleAlert = tick()
+										gameNotifSend("💀 Hero Died", name .. " has died!", Color3.fromRGB(255, 215, 0))
+									end
+								end
+							end
+						end
+					end
+				end
+			end
+			
+			gameNotifPrevRoles = result
+		end
+	end
+end)
+
+-- Отслеживание подбора GunDrop
+task.spawn(function()
+	while true do
+		task.wait(0.3)
+		if not gameNotifEnabled then continue end
+		
+		-- Сканируем GunDrop на картах
+		local currentGuns = {}
+		for _, obj in ipairs(Workspace:GetDescendants()) do
+			if obj.Name == "GunDrop" then
+				currentGuns[obj] = true
+			end
+		end
+		
+		-- Проверяем пропавшие GunDrop
+		for gun in pairs(gameNotifGunDrops) do
+			if not currentGuns[gun] and not gun.Parent then
+				-- GunDrop исчез — кто-то подобрал
+				if tick() - gameNotifLastGunAlert > 2 then
+					gameNotifLastGunAlert = tick()
+					
+					-- Ищем кто подобрал — у кого появился Gun в инвентаре
+					local pickedBy = nil
+					local ok2, roles2 = pcall(function()
+						return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+					end)
+					if ok2 and roles2 then
+						for name, data in pairs(roles2) do
+							if data.HasGun then
+								local prevData = gameNotifPrevRoles and gameNotifPrevRoles[name]
+								if not prevData or not prevData.HasGun then
+									pickedBy = name
+									break
+								end
+							end
+						end
+						gameNotifPrevRoles = roles2
+					end
+					
+					if pickedBy then
+						gameNotifSend("Gun Picked Up", pickedBy .. " picked up the gun!", Color3.fromRGB(255, 170, 0))
+					else
+						gameNotifSend("Gun Picked Up", "Someone picked up the gun!", Color3.fromRGB(255, 170, 0))
+					end
+				end
+			end
+		end
+		
+		gameNotifGunDrops = currentGuns
+	end
+end)
+
+-- Отслеживание появления GunDrop (шериф/герой умер)
+task.spawn(function()
+	Workspace.DescendantAdded:Connect(function(obj)
+		if not gameNotifEnabled then return end
+		if obj.Name == "GunDrop" then
+			if tick() - gameNotifLastGunAlert > 2 then
+				gameNotifLastGunAlert = tick()
+				gameNotifSend("Gun Dropped", "A gun has appeared on the map!", Color3.fromRGB(255, 170, 0))
+			end
+		end
+	end)
+end)
+
+-- SECTION 3: Combat (Updated with Jump Prediction)
+
 createSection("Combat", 200)
 
 desyncButton = createButton("DesyncButton", "Desync: OFF", 201)
@@ -2818,6 +3487,203 @@ espButton = createButton("EspButton", "Esp: OFF", 206)
 espButton.MouseButton1Click:Connect(function()
 	toggleEsp()
 	setToggleState(espButton, espEnabled, "Esp: ON", "Esp: OFF")
+end)
+
+local predX, predY, predZ = 0, 0, 0 -- Значения по умолчанию
+
+local function getPredictedPositionShoot(playerToPredict, shootOffsetVal)
+    local targetChar = playerToPredict.Character
+    if not targetChar then return Vector3.new(0,0,0) end
+    
+    local playerHRP = targetChar:FindFirstChild("HumanoidRootPart")
+    local humanoid = targetChar:FindFirstChild("Humanoid")
+    if not playerHRP or not humanoid then return Vector3.new(0,0,0) end
+
+    local pos = playerHRP.Position
+    local velocity = playerHRP.AssemblyLinearVelocity
+    local moveDirection = humanoid.MoveDirection
+    
+    -- Базовый расчет времени долета пули (примерный)
+    local ping = 0.1 -- Задержка
+    local timeStep = (shootOffsetVal / 15) + ping
+
+    -- Предсказание позиции (X и Z)
+    local predictedPosition = pos + (velocity * timeStep) + (moveDirection * shootOffsetVal)
+
+    -- --- ЛОГИКА ПРЕДСКАЗАНИЯ ПРЫЖКА ---
+    -- Если вертикальная скорость положительная, значит мардер в прыжке
+    if velocity.Y > 1 then
+        -- Увеличиваем Y координату, предсказывая подъем
+        predictedPosition = predictedPosition + Vector3.new(0, velocity.Y * timeStep * 1.2, 0)
+    elseif velocity.Y < -1 then
+        -- Если падает, предсказываем приземление
+        predictedPosition = predictedPosition + Vector3.new(0, velocity.Y * timeStep, 0)
+    end
+
+    -- --- ДОБАВЛЕНИЕ РУЧНОГО ПРЕДИКТА (XYZ) ---
+    predictedPosition = predictedPosition + Vector3.new(predX, predY, predZ)
+    
+    return predictedPosition
+end
+
+-- Создаем контейнер для полей XYZ
+local xyzFrame = Instance.new("Frame")
+xyzFrame.Name = "XYZPredictFrame"
+xyzFrame.Size = UDim2.new(1, 0, 0, 42)
+xyzFrame.BackgroundTransparency = 1
+xyzFrame.LayoutOrder = 206.6 -- Сразу под кнопкой Shoot Murderer
+xyzFrame.Parent = contentFrame
+
+local function createSmallInput(name, placeholder, pos)
+    local box = Instance.new("TextBox")
+    box.Name = name
+    box.Size = UDim2.new(0.3, -5, 1, 0)
+    box.Position = pos
+    box.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    box.TextColor3 = Color3.fromRGB(255, 255, 255)
+    box.PlaceholderText = placeholder
+    box.Text = "0"
+    box.Font = Enum.Font.SourceSansBold
+    box.TextSize = 14
+    box.Parent = xyzFrame
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = box
+    
+    return box
+end
+
+local inputX = createSmallInput("InputX", "X (Side)", UDim2.new(0, 0, 0, 0))
+local inputY = createSmallInput("InputY", "Y (Jump)", UDim2.new(0.33, 0, 0, 0))
+local inputZ = createSmallInput("InputZ", "Z (Front)", UDim2.new(0.66, 0, 0, 0))
+
+-- Обновление переменных при вводе
+inputX.FocusLost:Connect(function() predX = tonumber(inputX.Text) or 0 end)
+inputY.FocusLost:Connect(function() predY = tonumber(inputY.Text) or 0 end)
+inputZ.FocusLost:Connect(function() predZ = tonumber(inputZ.Text) or 0 end)
+
+-- ============================================
+-- Shoot Murderer Button (from YARHM)
+-- ============================================
+
+local function findMurdererShoot()
+	-- Fallback
+	for _, i in ipairs(Players:GetPlayers()) do
+		if i.Backpack:FindFirstChild("Knife") then
+			return i
+		end
+	end
+
+	for _, i in ipairs(Players:GetPlayers()) do
+		if not i.Character then continue end
+		if i.Character:FindFirstChild("Knife") then
+			return i
+		end
+	end
+	return nil
+end
+
+local function findSherifShoot()
+	-- Fallback
+	for _, i in ipairs(Players:GetPlayers()) do
+		if i.Backpack:FindFirstChild("Gun") then
+			return i
+		end
+	end
+
+	for _, i in ipairs(Players:GetPlayers()) do
+		if not i.Character then continue end
+		if i.Character:FindFirstChild("Gun") then
+			return i
+		end
+	end
+	return nil
+end
+
+local function findNearestPlayerShoot()
+	local nearestPlayer = nil
+	local shortestDistance = math.huge
+
+	for _, playerIter in ipairs(Players:GetPlayers()) do
+		if playerIter ~= player and playerIter.Character then 
+			local localRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+			local otherRootPart = playerIter.Character:FindFirstChild("HumanoidRootPart")
+
+			if localRootPart and otherRootPart then
+				local distance = (localRootPart.Position - otherRootPart.Position).Magnitude
+
+				if distance < shortestDistance then
+					shortestDistance = distance
+					nearestPlayer = playerIter
+				end
+			end
+		end
+	end
+
+	return nearestPlayer
+end
+
+local shootOffset = 2.8
+
+local function getPredictedPositionShoot(playerToPredict, shootOffsetVal)
+	local ogplayer = playerToPredict
+	pcall(function()
+		playerToPredict = playerToPredict.Character
+		if not playerToPredict.Character then return end
+	end)
+	local playerHRP = playerToPredict:FindFirstChild("HumanoidRootPart")
+	if not playerHRP then
+		return Vector3.new(0,0,0)
+	end
+
+	local playerPosition = playerHRP.Position
+	local velocity = playerHRP.AssemblyLinearVelocity
+	local playerMoveDirection = playerToPredict:FindFirstChild("Humanoid") and playerToPredict:FindFirstChild("Humanoid").MoveDirection or Vector3.new(0,0,0)
+	local predictedPosition = playerHRP.Position + ((velocity * Vector3.new(0.75, 0.5, 0.75))) * (shootOffsetVal / 15) + playerMoveDirection * shootOffsetVal
+	
+	return predictedPosition
+end
+
+shootMurdererButton = createButton("ShootMurdererButton", "Shoot Murderer: OFF", 206.5)
+shootMurdererButton.MouseButton1Click:Connect(function()
+	if findSherifShoot() ~= player then 
+		print("You're not sheriff/hero.")
+		return 
+	end
+
+	local murderer = findMurdererShoot() or findNearestPlayerShoot()
+	if not murderer then
+		print("No murderer (or other player) to shoot.")
+		return
+	end
+
+	if not player.Character:FindFirstChild("Gun") then
+		local hum = player.Character:FindFirstChild("Humanoid")
+		if player.Backpack:FindFirstChild("Gun") then
+			hum:EquipTool(player.Backpack:FindFirstChild("Gun"))
+		else
+			print("You don't have the gun")
+			return
+		end
+	end
+
+	local murdererHRP = murderer.Character:FindFirstChild("HumanoidRootPart")
+	if not murdererHRP then
+		print("Could not find the target's HumanoidRootPart.")
+		return
+	end
+
+	local predictedPosition = getPredictedPositionShoot(murderer, shootOffset)
+
+	local args = {
+		CFrame.new(player.Character:FindFirstChild("RightHand") and player.Character.RightHand.Position or player.Character.HumanoidRootPart.Position),
+		CFrame.new(predictedPosition)
+	}
+	
+	pcall(function()
+		player.Character:WaitForChild("Gun"):WaitForChild("Shoot"):FireServer(unpack(args))
+	end)
 end)
 
 antiFlingButton = createButton("AntiFlingButton", "Anti-Fling: OFF", 207)
@@ -3102,7 +3968,7 @@ toggleText.Size = UDim2.new(1, 0, 1, 0)
 toggleText.Position = UDim2.new(0, 0, 0, 0)
 toggleText.BackgroundTransparency = 1
 toggleText.TextColor3 = Color3.fromRGB(255, 255, 255)
-toggleText.Text = "ADR-X"
+toggleText.Text = "WIN-X"
 toggleText.Font = Enum.Font.SourceSansBold
 toggleText.TextSize = 18
 toggleText.Parent = toggleButton
@@ -3214,3 +4080,66 @@ end)		clumsy_on = false
 			clumsyButton.Text = "Clumsy: OFF"
 			clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 		end
+
+        -- ============================================
+-- Auto Remove GlitchProof (always on)
+-- ============================================
+function removeGlitchProof()
+	local mansion = Workspace:FindFirstChild("Mansion2")
+	if mansion then
+		local base = mansion:FindFirstChild("Base")
+		if base then
+			local glitch = base:FindFirstChild("GlitchProof")
+			if glitch then
+				glitch:Destroy()
+			end
+		end
+	end
+end
+
+-- Удаляем при запуске
+removeGlitchProof()
+
+-- Отслеживаем появление Mansion2
+Workspace.ChildAdded:Connect(function(child)
+	if child.Name == "Mansion2" then
+		task.wait(1)
+		removeGlitchProof()
+		-- Также следим за появлением Base внутри
+		child.DescendantAdded:Connect(function(desc)
+			if desc.Name == "GlitchProof" then
+				task.defer(function()
+					if desc and desc.Parent then
+						desc:Destroy()
+					end
+				end)
+			end
+		end)
+	end
+end)
+
+-- Если Mansion2 уже есть — следим за новыми GlitchProof
+local existingMansion = Workspace:FindFirstChild("Mansion2")
+if existingMansion then
+	existingMansion.DescendantAdded:Connect(function(desc)
+		if desc.Name == "GlitchProof" then
+			task.defer(function()
+				if desc and desc.Parent then
+					desc:Destroy()
+				end
+			end)
+		end
+	end)
+end
+
+-- Периодическая проверка на всякий случай
+task.spawn(function()
+	while true do
+		task.wait(5)
+		removeGlitchProof()
+	end
+end)
+
+wait(0.5)
+
+loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-Invisible-FE-19153"))()
