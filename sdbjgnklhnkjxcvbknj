@@ -1117,12 +1117,12 @@ getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
 -- Animation variables
 local animationButtons = {
-	79480770273758, "Anti-Aim", 77094699387328, "Glitch Spin", 121966805049108, "Hit the Griddy", 79757971761739, "Shattered",
-	83265734904502, "Take the L", 115518346414107, "Gangnam Style", 114400428765989, "180 flip", 92249489340640, "Dahood Stomp",
-	121368513461476, "Six Seven dance", 110146282544198, "Organe Justice", 10714340543, "The Floss",
+	79480770273758, "Anti-Aim", 77094699387328, "Glitch Spin", 83265734904502, "Take the L", 92249489340640, "Dahood Stomp",
+	121368513461476, "Six Seven dance", 120852662885277, "Six Seven emote", 92618727772186, "IShowSpeed Dance", 137430722819744, "Man Squat",
+	98974619620224, "Laugh Ragebait", 127118661424463, "Caramell Dance", 124522818196151, "Head Spin",
 	77984841414450, "Deltarune dance or smthn", 109873544976020, "Biblically Accurate Emote", 90333292347820, "The Worm",
-	88130117312312, "Fake Death", 120852662885277, "Six Seven emote", 98974619620224, "Laugh Ragebait",
-	108747312576405, "And I turn into a convertable. Les goooo", 93014787120483, "Garry's Dance", 92618727772186, "IShowSpeed Dance",
+	121966805049108, "Hit the Griddy", 115518346414107, "Gangnam Style", 110146282544198, "Orange Justice",
+	108747312576405, "Les goooo", 93014787120483, "Garry's Dance",
 	99499783161907, "Aura farm", 80177289449617, "Snow angel", 70432904702322, "Get skinwalked", 123916423751437, "Rat Dance",
 	129537633250603, "It's Peanut Butter Jelly Time"
 }
@@ -1504,50 +1504,95 @@ local function onCharacterAdded(char)
 	-- Ничего дополнительного не нужно, ESP уже подписан на CharacterAdded
 
 	humanoid.Died:Connect(function()
+		-- Отключаем Desync
+		PastedSources = false
+		if desyncButton then
+			desyncButton.Text = "Desync: OFF"
+			desyncButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+			desyncButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		end
+
+		-- Отключаем Wallhop
 		wallhopToggle = false
 		if button2 then
 			button2.Text = "Wallhop: OFF"
 			button2.TextColor3 = Color3.fromRGB(255, 255, 255)
+			button2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		end
-running = false
-currentMode = 0
-updateAntiAimButtonVisual()
+
+		-- Отключаем Anti-Aim
+		running = false
+		currentMode = 0
+		updateAntiAimButtonVisual()
+
+		-- Отключаем Infinite Jump
+		isEnabled = false
+		if button1 then
+			button1.Text = "Infinite Jump: OFF"
+			button1.TextColor3 = Color3.fromRGB(255, 255, 255)
+			button1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		end
+
+		-- Отключаем Invisibility
+		invis_on = false
+		if button5 then
+			button5.Text = "Invisibility: OFF"
+			button5.TextColor3 = Color3.fromRGB(255, 255, 255)
+			button5.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		end
+
+		-- Отключаем Clumsy
+		clumsy_on = false
+		if clumsyButton then
+			clumsyButton.Text = "Clumsy: OFF"
+			clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+			clumsyButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		end
+
+		-- ==== НЕ отключаем Speed Glitch - сохраняем его состояние ====
+		-- fakeSpeedEnabled остаётся как было
+		-- При новом персонаже будет переподключен в onCharacterAdded
+
+		-- Отключаем Noclip
 		noclipEnabled = false
 		if noclipButton then
 			noclipButton.Text = "Noclip: OFF"
 			noclipButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+			noclipButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		end
-		if secondLifeEnabled then
-	disableSecondLife()
-	if secondLifeButton then
-		secondLifeButton.Text = "Second Life: OFF"
-		secondLifeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-	end
-end
 		if noclipConnection then
 			noclipConnection:Disconnect()
 			noclipConnection = nil
 		end
+
+		-- Отключаем KillAura
 		reachEnabled = false
 		if reachButton then
 			reachButton.Text = "KillAura: OFF"
 			reachButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+			reachButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		end
 		if reachConnection then
 			reachConnection:Disconnect()
 			reachConnection = nil
 		end
-		fakeSpeedEnabled = false
-		if button4 then
-			button4.Text = "Speed Glitch: OFF"
-			button4.TextColor3 = Color3.fromRGB(255, 255, 255)
+
+		-- Отключаем Second Life
+		if secondLifeEnabled then
+			disableSecondLife()
+			if secondLifeButton then
+				secondLifeButton.Text = "Second Life: OFF"
+				secondLifeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+				secondLifeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			end
 		end
-		if fakeSpeedRenderConnection then fakeSpeedRenderConnection:Disconnect() fakeSpeedRenderConnection = nil end
-		if fakeSpeedDiedConnection then fakeSpeedDiedConnection:Disconnect() fakeSpeedDiedConnection = nil end
+
+		-- Отключаем Touch Fling
 		hiddenfling = false
 		if touchFlingButton then
 			touchFlingButton.Text = "Touch Fling: OFF"
 			touchFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+			touchFlingButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		end
 
 		-- Anti-Fling: НЕ отключаем, только disconnect старый connection (персонаж умер)
@@ -1566,27 +1611,9 @@ end
 		-- Anti-Void: НЕ отключаем — Anti-Void сам обрабатывает CharacterAdded
 		-- Кнопку НЕ трогаем
 
-		clumsy_on = false
-		if clumsyButton then
-			clumsyButton.Text = "Clumsy: OFF"
-			clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-		end
-
 		stopFling()
 		stopCurrentAnimation()
 		isAlive = false
-		PastedSources = false
-		if desyncButton then
-			desyncButton.Text = "Desync: OFF"
-			desyncButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-		end
-
-		-- Invis off
-		invis_on = false
-		if button5 then
-			button5.Text = "Invisibility: OFF"
-			button5.TextColor3 = Color3.fromRGB(255, 255, 255)
-		end
 	end)
 end
 
@@ -2010,6 +2037,28 @@ local function setToggleState(btn, state, onText, offText)
 	end
 end
 
+-- Система биндинга клавиш
+local keyBinds = {
+	-- Формат: [KeyCode.KeyName] = {callback, description}
+}
+
+local function registerKeyBind(keyCode, callback, description)
+	if not keyBinds then keyBinds = {} end
+	keyBinds[keyCode] = {callback = callback, description = description}
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if not keyBinds then return end
+	
+	if keyBinds[input.KeyCode] then
+		local bindData = keyBinds[input.KeyCode]
+		if bindData.callback then
+			bindData.callback()
+		end
+	end
+end)
+
 -- ============================================
 -- SECTION 1: Movement (LayoutOrder 100-199)
 -- ============================================
@@ -2050,6 +2099,18 @@ ui.jumpBoostInput.FocusLost:Connect(function()
 		ui.jumpBoostInput.Text = tostring(JUMP_BOOST_POWER)
 	end
 end)
+
+-- Регистрируем бинд для Jump Boost на клавишу ]
+registerKeyBind(Enum.KeyCode.RightBracket, function()
+	local char = player.Character
+	if char and char:FindFirstChild("Humanoid") then
+		char.Humanoid.JumpPower = JUMP_BOOST_POWER
+		task.wait(0.7)
+		if char and char:FindFirstChild("Humanoid") then
+			char.Humanoid.JumpPower = 50
+		end
+	end
+end, "Jump Boost")
 
 button4, speedInputBox = createDualRow("SpeedButton", "Speed Glitch: OFF", "Speed", FAKE_SPEED_CFRAME_SPEED, 104)
 button4.MouseButton1Click:Connect(function()
