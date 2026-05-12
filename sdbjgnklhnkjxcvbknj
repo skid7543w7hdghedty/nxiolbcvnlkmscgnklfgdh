@@ -1543,6 +1543,7 @@ local function onCharacterAdded(char)
 
 		-- Отключаем Clumsy
 		clumsy_on = false
+		removeClumsyGhost()
 		if clumsyButton then
 			clumsyButton.Text = "Clumsy: OFF"
 			clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1631,25 +1632,28 @@ player.CharacterRemoving:Connect(function()
 	if noclipButton then
 		noclipButton.Text = "Noclip: OFF"
 		noclipButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		noclipButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	end
 	if noclipConnection then noclipConnection:Disconnect() noclipConnection = nil end
 	reachEnabled = false
 	if reachButton then
 		reachButton.Text = "KillAura: OFF"
 		reachButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		reachButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	end
 	if reachConnection then reachConnection:Disconnect() reachConnection = nil end
-	fakeSpeedEnabled = false
-	if button4 then
-		button4.Text = "Speed Glitch: OFF"
-		button4.TextColor3 = Color3.fromRGB(255, 255, 255)
+	-- ==== НЕ отключаем Speed Glitch при смерти ====
+	-- Он должен остаться включённым если был включён
+	-- Но нужно переподключить connection
+	if fakeSpeedEnabled then
+		setupFakeSpeed()
 	end
-	if fakeSpeedRenderConnection then fakeSpeedRenderConnection:Disconnect() fakeSpeedRenderConnection = nil end
-	if fakeSpeedDiedConnection then fakeSpeedDiedConnection:Disconnect() fakeSpeedDiedConnection = nil end
+	
 	hiddenfling = false
 	if touchFlingButton then
 		touchFlingButton.Text = "Touch Fling: OFF"
 		touchFlingButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		touchFlingButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	end
 
 	-- Anti-Fling: НЕ отключаем состояние, только disconnect connection
@@ -1667,6 +1671,7 @@ player.CharacterRemoving:Connect(function()
 	if clumsyButton then
 		clumsyButton.Text = "Clumsy: OFF"
 		clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		clumsyButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	end
 
 	stopFling()
@@ -1676,6 +1681,7 @@ player.CharacterRemoving:Connect(function()
 	if desyncButton then
 		desyncButton.Text = "Desync: OFF"
 		desyncButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		desyncButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	end
 end)
 
@@ -1859,6 +1865,15 @@ contentFrame.ScrollBarThickness = 4
 contentFrame.ScrollBarImageColor3 = Color3.fromRGB(255, 255, 255)
 contentFrame.Parent = mainFrame
 
+-- Блокируем скролл при первой загрузке
+contentFrame.InputBegan:Connect(function(input)
+	if not canScroll and (input.UserInputType == Enum.UserInputType.MouseWheel or 
+		input.UserInputType == Enum.UserInputType.Touch) then
+		-- Игнорируем скролл при инициализации
+		return
+	end
+end)
+
 local listLayout = Instance.new("UIListLayout")
 listLayout.Padding = UDim.new(0, 8)
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -1874,6 +1889,7 @@ padding.Parent = contentFrame
 -- Category management system
 local currentCategory = "Movement"
 local categories = {}
+local canScroll = false  -- Флаг для блокировки скролла при инициализации
 
 local function createCategoryButton(shortName, layoutOrder)
 	-- Map short names to full names
@@ -4066,6 +4082,10 @@ end)
 
 refreshPlayerList()
 updateFlingStatus()
+
+-- Разрешаем скролл после инициализации
+task.wait(0.1)
+canScroll = true
 
 local menuVisible = true
 local contentVisible = true
