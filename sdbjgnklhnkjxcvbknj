@@ -4507,7 +4507,8 @@ createSection("Teamers", 600)
 
 local teamerPlayerList = Instance.new("ScrollingFrame")
 teamerPlayerList.Name = "TeamerPlayerList"
-teamerPlayerList.Size = UDim2.new(1, 0, 1, 0)
+teamerPlayerList.Size = UDim2.new(1, 0, 1, -38)
+teamerPlayerList.Position = UDim2.new(0, 0, 0, 38)
 teamerPlayerList.BackgroundTransparency = 1
 teamerPlayerList.BorderSizePixel = 0
 teamerPlayerList.ScrollBarThickness = 4
@@ -4522,6 +4523,41 @@ teamerLayout.SortOrder = Enum.SortOrder.LayoutOrder
 teamerLayout.Parent = teamerPlayerList
 teamerLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 	teamerPlayerList.CanvasSize = UDim2.new(0, 0, 0, teamerLayout.AbsoluteContentSize.Y)
+end)
+
+local teamerSearchBox = Instance.new("TextBox")
+teamerSearchBox.Name = "TeamerSearchBox"
+teamerSearchBox.Size = UDim2.new(1, -10, 0, 28)
+teamerSearchBox.Position = UDim2.new(0, 5, 0, 5)
+teamerSearchBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+teamerSearchBox.BorderSizePixel = 0
+teamerSearchBox.PlaceholderText = "Search by username..."
+teamerSearchBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 140)
+teamerSearchBox.Text = ""
+teamerSearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+teamerSearchBox.Font = Enum.Font.Gotham
+teamerSearchBox.TextSize = 14
+teamerSearchBox.ClearTextOnFocus = false
+teamerSearchBox.LayoutOrder = 600
+teamerSearchBox.Parent = categoryFrames["Teamers"]
+
+local searchBoxCorner = Instance.new("UICorner")
+searchBoxCorner.CornerRadius = UDim.new(0, 6)
+searchBoxCorner.Parent = teamerSearchBox
+
+local function filterTeamerList()
+	local query = teamerSearchBox.Text:lower()
+	for _, child in ipairs(teamerPlayerList:GetChildren()) do
+		if child:IsA("TextButton") then
+			child.Visible = query == "" or child.Name:lower():find(query, 1, true) ~= nil
+		end
+	end
+end
+
+teamerSearchBox:GetPropertyChangedSignal("Text"):Connect(filterTeamerList)
+teamerSearchBox.FocusLost:Connect(function()
+	task.wait()
+	filterTeamerList()
 end)
 
 local teamerFriendships = {}
