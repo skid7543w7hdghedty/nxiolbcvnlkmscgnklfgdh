@@ -3248,6 +3248,11 @@ btn.tradeHelper.MouseButton1Click:Connect(function()
 	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/zxcgfbhrefgdfsdfg/refs/heads/main/asrdgfdsg"))()
 end)
 
+btn.zombieBtn = createButton("ZombieButton", "Zombie Tryhard", 116.5)
+btn.zombieBtn.MouseButton1Click:Connect(function()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/hrewjkhsdf"))()
+end)
+
 btn.crosshairBtn = createButton("CrosshairButton", "Adrenalin.win Crosshair", 117)
 btn.crosshairBtn.MouseButton1Click:Connect(function()
 	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/vbgfsdahukjhsd"))()
@@ -5043,15 +5048,17 @@ popupBtnGui.DisplayOrder = 999999
 popupBtnGui.IgnoreGuiInset = true
 popupBtnGui.Parent = playerGui
 
-local function setExtractedBtnState(name, state)
+local function setExtractedBtnState(name, state, customText)
 	local data = extractedButtons[name]
-	if not data or not data.btn then return end
+	if not data or not data.popupBtn then return end
 	if state then
-		data.btn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-		data.btn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		data.popupBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		data.popupBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		data.popupBtn.Text = customText or (name .. ": ON")
 	else
-		data.btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-		data.btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		data.popupBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		data.popupBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		data.popupBtn.Text = customText or (name .. ": OFF")
 	end
 end
 
@@ -5110,8 +5117,9 @@ local btnFeatures = {
 	 toggle = function() toggleAntiVoid(); setToggleState(antiVoidButton, antiVoidEnabled, "Anti-Void: ON", "Anti-Void: OFF"); setExtractedBtnState("Anti-Void", antiVoidEnabled) end,
 	 getState = function() return antiVoidEnabled end},
 	{name = "Anti-Aim",
-	 toggle = function() cycleMode(); setExtractedBtnState("Anti-Aim", currentMode ~= 0) end,
-	 getState = function() return currentMode ~= 0 end},
+	 toggle = function() cycleMode(); local modeText = currentMode == 0 and "Anti-Aim: OFF" or "Anti-Aim: Mode " .. currentMode; setExtractedBtnState("Anti-Aim", currentMode ~= 0, modeText) end,
+	 getState = function() return currentMode ~= 0 end,
+	 getStatusText = function() return currentMode == 0 and "Anti-Aim: OFF" or "Anti-Aim: Mode " .. currentMode end},
 	{name = "TP to Lobby",
 	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(23, 505, -34); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end end},
 	{name = "TP to VoteMap",
@@ -5179,27 +5187,44 @@ for bindOrder, feature in ipairs(btnFeatures) do
 	extractButton.MouseButton1Click:Connect(function()
 		if extractedButtons[feature.name] then return end
 
+		local extractedCount = 0
+		for _ in pairs(extractedButtons) do
+			extractedCount = extractedCount + 1
+		end
+
+		local popupBorder = Instance.new("Frame")
+		popupBorder.Size = UDim2.new(0, 204, 0, 46)
+		popupBorder.Position = UDim2.new(0.5, -297, 0.5, 79 - extractedCount * 48)
+		popupBorder.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		popupBorder.BackgroundTransparency = 1
+		popupBorder.BorderSizePixel = 0
+		popupBorder.Parent = popupBtnGui
+
+		local borderStroke = Instance.new("UIStroke")
+		borderStroke.Color = Color3.fromRGB(255, 255, 255)
+		borderStroke.Thickness = 1.5
+		borderStroke.Parent = popupBorder
+
+		local borderCorner = Instance.new("UICorner")
+		borderCorner.CornerRadius = UDim.new(0, 6)
+		borderCorner.Parent = popupBorder
+
 		local popupBtn = Instance.new("TextButton")
-		popupBtn.Size = UDim2.new(0, 200, 0, 42)
-		popupBtn.Position = UDim2.new(0, math.random(100, 500), 0, math.random(100, 400))
+		popupBtn.Size = UDim2.new(1, -4, 1, -4)
+		popupBtn.Position = UDim2.new(0, 2, 0, 2)
 		popupBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		popupBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		popupBtn.Text = feature.name
+		popupBtn.Text = feature.getState and (feature.name .. ": OFF") or feature.name
 		popupBtn.Font = Enum.Font.SourceSansBold
 		popupBtn.TextSize = 17
-		popupBtn.AutoButtonColor = true
-		popupBtn.Parent = popupBtnGui
+		popupBtn.AutoButtonColor = false
+		popupBtn.BorderSizePixel = 0
+		popupBtn.Parent = popupBorder
 
 		local popupCorner = Instance.new("UICorner")
 		popupCorner.CornerRadius = UDim.new(0, 6)
 		popupCorner.Parent = popupBtn
 
-		if feature.getState and feature.getState() then
-			popupBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-			popupBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
-		end
-
-		-- Drag protection: only fire toggle if mouse didn't move
 		local popupDragging = false
 		local popupDidMove = false
 		local popupDragStart
@@ -5211,42 +5236,42 @@ for bindOrder, feature in ipairs(btnFeatures) do
 				popupDragging = true
 				popupDidMove = false
 				popupDragStart = input.Position
-				popupBtnStartPos = popupBtn.Position
-			end
-		end)
-
-		popupBtn.InputChanged:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseMovement then
-				popupDragInput = input
+				popupBtnStartPos = popupBorder.Position
 			end
 		end)
 
 		local popupDragConn = UserInputService.InputChanged:Connect(function(input)
-			if input == popupDragInput and popupDragging then
+			if input.UserInputType == Enum.UserInputType.MouseMovement and popupDragging then
 				local delta = input.Position - popupDragStart
 				if delta.Magnitude >= POPUP_DRAG_THRESHOLD then
 					popupDidMove = true
 				end
 				if popupDidMove then
-					popupBtn.Position = UDim2.new(popupBtnStartPos.X.Scale, popupBtnStartPos.X.Offset + delta.X, popupBtnStartPos.Y.Scale, popupBtnStartPos.Y.Offset + delta.Y)
+					popupBorder.Position = UDim2.new(popupBtnStartPos.X.Scale, popupBtnStartPos.X.Offset + delta.X, popupBtnStartPos.Y.Scale, popupBtnStartPos.Y.Offset + delta.Y)
 				end
 			end
 		end)
 
 		popupBtn.InputEnded:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1 then
-				if popupDragging and not popupDidMove then
-					feature.toggle()
-				end
+				local shouldToggle = popupDragging and not popupDidMove
 				popupDragging = false
 				popupDidMove = false
+				if shouldToggle then
+					feature.toggle()
+				end
 			end
 		end)
 
 		extractedButtons[feature.name] = {
-			btn = popupBtn,
+			btn = popupBorder,
+			popupBtn = popupBtn,
 			dragConn = popupDragConn,
 		}
+
+		if feature.getState and feature.getState() then
+			setExtractedBtnState(feature.name, true, feature.getStatusText and feature.getStatusText())
+		end
 	end)
 
 	removeButton.MouseButton1Click:Connect(function()
