@@ -8,6 +8,17 @@ Workspace = game:GetService("Workspace")
 ReplicatedStorage = game:GetService("ReplicatedStorage")
 Players = game:GetService("Players")
 
+-- One-time activation protection
+if getgenv().AdrenalinWinLoaded then
+	game:GetService("StarterGui"):SetCore("SendNotification", {
+		Title = "Adrenalin.win",
+		Text = "Script already loaded!",
+		Duration = 3
+	})
+	return
+end
+getgenv().AdrenalinWinLoaded = true
+
 -- Murderer check with caching
 cachedIsMurderer = false
 lastMurdererCheck = 0
@@ -40,6 +51,134 @@ DesyncTypes = {}
 function RandomNumberRange(a)
 	return math.random(-a * 100, a * 100) / 100
 end
+
+-- ============================================
+-- Config system
+-- ============================================
+local CONFIG_FOLDER = "Adrenalin.win"
+local CONFIG_PATH = CONFIG_FOLDER .. "/config.json"
+local loadedConfig = {}
+local isApplyingConfig = false
+
+local function ensureFolder()
+	pcall(function() makefolder(CONFIG_FOLDER) end)
+end
+
+local function saveConfig()
+	if isApplyingConfig then return end
+	ensureFolder()
+	local config = {
+		toggles = {},
+		values = {},
+		binds = {},
+		extractedBtns = {},
+	}
+
+	config.toggles.isEnabled = isEnabled
+	config.toggles.wallhopToggle = wallhopToggle
+	config.toggles.noclipEnabled = noclipEnabled
+	config.toggles.reachEnabled = reachEnabled
+	config.toggles.fakeSpeedEnabled = fakeSpeedEnabled
+	config.toggles.secondLifeEnabled = secondLifeEnabled
+	config.toggles.invis_on = invis_on
+	config.toggles.autoInvisEnabled = autoInvisEnabled
+	config.toggles.autoTpEnabled = autoTpEnabled
+	config.toggles.clumsy_on = clumsy_on
+	config.toggles.PastedSources = PastedSources
+	config.toggles.antiFlingEnabled = antiFlingEnabled
+	config.toggles.antiVoidEnabled = antiVoidEnabled
+	config.toggles.espEnabled = espEnabled
+	config.toggles.autoGrabGunEnabled = autoGrabGunEnabled
+	config.toggles.gunAuraEnabled = gunAuraEnabled
+	config.toggles.autoDeleteCoinsEnabled = autoDeleteCoinsEnabled
+	config.toggles.autoDeleteCorpsesEnabled = autoDeleteCorpsesEnabled
+	config.toggles.hiddenfling = hiddenfling
+	config.toggles.airStrafeEnabled = airStrafeEnabled
+
+	config.toggles.antiAimMode = currentMode
+	config.toggles.gameNotifEnabled = gameNotifEnabled
+
+	config.values.JUMP_BOOST_POWER = JUMP_BOOST_POWER
+	config.values.FAKE_SPEED_CFRAME_SPEED = FAKE_SPEED_CFRAME_SPEED
+	config.values.range = range
+	config.values.autoInvisActivateDist = autoInvisActivateDist
+	config.values.autoInvisDeactivateDist = autoInvisDeactivateDist
+	config.values.autoTpDist = autoTpDist
+	config.values.autoTpTarget = autoTpTarget
+	config.values.MAGNET_DISTANCE = MAGNET_DISTANCE
+	config.values.toggleBgTransparency = toggleBgTransparency
+	config.values.mainBgTransparency = mainBgTransparency
+	config.values.popupBgTransparency = popupBgTransparency
+	config.values.toggleButtonSize = toggleButtonSize
+	config.values.mainMenuWidth = mainMenuWidth
+	config.values.mainMenuHeight = mainMenuHeight
+	config.values.popupBtnWidth = popupBtnWidth
+	config.values.popupBtnHeight = popupBtnHeight
+
+	if featureBinds then
+		for name, key in pairs(featureBinds) do
+			config.binds[name] = tostring(key)
+		end
+	end
+
+	if extractedButtons then
+		for name, data in pairs(extractedButtons) do
+			if data and data.btn then
+				local p = data.btn.Position
+				config.extractedBtns[name] = {
+					pos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}},
+					locked = (data.popupLockBtn and data.popupLockBtn.Text == "L") or false,
+				}
+			end
+		end
+	end
+
+	config.locks = {
+		popupDragLocked = popupDragLocked or false,
+		toggleDragLocked = toggleDragLocked or false,
+	}
+
+	if toggleButton then
+		local p = toggleButton.Position
+		config.togglePos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}}
+	end
+
+	pcall(function()
+		writefile(CONFIG_PATH, game:GetService("HttpService"):JSONEncode(config))
+	end)
+end
+
+local function loadConfigFromDisk()
+	ensureFolder()
+	local success, data = pcall(function() return readfile(CONFIG_PATH) end)
+	if success and data and data ~= "" then
+		local ok, decoded = pcall(function()
+			return game:GetService("HttpService"):JSONDecode(data)
+		end)
+		if ok and decoded then
+			loadedConfig = decoded
+		end
+	end
+end
+
+loadConfigFromDisk()
+
+local function stringToKey(str)
+	if not str then return nil end
+	local kc = str:match("Enum%.KeyCode%.(.+)")
+	if kc then return Enum.KeyCode[kc] end
+	local ut = str:match("Enum%.UserInputType%.(.+)")
+	if ut then return Enum.UserInputType[ut] end
+	return nil
+end
+
+-- applyLoadedConfig is not used here — variables get overwritten by original declarations later
+
+task.spawn(function()
+	while task.wait(30) do
+		saveConfig()
+	end
+end)
 
 -- Infinite jump variables
 isEnabled = false
@@ -310,14 +449,34 @@ reachEnabled = false
 reachConnection = nil
 range = 8
 
+-- Air Strafe variables
+airStrafeEnabled = false
+airStrafeConnection = nil
+airStrafeInputConnection = nil
+airStrafeMultiplier = 1.7
+maxAirSpeed = 20
+strafeInterval = 1.5
+lastKeyTime = 0
+lastKey = nil
+isStrafing = false
+
 -- Reach function
+local reachCachePlayers = {}
+local function reachBuildCache()
+	reachCachePlayers = Players:GetPlayers()
+end
+reachBuildCache()
+Players.PlayerAdded:Connect(reachBuildCache)
+Players.PlayerRemoving:Connect(reachBuildCache)
+
 function toggleReach()
 	reachEnabled = not reachEnabled
 	if reachEnabled then
 		reachConnection = RunService.RenderStepped:Connect(function()
-			local p = Players:GetPlayers()
+			local p = reachCachePlayers
 			for i = 2, #p do
-				local v = p[i].Character
+				local plr = p[i]
+				local v = plr.Character
 				if v and v:FindFirstChild("Humanoid") and v.Humanoid.Health > 0 and v:FindFirstChild("HumanoidRootPart") and player:DistanceFromCharacter(v.HumanoidRootPart.Position) <= range then
 					local tool = player.Character and player.Character:FindFirstChildOfClass("Tool")
 					if tool and tool:FindFirstChild("Handle") then
@@ -340,6 +499,102 @@ function toggleReach()
 	end
 end
 
+-- Air Strafe functions
+function checkStrafeSequence(keyCode)
+	if not airStrafeEnabled then return end
+	local currentTime = tick()
+	if keyCode == Enum.KeyCode.A or keyCode == Enum.KeyCode.D then
+		if lastKey and lastKey ~= keyCode and (currentTime - lastKeyTime) <= strafeInterval then
+			isStrafing = true
+			task.delay(strafeInterval, function()
+				isStrafing = false
+			end)
+		end
+		lastKey = keyCode
+		lastKeyTime = currentTime
+	end
+end
+
+function setupAirStrafe()
+	if airStrafeConnection then
+		airStrafeConnection:Disconnect()
+		airStrafeConnection = nil
+	end
+	if airStrafeInputConnection then
+		airStrafeInputConnection:Disconnect()
+		airStrafeInputConnection = nil
+	end
+
+	if not airStrafeEnabled then return end
+
+	local char = player.Character
+	if not char then return end
+	local hum = char:FindFirstChild("Humanoid")
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not (hum and hrp) then return end
+
+	airStrafeInputConnection = UserInputService.InputBegan:Connect(function(input, gp)
+		if gp then return end
+		if input.KeyCode == Enum.KeyCode.A or input.KeyCode == Enum.KeyCode.D then
+			checkStrafeSequence(input.KeyCode)
+		end
+	end)
+
+	airStrafeConnection = RunService.RenderStepped:Connect(function()
+		if not airStrafeEnabled then return end
+		local c = player.Character
+		if not c then return end
+		local h = c:FindFirstChild("Humanoid")
+		local r = c:FindFirstChild("HumanoidRootPart")
+		if not (h and r) then return end
+		local state = h:GetState()
+		if state == Enum.HumanoidStateType.Jumping or state == Enum.HumanoidStateType.Freefall then
+			if isStrafing then
+				local moveDir = Vector3.new(0, 0, 0)
+				if UserInputService:IsKeyDown(Enum.KeyCode.A) then
+					moveDir = moveDir + Vector3.new(-1, 0, 0)
+				end
+				if UserInputService:IsKeyDown(Enum.KeyCode.D) then
+					moveDir = moveDir + Vector3.new(1, 0, 0)
+				end
+				if moveDir.Magnitude > 0 then
+					moveDir = moveDir.Unit
+					local cameraCFrame = Workspace.CurrentCamera.CFrame
+					moveDir = cameraCFrame:VectorToWorldSpace(moveDir)
+					moveDir = Vector3.new(moveDir.X, 0, moveDir.Z).Unit
+					local vel = r.Velocity
+					r.Velocity = Vector3.new(
+						moveDir.X * maxAirSpeed * airStrafeMultiplier,
+						vel.Y,
+						moveDir.Z * maxAirSpeed * airStrafeMultiplier
+					)
+				end
+			end
+		end
+	end)
+
+	local diedConn
+	diedConn = hum.Died:Connect(function()
+		if airStrafeConnection then
+			airStrafeConnection:Disconnect()
+			airStrafeConnection = nil
+		end
+		if airStrafeInputConnection then
+			airStrafeInputConnection:Disconnect()
+			airStrafeInputConnection = nil
+		end
+		if diedConn then
+			diedConn:Disconnect()
+			diedConn = nil
+		end
+	end)
+end
+
+function toggleAirStrafe()
+	airStrafeEnabled = not airStrafeEnabled
+	setupAirStrafe()
+end
+
 -- Fake Speed Glitch variables (CFrame-based)
 fakeSpeedEnabled = false
 fakeSpeedRenderConnection = nil
@@ -348,40 +603,42 @@ FAKE_SPEED_CFRAME_SPEED = 110
 
 -- Fake Speed Glitch setup function
 function setupFakeSpeed()
+	-- Always clean up existing connections first (prevents orphaned connections)
+	if fakeSpeedRenderConnection then
+		fakeSpeedRenderConnection:Disconnect()
+		fakeSpeedRenderConnection = nil
+	end
+	if fakeSpeedDiedConnection then
+		fakeSpeedDiedConnection:Disconnect()
+		fakeSpeedDiedConnection = nil
+	end
+
+	if not fakeSpeedEnabled then return end
+
 	local char = player.Character
 	if not char then return end
 	local hum = char:FindFirstChild("Humanoid")
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	if not (hum and hrp) then return end
-	if fakeSpeedEnabled then
-		fakeSpeedRenderConnection = RunService.Heartbeat:Connect(function(dt)
-			local c = player.Character
-			if not c then return end
-			local h = c:FindFirstChild("Humanoid")
-			local r = c:FindFirstChild("HumanoidRootPart")
-			if not (h and r) then return end
-			local state = h:GetState()
-			if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
-				local moveDir = h.MoveDirection
-				if moveDir.Magnitude > 0 then
-					local extraSpeed = FAKE_SPEED_CFRAME_SPEED - h.WalkSpeed
-					if extraSpeed > 0 then
-						r.CFrame = r.CFrame + moveDir * extraSpeed * dt
-					end
+
+	fakeSpeedRenderConnection = RunService.Heartbeat:Connect(function(dt)
+		local c = player.Character
+		if not c then return end
+		local h = c:FindFirstChild("Humanoid")
+		local r = c:FindFirstChild("HumanoidRootPart")
+		if not (h and r) then return end
+		local state = h:GetState()
+		if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+			local moveDir = h.MoveDirection
+			if moveDir.Magnitude > 0 then
+				local extraSpeed = FAKE_SPEED_CFRAME_SPEED - h.WalkSpeed
+				if extraSpeed > 0 then
+					r.CFrame = r.CFrame + moveDir * extraSpeed * dt
 				end
 			end
-		end)
-		fakeSpeedDiedConnection = hum.Died:Connect(function()
-			if fakeSpeedRenderConnection then
-				fakeSpeedRenderConnection:Disconnect()
-				fakeSpeedRenderConnection = nil
-			end
-			if fakeSpeedDiedConnection then
-				fakeSpeedDiedConnection:Disconnect()
-				fakeSpeedDiedConnection = nil
-			end
-		end)
-	else
+		end
+	end)
+	fakeSpeedDiedConnection = hum.Died:Connect(function()
 		if fakeSpeedRenderConnection then
 			fakeSpeedRenderConnection:Disconnect()
 			fakeSpeedRenderConnection = nil
@@ -390,7 +647,7 @@ function setupFakeSpeed()
 			fakeSpeedDiedConnection:Disconnect()
 			fakeSpeedDiedConnection = nil
 		end
-	end
+	end)
 end
 
 -- Fake Speed Glitch toggle function
@@ -408,8 +665,9 @@ antiFlingConnection = nil
 
 function antiFlingCollide(plr)
 	if plr and plr.Character and plr ~= game.Players.LocalPlayer then
-		for i,v in pairs(plr.Character:GetDescendants()) do
-			if v:IsA("BasePart") and v.CanCollide == true then
+		local char = plr.Character
+		for i,v in pairs(char:GetChildren()) do
+			if v:IsA("BasePart") then
 				v.CanCollide = false
 				v.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 				v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
@@ -420,7 +678,7 @@ function antiFlingCollide(plr)
 end
 
 function antiFlingEnable()
-	for i,v in pairs(Players:GetPlayers()) do
+	for i,v in pairs(reachCachePlayers) do
 		antiFlingCollide(v)
 	end
 end
@@ -434,10 +692,10 @@ function toggleAntiFling()
 			antiFlingConnection:Disconnect()
 			antiFlingConnection = nil
 		end
-		for i,v in pairs(Players:GetPlayers()) do
+		for i,v in pairs(reachCachePlayers) do
 			if v ~= player and v.Character then
-				for h,b in pairs(v.Character:GetDescendants()) do
-					if b:IsA("BasePart") and b.CanCollide == false then
+				for h,b in pairs(v.Character:GetChildren()) do
+					if b:IsA("BasePart") then
 						b.CanCollide = true
 					end
 				end
@@ -1140,8 +1398,8 @@ animationButtons = {
 	79480770273758, "Anti-Aim", 77094699387328, "Glitch Spin", 83265734904502, "Take the L", 92249489340640, "Dahood Stomp",
 	121368513461476, "Six Seven dance", 120852662885277, "Six Seven emote", 92618727772186, "IShowSpeed Dance", 137430722819744, "Man Squat",
 	98974619620224, "Laugh Ragebait", 127118661424463, "Caramell Dance", 124522818196151, "Head Spin",
-	77984841414450, "Deltarune dance or smthn", 109873544976020, "Biblically Accurate Emote", 90333292347820, "The Worm",
-	121966805049108, "Hit the Griddy", 115518346414107, "Gangnam Style", 110146282544198, "Orange Justice",
+	81147896850705, "Asian Squat", 72007752012770, "Poop sniff", 90333292347820, "The Worm",
+	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 110146282544198, "Orange Justice",
 	108747312576405, "Les goooo", 93014787120483, "Garry's Dance",
 	99499783161907, "Aura farm", 80177289449617, "Snow angel", 70432904702322, "Get skinwalked", 123916423751437, "Rat Dance",
 	129537633250603, "It's Peanut Butter Jelly Time"
@@ -1526,6 +1784,7 @@ function onCharacterAdded(char)
 	humanoid.Died:Connect(function()
 		-- Отключаем Desync
 		PastedSources = false
+		if desyncConnection then desyncConnection:Disconnect() desyncConnection = nil end
 		if desyncButton then
 			desyncButton.Text = "Desync: OFF"
 			desyncButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1565,6 +1824,34 @@ function onCharacterAdded(char)
 			button5.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		end
 		setExtractedBtnState("Invisibility", false)
+		autoInvisActive = false
+		if autoInvisConnection then
+			autoInvisConnection:Disconnect()
+			autoInvisConnection = nil
+		end
+		if autoInvisBtn then
+			if autoInvisEnabled then
+				autoInvisEnabled = false
+				autoInvisBtn.Text = "Auto Invisibility: OFF"
+				autoInvisBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				autoInvisBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			end
+		end
+		setExtractedBtnState("Auto Invisibility", false)
+		autoTpActive = false
+		if autoTpConnection then
+			autoTpConnection:Disconnect()
+			autoTpConnection = nil
+		end
+		if autoTpBtn then
+			if autoTpEnabled then
+				autoTpEnabled = false
+				autoTpBtn.Text = "Auto TP: OFF"
+				autoTpBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				autoTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			end
+		end
+		setExtractedBtnState("Auto TP", false)
 
 		-- Отключаем Clumsy
 		clumsy_on = false
@@ -1605,6 +1892,24 @@ function onCharacterAdded(char)
 			reachConnection = nil
 		end
 		setExtractedBtnState("KillAura", false)
+
+		-- Отключаем Air Strafe
+		airStrafeEnabled = false
+		isStrafing = false
+		if airStrafeButton then
+			airStrafeButton.Text = "Air Strafe: OFF"
+			airStrafeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+			airStrafeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		end
+		if airStrafeConnection then
+			airStrafeConnection:Disconnect()
+			airStrafeConnection = nil
+		end
+		if airStrafeInputConnection then
+			airStrafeInputConnection:Disconnect()
+			airStrafeInputConnection = nil
+		end
+		setExtractedBtnState("Air Strafe", false)
 
 		-- Отключаем Second Life
 		if secondLifeEnabled then
@@ -1675,6 +1980,22 @@ player.CharacterRemoving:Connect(function()
 	end
 	if reachConnection then reachConnection:Disconnect() reachConnection = nil end
 	setExtractedBtnState("KillAura", false)
+	airStrafeEnabled = false
+	isStrafing = false
+	if airStrafeButton then
+		airStrafeButton.Text = "Air Strafe: OFF"
+		airStrafeButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		airStrafeButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	end
+	if airStrafeConnection then
+		airStrafeConnection:Disconnect()
+		airStrafeConnection = nil
+	end
+	if airStrafeInputConnection then
+		airStrafeInputConnection:Disconnect()
+		airStrafeInputConnection = nil
+	end
+	setExtractedBtnState("Air Strafe", false)
 	-- ==== НЕ отключаем Speed Glitch при смерти ====
 	-- Он должен остаться включённым если был включён
 	-- Но нужно переподключить connection
@@ -1713,6 +2034,7 @@ player.CharacterRemoving:Connect(function()
 	stopCurrentAnimation()
 	isAlive = false
 	PastedSources = false
+	if desyncConnection then desyncConnection:Disconnect() desyncConnection = nil end
 	if desyncButton then
 		desyncButton.Text = "Desync: OFF"
 		desyncButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -1722,27 +2044,35 @@ player.CharacterRemoving:Connect(function()
 end)
 
 -- Desync Heartbeat + Hook (P1000)
-RunService.Heartbeat:Connect(function()
+desyncConnection = nil
+function toggleDesync()
+	PastedSources = not PastedSources
 	if PastedSources then
-		local char = player.Character
-		if char and char:FindFirstChild("HumanoidRootPart") then
-			DesyncTypes[1] = char.HumanoidRootPart.CFrame
-			DesyncTypes[2] = char.HumanoidRootPart.AssemblyLinearVelocity
-			local SpoofThis = char.HumanoidRootPart.CFrame
-			SpoofThis = SpoofThis * CFrame.new(Vector3.new(0, 0, 0))
-			SpoofThis = SpoofThis * CFrame.Angles(
-				math.rad(RandomNumberRange(180)),
-				math.rad(RandomNumberRange(180)),
-				math.rad(RandomNumberRange(180))
-			)
-			char.HumanoidRootPart.CFrame = SpoofThis
-			char.HumanoidRootPart.AssemblyLinearVelocity = Vector3.new(1, 1, 1) * 16384
-			RunService.RenderStepped:Wait()
-			char.HumanoidRootPart.CFrame = DesyncTypes[1]
-			char.HumanoidRootPart.AssemblyLinearVelocity = DesyncTypes[2]
+		desyncConnection = RunService.Heartbeat:Connect(function()
+			local char = player.Character
+			if char and char:FindFirstChild("HumanoidRootPart") then
+				local hrp = char.HumanoidRootPart
+				DesyncTypes[1] = hrp.CFrame
+				DesyncTypes[2] = hrp.AssemblyLinearVelocity
+				local SpoofThis = hrp.CFrame * CFrame.Angles(
+					math.rad(RandomNumberRange(180)),
+					math.rad(RandomNumberRange(180)),
+					math.rad(RandomNumberRange(180))
+				)
+				hrp.CFrame = SpoofThis
+				hrp.AssemblyLinearVelocity = Vector3.new(1, 1, 1) * 16384
+				RunService.RenderStepped:Wait()
+				hrp.CFrame = DesyncTypes[1]
+				hrp.AssemblyLinearVelocity = DesyncTypes[2]
+			end
+		end)
+	else
+		if desyncConnection then
+			desyncConnection:Disconnect()
+			desyncConnection = nil
 		end
 	end
-end)
+end
 
 XDDDDDD = nil
 XDDDDDD = hookmetamethod(game, "__index", newcclosure(function(self, key)
@@ -1779,7 +2109,7 @@ toggleGui.Parent = playerGui
 
 mainFrame = Instance.new("Frame")
 mainFrame.Name = "MainFrame"
-mainFrame.Size = UDim2.new(0, 550, 0, 300)
+mainFrame.Size = UDim2.new(0, mainMenuWidth, 0, mainMenuHeight)
 mainFrame.Position = UDim2.new(0.5, -300, 0.5, -100)
 mainFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
 mainFrame.BorderSizePixel = 0
@@ -1821,7 +2151,7 @@ titleBar.Position = UDim2.new(0, 10, 0, 0)
 titleBar.BackgroundTransparency = 1
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.TextXAlignment = Enum.TextXAlignment.Left
-titleBar.Text = "Adrenalin.win V4.5"
+titleBar.Text = "Adrenalin.win V5.0"
 titleBar.Font = Enum.Font.SourceSansBold
 titleBar.TextSize = 16.5
 titleBar.Parent = topBar
@@ -1953,6 +2283,7 @@ createCategoryScrollFrame("Teamers")
 createCategoryScrollFrame("Animations")
 createCategoryScrollFrame("Binds")
 createCategoryScrollFrame("Buttons")
+createCategoryScrollFrame("Settings")
 
 -- Category management system
 currentCategory = "Main"
@@ -1969,7 +2300,8 @@ function createCategoryButton(shortName, layoutOrder)
 		["Bind"] = "Binds",
 		["Team"] = "Teamers",
 		["Main"] = "Main",
-		["Btn"] = "Buttons"
+		["Btn"] = "Buttons",
+		["Set"] = "Settings"
 	}
 	local fullName = fullNames[shortName] or shortName
 	
@@ -2029,6 +2361,7 @@ createCategoryButton("Team", 6)
 createCategoryButton("Anim", 7)
 createCategoryButton("Bind", 8)
 createCategoryButton("Btn", 9)
+createCategoryButton("Set", 10)
 
 function createSection(text, layoutOrder)
 	local label = Instance.new("TextLabel")
@@ -2117,6 +2450,7 @@ function setToggleState(btn, state, onText, offText)
 		btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
 	end
+	saveConfig()
 end
 
 -- Система биндинга клавиш
@@ -2268,15 +2602,27 @@ speedInputBox.FocusLost:Connect(function()
 	end
 end)
 
-secondLifeButton = createButton("SecondLifeButton", "Second Life: OFF", 105)
+currentCategory = "Combat"
+secondLifeButton = createButton("SecondLifeButton", "Second Life: OFF", 202)
 secondLifeButton.MouseButton1Click:Connect(function()
 	toggleSecondLife()
 	setToggleState(secondLifeButton, secondLifeEnabled, "Second Life: ON", "Second Life: OFF")
 	setExtractedBtnState("Second Life", secondLifeEnabled)
 end)
 
-button5 = createButton("InvisButton", "Invisibility: OFF", 106)
+button5 = createButton("InvisButton", "Invisibility: OFF", 205)
 	invis_on = false
+	autoInvisEnabled = false
+	autoInvisActivateDist = 30
+	autoInvisDeactivateDist = 50
+	autoInvisActive = false
+	autoInvisConnection = nil
+	autoTpEnabled = false
+	autoTpDist = 40
+	autoTpActive = false
+	autoTpConnection = nil
+	autoTpTarget = 1
+	autoTpTargetNames = {"Lobby", "Vote Map", "Above Map", "Void"}
 button5.MouseButton1Click:Connect(function()
 	invis_on = not invis_on
 	if invis_on then
@@ -2307,6 +2653,176 @@ button5.MouseButton1Click:Connect(function()
 		setToggleState(button5, false, "Invisibility: ON", "Invisibility: OFF")
 		setExtractedBtnState("Invisibility", false)
 	end
+end)
+
+-- Auto Invisibility row
+local autoInvisRow = Instance.new("Frame")
+autoInvisRow.Name = "AutoInvisRow"
+autoInvisRow.Size = UDim2.new(1, 0, 0, 42)
+autoInvisRow.BackgroundTransparency = 1
+autoInvisRow.LayoutOrder = 206
+autoInvisRow.Parent = categoryFrames["Combat"]
+
+local autoInvisBtn = Instance.new("TextButton")
+autoInvisBtn.Name = "AutoInvisButton"
+autoInvisBtn.Size = UDim2.new(1, -140, 1, 0)
+autoInvisBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autoInvisBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoInvisBtn.Text = "Auto Invisibility: OFF"
+autoInvisBtn.Font = Enum.Font.SourceSansBold
+autoInvisBtn.TextSize = 14
+autoInvisBtn.Parent = autoInvisRow
+
+local autoInvisBtnCorner = Instance.new("UICorner")
+autoInvisBtnCorner.CornerRadius = UDim.new(0, 6)
+autoInvisBtnCorner.Parent = autoInvisBtn
+
+local autoInvisActivateBox = Instance.new("TextBox")
+autoInvisActivateBox.Name = "AutoInvisActivateInput"
+autoInvisActivateBox.Size = UDim2.new(0, 64, 1, 0)
+autoInvisActivateBox.Position = UDim2.new(1, -134, 0, 0)
+autoInvisActivateBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autoInvisActivateBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoInvisActivateBox.PlaceholderText = "On"
+autoInvisActivateBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+autoInvisActivateBox.Text = tostring(autoInvisActivateDist)
+autoInvisActivateBox.Font = Enum.Font.SourceSansBold
+autoInvisActivateBox.TextSize = 13
+autoInvisActivateBox.ClearTextOnFocus = false
+autoInvisActivateBox.Parent = autoInvisRow
+
+local autoInvisActivateCorner = Instance.new("UICorner")
+autoInvisActivateCorner.CornerRadius = UDim.new(0, 6)
+autoInvisActivateCorner.Parent = autoInvisActivateBox
+
+local autoInvisDeactivateBox = Instance.new("TextBox")
+autoInvisDeactivateBox.Name = "AutoInvisDeactivateInput"
+autoInvisDeactivateBox.Size = UDim2.new(0, 64, 1, 0)
+autoInvisDeactivateBox.Position = UDim2.new(1, -64, 0, 0)
+autoInvisDeactivateBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autoInvisDeactivateBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoInvisDeactivateBox.PlaceholderText = "Off"
+autoInvisDeactivateBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+autoInvisDeactivateBox.Text = tostring(autoInvisDeactivateDist)
+autoInvisDeactivateBox.Font = Enum.Font.SourceSansBold
+autoInvisDeactivateBox.TextSize = 13
+autoInvisDeactivateBox.ClearTextOnFocus = false
+autoInvisDeactivateBox.Parent = autoInvisRow
+
+local autoInvisDeactivateCorner = Instance.new("UICorner")
+autoInvisDeactivateCorner.CornerRadius = UDim.new(0, 6)
+autoInvisDeactivateCorner.Parent = autoInvisDeactivateBox
+
+function getMurdererPosition()
+	local ok, result = pcall(function()
+		return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+	end)
+	if ok and result then
+		for name, data in pairs(result) do
+			if data.Role == "Murderer" then
+				local plr = Players:FindFirstChild(name)
+				if plr and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+					return plr.Character.HumanoidRootPart.Position
+				end
+			end
+		end
+	end
+	return nil
+end
+
+function toggleAutoInvis()
+	if not autoInvisBtn then return end
+	autoInvisEnabled = not autoInvisEnabled
+	if autoInvisEnabled then
+		autoInvisBtn.Text = "Auto Invisibility: ON"
+		autoInvisBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		autoInvisBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		autoInvisActive = false
+		autoInvisFrame = 0
+		autoInvisConnection = RunService.Heartbeat:Connect(function()
+			if not autoInvisEnabled then return end
+			autoInvisFrame = autoInvisFrame + 1
+			if autoInvisFrame % 30 ~= 0 then return end
+			local murdererPos = getMurdererPosition()
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if not hrp then return end
+			local inZone = false
+			if murdererPos then
+				local dist = (hrp.Position - murdererPos).Magnitude
+				if not autoInvisActive and dist <= autoInvisActivateDist then
+					inZone = true
+				elseif autoInvisActive and dist > autoInvisDeactivateDist then
+					inZone = false
+				else
+					inZone = autoInvisActive
+				end
+			end
+			if inZone and not autoInvisActive then
+				if not invis_on then
+					invis_on = true
+					local savedpos = hrp.CFrame
+					player.Character:MoveTo(Vector3.new(-25.95, 84, 3537.55))
+					task.wait(0.15)
+					local Seat = Instance.new("Seat", workspace)
+					Seat.Anchored = false
+					Seat.CanCollide = false
+					Seat.Name = "invischair"
+					Seat.Transparency = 1
+					Seat.Position = Vector3.new(-25.95, 84, 3537.55)
+					local Weld = Instance.new("Weld", Seat)
+					Weld.Part0 = Seat
+					Weld.Part1 = player.Character:FindFirstChild("Torso") or player.Character.UpperTorso
+					Seat.CFrame = savedpos
+					setToggleState(button5, true, "Invisibility: ON", "Invisibility: OFF")
+					setExtractedBtnState("Invisibility", true)
+				end
+				autoInvisActive = true
+			elseif not inZone and autoInvisActive then
+				if invis_on then
+					invis_on = false
+					local chair = workspace:FindFirstChild("invischair")
+					if chair then chair:Destroy() end
+					setToggleState(button5, false, "Invisibility: ON", "Invisibility: OFF")
+					setExtractedBtnState("Invisibility", false)
+				end
+				autoInvisActive = false
+			end
+		end)
+	else
+		autoInvisBtn.Text = "Auto Invisibility: OFF"
+		autoInvisBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		autoInvisBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		if autoInvisConnection then
+			autoInvisConnection:Disconnect()
+			autoInvisConnection = nil
+		end
+		autoInvisActive = false
+	end
+	setExtractedBtnState("Auto Invisibility", autoInvisEnabled)
+	saveConfig()
+end
+
+autoInvisBtn.MouseButton1Click:Connect(toggleAutoInvis)
+
+autoInvisActivateBox.FocusLost:Connect(function()
+	local val = tonumber(autoInvisActivateBox.Text)
+	if val and val > 0 then
+		autoInvisActivateDist = val
+	else
+		autoInvisActivateBox.Text = tostring(autoInvisActivateDist)
+	end
+	saveConfig()
+end)
+
+autoInvisDeactivateBox.FocusLost:Connect(function()
+	local val = tonumber(autoInvisDeactivateBox.Text)
+	if val and val > 0 then
+		autoInvisDeactivateDist = val
+	else
+		autoInvisDeactivateBox.Text = tostring(autoInvisDeactivateDist)
+	end
+	saveConfig()
 end)
 
 -- AutoGrab Gun (Ultra Speed)
@@ -2591,7 +3107,7 @@ function toggleAutoGrabGun()
 	end
 end
 
-btn.autoGrabGun = createButton("AutoGrabGunButton", "AutoGrab Gun: OFF", 107)
+btn.autoGrabGun = createButton("AutoGrabGunButton", "AutoGrab Gun: OFF", 207)
 btn.autoGrabGun.MouseButton1Click:Connect(function()
 	toggleAutoGrabGun()
 	setToggleState(btn.autoGrabGun, autoGrabGunEnabled, "AutoGrab Gun: ON", "AutoGrab Gun: OFF")
@@ -2832,7 +3348,7 @@ function toggleGunAura()
 	end
 end
 
-btn.gunAura, ui.magnetDistInput = createDualRow("GunAuraButton", "Gun Aura: OFF", "Dist", MAGNET_DISTANCE, 108)
+btn.gunAura, ui.magnetDistInput = createDualRow("GunAuraButton", "Gun Aura: OFF", "Dist", MAGNET_DISTANCE, 208)
 btn.gunAura.MouseButton1Click:Connect(function()
 	toggleGunAura()
 	setToggleState(btn.gunAura, gunAuraEnabled, "Gun Aura: ON", "Gun Aura: OFF")
@@ -2948,7 +3464,8 @@ function toggleAutoDeleteCoins()
 	end
 end
 
-btn.autoDeleteCoins = createButton("AutoDeleteCoinsButton", "Auto Remove Coins: OFF", 109)
+currentCategory = "Movement"
+btn.autoDeleteCoins = createButton("AutoDeleteCoinsButton", "Auto Remove Coins: OFF", 105)
 btn.autoDeleteCoins.MouseButton1Click:Connect(function()
 	toggleAutoDeleteCoins()
 	setToggleState(btn.autoDeleteCoins, autoDeleteCoinsEnabled, "Auto Remove Coins: ON", "Auto Remove Coins: OFF")
@@ -3261,6 +3778,167 @@ btn.tpMurderer.MouseButton1Click:Connect(function()
 	tpToRole("Murderer")
 end)
 
+-- Auto Teleport row
+local autoTpRow = Instance.new("Frame")
+autoTpRow.Name = "AutoTpRow"
+autoTpRow.Size = UDim2.new(1, 0, 0, 42)
+autoTpRow.BackgroundTransparency = 1
+autoTpRow.LayoutOrder = 115.5
+autoTpRow.Parent = categoryFrames["Teleports"]
+
+local autoTpBtn = Instance.new("TextButton")
+autoTpBtn.Name = "AutoTpButton"
+autoTpBtn.Size = UDim2.new(1, -144, 1, 0)
+autoTpBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autoTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoTpBtn.Text = "Auto TP: OFF"
+autoTpBtn.Font = Enum.Font.SourceSansBold
+autoTpBtn.TextSize = 14
+autoTpBtn.Parent = autoTpRow
+
+local autoTpBtnCorner = Instance.new("UICorner")
+autoTpBtnCorner.CornerRadius = UDim.new(0, 6)
+autoTpBtnCorner.Parent = autoTpBtn
+
+local autoTpDistBox = Instance.new("TextBox")
+autoTpDistBox.Name = "AutoTpDistInput"
+autoTpDistBox.Size = UDim2.new(0, 64, 1, 0)
+autoTpDistBox.Position = UDim2.new(1, -138, 0, 0)
+autoTpDistBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autoTpDistBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoTpDistBox.PlaceholderText = "Dist"
+autoTpDistBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+autoTpDistBox.Text = tostring(autoTpDist)
+autoTpDistBox.Font = Enum.Font.SourceSansBold
+autoTpDistBox.TextSize = 13
+autoTpDistBox.ClearTextOnFocus = false
+autoTpDistBox.Parent = autoTpRow
+
+local autoTpDistCorner = Instance.new("UICorner")
+autoTpDistCorner.CornerRadius = UDim.new(0, 6)
+autoTpDistCorner.Parent = autoTpDistBox
+
+local autoTpTargetBtn = Instance.new("TextButton")
+autoTpTargetBtn.Name = "AutoTpTargetButton"
+autoTpTargetBtn.Size = UDim2.new(0, 72, 1, 0)
+autoTpTargetBtn.Position = UDim2.new(1, -68, 0, 0)
+autoTpTargetBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autoTpTargetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoTpTargetBtn.Text = autoTpTargetNames[autoTpTarget]
+autoTpTargetBtn.Font = Enum.Font.SourceSansBold
+autoTpTargetBtn.TextSize = 13
+autoTpTargetBtn.Parent = autoTpRow
+
+local autoTpTargetCorner = Instance.new("UICorner")
+autoTpTargetCorner.CornerRadius = UDim.new(0, 6)
+autoTpTargetCorner.Parent = autoTpTargetBtn
+
+function autoTpToTarget()
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	if autoTpTarget == 1 then
+		hrp.CFrame = CFrame.new(23, 505, -34)
+		notify("Auto TP", "Teleported to Lobby", 2)
+	elseif autoTpTarget == 2 then
+		hrp.CFrame = CFrame.new(14, 507, 35)
+		notify("Auto TP", "Teleported to VoteMap", 2)
+	elseif autoTpTarget == 3 then
+		for mapName, coords in pairs(tpAboveMapCoords) do
+			if Workspace:FindFirstChild(mapName) then
+				local targetCF = CFrame.new(coords)
+				for i = 1, 10 do
+					hrp.CFrame = targetCF
+					char:SetPrimaryPartCFrame(targetCF)
+					hrp.Velocity = Vector3.new(0, 0, 0)
+					hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+					hrp.RotVelocity = Vector3.new(0, 0, 0)
+				end
+				local fixConn
+				fixConn = RunService.Heartbeat:Connect(function()
+					hrp.CFrame = targetCF
+					hrp.Velocity = Vector3.new(0, 0, 0)
+					hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+					fixConn:Disconnect()
+				end)
+				notify("Auto TP", "Teleported Above Map", 2)
+				return
+			end
+		end
+		notify("Auto TP", "No map found", 2)
+	elseif autoTpTarget == 4 then
+		voidTpPreviousPos = hrp.CFrame
+		hrp.CFrame = CFrame.new(voidBaseplatePos.X, voidBaseplatePos.Y + 1, voidBaseplatePos.Z)
+		notify("Auto TP", "Teleported to Void", 2)
+	end
+end
+
+function toggleAutoTp()
+	if not autoTpBtn then return end
+	autoTpEnabled = not autoTpEnabled
+	if autoTpEnabled then
+		autoTpBtn.Text = "Auto TP: ON"
+		autoTpBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		autoTpBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		autoTpActive = false
+		autoTpFrame = 0
+		autoTpConnection = RunService.Heartbeat:Connect(function()
+			if not autoTpEnabled then return end
+			autoTpFrame = autoTpFrame + 1
+			if autoTpFrame % 30 ~= 0 then return end
+			local murdererPos = getMurdererPosition()
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			if not hrp then return end
+			local inZone = false
+			if murdererPos then
+				local dist = (hrp.Position - murdererPos).Magnitude
+				if not autoTpActive and dist <= autoTpDist then
+					inZone = true
+				elseif autoTpActive and dist > autoTpDist then
+					inZone = false
+				else
+					inZone = autoTpActive
+				end
+			end
+			if inZone and not autoTpActive then
+				autoTpActive = true
+				autoTpToTarget()
+			elseif not inZone and autoTpActive then
+				autoTpActive = false
+			end
+		end)
+	else
+		autoTpBtn.Text = "Auto TP: OFF"
+		autoTpBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		autoTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		if autoTpConnection then
+			autoTpConnection:Disconnect()
+			autoTpConnection = nil
+		end
+		autoTpActive = false
+	end
+	setExtractedBtnState("Auto TP", autoTpEnabled)
+	saveConfig()
+end
+
+autoTpBtn.MouseButton1Click:Connect(toggleAutoTp)
+
+autoTpTargetBtn.MouseButton1Click:Connect(function()
+	autoTpTarget = autoTpTarget % #autoTpTargetNames + 1
+	autoTpTargetBtn.Text = autoTpTargetNames[autoTpTarget]
+end)
+
+autoTpDistBox.FocusLost:Connect(function()
+	local val = tonumber(autoTpDistBox.Text)
+	if val and val > 0 then
+		autoTpDist = val
+	else
+		autoTpDistBox.Text = tostring(autoTpDist)
+	end
+	saveConfig()
+end)
+
 currentCategory = "Utilities"
 btn.gameNotif = createButton("GameNotifButton", "Notifications: OFF", 115)
 btn.gameNotif.MouseButton1Click:Connect(function()
@@ -3280,12 +3958,12 @@ end)
 
 btn.crosshairBtn = createButton("CrosshairButton", "Adrenalin.win Crosshair", 117)
 btn.crosshairBtn.MouseButton1Click:Connect(function()
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/vbgfsdahukjhsd"))()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/bnbmbndf"))()
 end)
 
 btn.keystrokeBtn = createButton("KeystrokeButton", "Keystroke", 118)
 btn.keystrokeBtn.MouseButton1Click:Connect(function()
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/bnbmbndf"))()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/vbgfsdahukjhsd"))()
 end)
 
 -- Auto Delete Corpses
@@ -3494,7 +4172,7 @@ function toggleAutoDeleteCorpses()
 end
 
 currentCategory = "Movement"
-btn.autoDeleteCorpses = createButton("AutoDeleteCorpsesButton", "Auto Delete Corpses: OFF", 117)
+btn.autoDeleteCorpses = createButton("AutoDeleteCorpsesButton", "Auto Delete Corpses: OFF", 106)
 btn.autoDeleteCorpses.MouseButton1Click:Connect(function()
 	toggleAutoDeleteCorpses()
 	setToggleState(btn.autoDeleteCorpses, autoDeleteCorpsesEnabled, "Auto Delete Corpses: ON", "Auto Delete Corpses: OFF")
@@ -3792,14 +4470,14 @@ end)
 currentCategory = "Combat"
 createSection("Combat", 200)
 
-desyncButton = createButton("DesyncButton", "Desync: OFF", 202)
+desyncButton = createButton("DesyncButton", "Desync: OFF", 203)
 desyncButton.MouseButton1Click:Connect(function()
-	PastedSources = not PastedSources
+	toggleDesync()
 	setToggleState(desyncButton, PastedSources, "Desync: ON", "Desync: OFF")
 	setExtractedBtnState("Desync", PastedSources)
 end)
 
-clumsyButton = createButton("ClumsyButton", "Clumsy: OFF", 203)
+clumsyButton = createButton("ClumsyButton", "Clumsy: OFF", 204)
 -- Добавь вверху рядом с clumsyGhost
 clumsyGhostAdornments = {}
 
@@ -3982,14 +4660,14 @@ clumsyButton.MouseButton1Click:Connect(function()
 	end
 end)
 
-noclipButton = createButton("NoclipButton", "Noclip: OFF", 204)
+noclipButton = createButton("NoclipButton", "Noclip: OFF", 211)
 noclipButton.MouseButton1Click:Connect(function()
 	toggleNoclip()
 	setToggleState(noclipButton, noclipEnabled, "Noclip: ON", "Noclip: OFF")
 	setExtractedBtnState("Noclip", noclipEnabled)
 end)
 
-reachButton, rangeInputBox = createDualRow("ReachButton", "KillAura: OFF", "Range", range, 205)
+reachButton, rangeInputBox = createDualRow("ReachButton", "KillAura: OFF", "Range", range, 209)
 reachButton.MouseButton1Click:Connect(function()
 	toggleReach()
 	setToggleState(reachButton, reachEnabled, "KillAura: ON", "KillAura: OFF")
@@ -4005,7 +4683,8 @@ rangeInputBox.FocusLost:Connect(function()
 	end
 end)
 
-touchFlingButton = createButton("TouchFlingButton", "Touch Fling: OFF", 206)
+
+touchFlingButton = createButton("TouchFlingButton", "Touch Fling: OFF", 210)
 hiddenfling = false
 flingThread = nil
 
@@ -4045,21 +4724,21 @@ espButton.MouseButton1Click:Connect(function()
 	setExtractedBtnState("ESP", espEnabled)
 end)
 
-antiFlingButton = createButton("AntiFlingButton", "Anti-Fling: OFF", 208)
+antiFlingButton = createButton("AntiFlingButton", "Anti-Fling: OFF", 212)
 antiFlingButton.MouseButton1Click:Connect(function()
 	toggleAntiFling()
 	setToggleState(antiFlingButton, antiFlingEnabled, "Anti-Fling: ON", "Anti-Fling: OFF")
 	setExtractedBtnState("Anti-Fling", antiFlingEnabled)
 end)
 
-antiVoidButton = createButton("AntiVoidButton", "Anti-Void: OFF", 209)
+antiVoidButton = createButton("AntiVoidButton", "Anti-Void: OFF", 213)
 antiVoidButton.MouseButton1Click:Connect(function()
 	toggleAntiVoid()
 	setToggleState(antiVoidButton, antiVoidEnabled, "Anti-Void: ON", "Anti-Void: OFF")
 	setExtractedBtnState("Anti-Void", antiVoidEnabled)
 end)
 
-antiAimButton = createButton("AntiAimButton", "Anti-Aim: OFF", 210)
+antiAimButton = createButton("AntiAimButton", "Anti-Aim: OFF", 214)
 antiAimButton.MouseButton1Click:Connect(cycleMode)
 updateAntiAimButtonVisual()
 
@@ -4337,6 +5016,12 @@ local bindableFeatures = {
 			setToggleState(button5, false, "Invisibility: ON", "Invisibility: OFF")
 		end
 	end},
+	{name = "Auto Invisibility", defaultKey = nil, callback = function()
+		toggleAutoInvis()
+	end},
+	{name = "Auto TP", defaultKey = nil, callback = function()
+		toggleAutoTp()
+	end},
 	{name = "Desync", defaultKey = nil, callback = function()
 		PastedSources = not PastedSources
 		setToggleState(desyncButton, PastedSources, "Desync: ON", "Desync: OFF")
@@ -4371,6 +5056,10 @@ local bindableFeatures = {
 	{name = "KillAura", defaultKey = nil, callback = function()
 		toggleReach()
 		setToggleState(reachButton, reachEnabled, "KillAura: ON", "KillAura: OFF")
+	end},
+	{name = "Air Strafe", defaultKey = nil, callback = function()
+		toggleAirStrafe()
+		setToggleState(airStrafeButton, airStrafeEnabled, "Air Strafe: ON", "Air Strafe: OFF")
 	end},
 	{name = "Anti-Aim", defaultKey = nil, callback = function()
 		cycleMode()
@@ -4407,6 +5096,7 @@ local bindInputConn = UserInputService.InputBegan:Connect(function(input, gp)
 		listeningForBind = false
 		listeningTextBox = nil
 		listeningFeatureName = nil
+		saveConfig()
 	end
 end)
 
@@ -4496,7 +5186,27 @@ for bindOrder, feature in ipairs(bindableFeatures) do
 		end
 		featureBinds[feature.name] = nil
 		bindButton.Text = "None"
+		saveConfig()
 	end)
+end
+
+-- ============================================
+-- Exact timestamp from ISO 8601
+-- ============================================
+local function isoToUnix(iso)
+	local y, mo, d, h, mi, s = iso:match("(%d+)-(%d+)-(%d+)T(%d+):(%d+):(%d+)")
+	if not y then return nil end
+	y, mo, d, h, mi, s = tonumber(y), tonumber(mo), tonumber(d), tonumber(h), tonumber(mi), tonumber(s)
+	local dim = {31,28,31,30,31,30,31,31,30,31,30,31}
+	local function isLeap(yy) return (yy%4==0 and yy%100~=0) or yy%400==0 end
+	local days = 0
+	for yy = 1970, y-1 do days = days + (isLeap(yy) and 366 or 365) end
+	for mm = 1, mo-1 do
+		days = days + dim[mm]
+		if mm == 2 and isLeap(y) then days = days + 1 end
+	end
+	days = days + d - 1
+	return days * 86400 + h * 3600 + mi * 60 + s
 end
 
 -- ============================================
@@ -4525,34 +5235,77 @@ teamerLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 	teamerPlayerList.CanvasSize = UDim2.new(0, 0, 0, teamerLayout.AbsoluteContentSize.Y)
 end)
 
+local teamerSearchMode = "Name"
+
+local teamerSearchRow = Instance.new("Frame")
+teamerSearchRow.Name = "TeamerSearchRow"
+teamerSearchRow.Size = UDim2.new(1, 0, 0, 28)
+teamerSearchRow.Position = UDim2.new(0, 5, 0, 5)
+teamerSearchRow.BackgroundTransparency = 1
+teamerSearchRow.LayoutOrder = 600
+teamerSearchRow.Parent = categoryFrames["Teamers"]
+
 local teamerSearchBox = Instance.new("TextBox")
 teamerSearchBox.Name = "TeamerSearchBox"
-teamerSearchBox.Size = UDim2.new(1, -10, 0, 28)
-teamerSearchBox.Position = UDim2.new(0, 5, 0, 5)
+teamerSearchBox.Size = UDim2.new(1, -94, 0, 28)
 teamerSearchBox.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
 teamerSearchBox.BorderSizePixel = 0
-teamerSearchBox.PlaceholderText = "Search by username..."
+teamerSearchBox.PlaceholderText = "Search..."
 teamerSearchBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 140)
 teamerSearchBox.Text = ""
 teamerSearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
 teamerSearchBox.Font = Enum.Font.Gotham
 teamerSearchBox.TextSize = 14
 teamerSearchBox.ClearTextOnFocus = false
-teamerSearchBox.LayoutOrder = 600
-teamerSearchBox.Parent = categoryFrames["Teamers"]
+teamerSearchBox.Parent = teamerSearchRow
 
 local searchBoxCorner = Instance.new("UICorner")
 searchBoxCorner.CornerRadius = UDim.new(0, 6)
 searchBoxCorner.Parent = teamerSearchBox
 
+local teamerSearchToggle = Instance.new("TextButton")
+teamerSearchToggle.Name = "TeamerSearchToggle"
+teamerSearchToggle.Size = UDim2.new(0, 84, 0, 28)
+teamerSearchToggle.Position = UDim2.new(1, -94, 0, 0)
+teamerSearchToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 35)
+teamerSearchToggle.BorderSizePixel = 0
+teamerSearchToggle.Text = "Name"
+teamerSearchToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+teamerSearchToggle.Font = Enum.Font.GothamBold
+teamerSearchToggle.TextSize = 12
+teamerSearchToggle.Parent = teamerSearchRow
+
+local searchToggleCorner = Instance.new("UICorner")
+searchToggleCorner.CornerRadius = UDim.new(0, 6)
+searchToggleCorner.Parent = teamerSearchToggle
+
 local function filterTeamerList()
 	local query = teamerSearchBox.Text:lower()
 	for _, child in ipairs(teamerPlayerList:GetChildren()) do
 		if child:IsA("TextButton") then
-			child.Visible = query == "" or child.Name:lower():find(query, 1, true) ~= nil
+			local searchText = child.Name:lower()
+			if teamerSearchMode == "Display" then
+				local displayLabel = child:FindFirstChildWhichIsA("TextLabel")
+				if displayLabel then
+					local dn = displayLabel.Text:match("^(.+) %(")
+					if dn then searchText = dn:lower() end
+				end
+			end
+			child.Visible = query == "" or searchText:find(query, 1, true) ~= nil
 		end
 	end
 end
+
+teamerSearchToggle.MouseButton1Click:Connect(function()
+	if teamerSearchMode == "Name" then
+		teamerSearchMode = "Display"
+		teamerSearchToggle.Text = "Display"
+	else
+		teamerSearchMode = "Name"
+		teamerSearchToggle.Text = "Name"
+	end
+	filterTeamerList()
+end)
 
 teamerSearchBox:GetPropertyChangedSignal("Text"):Connect(filterTeamerList)
 teamerSearchBox.FocusLost:Connect(function()
@@ -4561,6 +5314,7 @@ teamerSearchBox.FocusLost:Connect(function()
 end)
 
 local teamerFriendships = {}
+local teamerPopupCache = {}
 
 local function formatRegDate(accountAge)
 	local now = os.time()
@@ -4674,6 +5428,10 @@ local function createTeamerPlayerButton(plr)
 	end)()
 
 	button.MouseButton1Click:Connect(function()
+		if teamerPopupCache[plr.Name] and teamerPopupCache[plr.Name].Parent then
+			teamerPopupCache[plr.Name].Enabled = not teamerPopupCache[plr.Name].Enabled
+			return
+		end
 		local popupGui = Instance.new("ScreenGui")
 		popupGui.Name = "TeamerPopupGui"
 		popupGui.ResetOnSpawn = false
@@ -4719,7 +5477,7 @@ local function createTeamerPlayerButton(plr)
 		popupCloseCorner.Parent = popupClose
 
 		popupClose.MouseButton1Click:Connect(function()
-			popupGui:Destroy()
+			popupGui.Enabled = false
 		end)
 
 		local friendsScroll = Instance.new("ScrollingFrame")
@@ -4748,88 +5506,114 @@ local function createTeamerPlayerButton(plr)
 		infoTitle.TextXAlignment = Enum.TextXAlignment.Left
 		infoTitle.Parent = friendsScroll
 
-		local foundFriend = false
-		for _, otherPlayer in Players:GetPlayers() do
-			if otherPlayer ~= plr then
-				local isFriend = false
-				for _, pair in ipairs(teamerFriendships) do
-					if (pair[1] == plr and pair[2] == otherPlayer) or (pair[1] == otherPlayer and pair[2] == plr) then
-						isFriend = true
-						break
-					end
+		local friendContainer = Instance.new("Frame")
+		friendContainer.Name = "FriendContainer"
+		friendContainer.Size = UDim2.new(1, 0, 0, 0)
+		friendContainer.BackgroundTransparency = 1
+		friendContainer.Parent = friendsScroll
+
+		local friendContainerLayout = Instance.new("UIListLayout")
+		friendContainerLayout.Padding = UDim.new(0, 5)
+		friendContainerLayout.Parent = friendContainer
+
+		local function buildFriendList()
+			for _, child in ipairs(friendContainer:GetChildren()) do
+				if child:IsA("Instance") and child ~= friendContainerLayout then
+					child:Destroy()
 				end
-				if not isFriend then
-					local success, result = pcall(function()
-						return otherPlayer:IsFriendsWith(plr.UserId)
-					end)
-					isFriend = success and result
+			end
+			local foundFriend = false
+			for _, otherPlayer in Players:GetPlayers() do
+				if otherPlayer ~= plr then
+					local isFriend = false
+					for _, pair in ipairs(teamerFriendships) do
+						if (pair[1] == plr and pair[2] == otherPlayer) or (pair[1] == otherPlayer and pair[2] == plr) then
+							isFriend = true
+							break
+						end
+					end
+					if not isFriend then
+						local success, result = pcall(function()
+							return otherPlayer:IsFriendsWith(plr.UserId)
+						end)
+						isFriend = success and result
+						if isFriend then
+							table.insert(teamerFriendships, {plr, otherPlayer})
+						end
+					end
 					if isFriend then
-						table.insert(teamerFriendships, {plr, otherPlayer})
+						foundFriend = true
+						local friendEntry = Instance.new("TextButton")
+						friendEntry.Name = otherPlayer.Name
+						friendEntry.Size = UDim2.new(1, 0, 0, 40)
+						friendEntry.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+						friendEntry.BorderSizePixel = 0
+						friendEntry.Text = ""
+						friendEntry.AutoButtonColor = false
+						friendEntry.Parent = friendContainer
+
+						local friendEntryCorner = Instance.new("UICorner")
+						friendEntryCorner.CornerRadius = UDim.new(0, 6)
+						friendEntryCorner.Parent = friendEntry
+
+						local friendAvatar = Instance.new("ImageLabel")
+						friendAvatar.Size = UDim2.new(0, 30, 0, 30)
+						friendAvatar.Position = UDim2.new(0, 5, 0.5, -15)
+						friendAvatar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+						friendAvatar.BorderSizePixel = 0
+						friendAvatar.Parent = friendEntry
+
+						local friendAvatarCorner = Instance.new("UICorner")
+						friendAvatarCorner.CornerRadius = UDim.new(0, 6)
+						friendAvatarCorner.Parent = friendAvatar
+
+						coroutine.wrap(function()
+							local thumb = Players:GetUserThumbnailAsync(otherPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+							friendAvatar.Image = thumb
+						end)()
+
+						local friendName = Instance.new("TextLabel")
+						friendName.Size = UDim2.new(1, -45, 1, 0)
+						friendName.Position = UDim2.new(0, 40, 0, 0)
+						friendName.BackgroundTransparency = 1
+						friendName.Text = otherPlayer.Name
+						friendName.TextColor3 = Color3.fromRGB(255, 255, 255)
+						friendName.Font = Enum.Font.Gotham
+						friendName.TextSize = 14
+						friendName.TextXAlignment = Enum.TextXAlignment.Left
+						friendName.Parent = friendEntry
+
+						friendEntry.MouseEnter:Connect(function()
+							friendEntry.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+						end)
+						friendEntry.MouseLeave:Connect(function()
+							friendEntry.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+						end)
 					end
 				end
-				if isFriend then
-					foundFriend = true
-					local friendEntry = Instance.new("TextButton")
-					friendEntry.Name = otherPlayer.Name
-					friendEntry.Size = UDim2.new(1, 0, 0, 40)
-					friendEntry.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-					friendEntry.BorderSizePixel = 0
-					friendEntry.Text = ""
-					friendEntry.AutoButtonColor = false
-					friendEntry.Parent = friendsScroll
-
-					local friendEntryCorner = Instance.new("UICorner")
-					friendEntryCorner.CornerRadius = UDim.new(0, 6)
-					friendEntryCorner.Parent = friendEntry
-
-					local friendAvatar = Instance.new("ImageLabel")
-					friendAvatar.Size = UDim2.new(0, 30, 0, 30)
-					friendAvatar.Position = UDim2.new(0, 5, 0.5, -15)
-					friendAvatar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-					friendAvatar.BorderSizePixel = 0
-					friendAvatar.Parent = friendEntry
-
-					local friendAvatarCorner = Instance.new("UICorner")
-					friendAvatarCorner.CornerRadius = UDim.new(0, 6)
-					friendAvatarCorner.Parent = friendAvatar
-
-					coroutine.wrap(function()
-						local thumb = Players:GetUserThumbnailAsync(otherPlayer.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-						friendAvatar.Image = thumb
-					end)()
-
-					local friendName = Instance.new("TextLabel")
-					friendName.Size = UDim2.new(1, -45, 1, 0)
-					friendName.Position = UDim2.new(0, 40, 0, 0)
-					friendName.BackgroundTransparency = 1
-					friendName.Text = otherPlayer.Name
-					friendName.TextColor3 = Color3.fromRGB(255, 255, 255)
-					friendName.Font = Enum.Font.Gotham
-					friendName.TextSize = 14
-					friendName.TextXAlignment = Enum.TextXAlignment.Left
-					friendName.Parent = friendEntry
-
-					friendEntry.MouseEnter:Connect(function()
-						friendEntry.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
-					end)
-					friendEntry.MouseLeave:Connect(function()
-						friendEntry.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
-					end)
-				end
+			end
+			if not foundFriend then
+				local noFriends = Instance.new("TextLabel")
+				noFriends.Size = UDim2.new(1, 0, 0, 40)
+				noFriends.BackgroundTransparency = 1
+				noFriends.Text = "No friends in this server"
+				noFriends.TextColor3 = Color3.fromRGB(150, 150, 150)
+				noFriends.Font = Enum.Font.Gotham
+				noFriends.TextSize = 14
+				noFriends.Parent = friendContainer
 			end
 		end
 
-		if not foundFriend then
-			local noFriends = Instance.new("TextLabel")
-			noFriends.Size = UDim2.new(1, 0, 0, 40)
-			noFriends.Position = UDim2.new(0, 0, 0.5, -20)
-			noFriends.BackgroundTransparency = 1
-			noFriends.Text = "No friends in this server"
-			noFriends.TextColor3 = Color3.fromRGB(150, 150, 150)
-			noFriends.Font = Enum.Font.Gotham
-			noFriends.TextSize = 14
-			noFriends.Parent = friendsScroll
-		end
+		buildFriendList()
+
+		local friendRefreshAlive = true
+		task.spawn(function()
+			while friendRefreshAlive do
+				task.wait(2)
+				if not friendRefreshAlive then break end
+				buildFriendList()
+			end
+		end)
 
 		local separator = Instance.new("Frame")
 		separator.Size = UDim2.new(1, 0, 0, 1)
@@ -4857,32 +5641,70 @@ local function createTeamerPlayerButton(plr)
 			line.TextSize = 12
 			line.TextXAlignment = Enum.TextXAlignment.Left
 			line.Parent = friendsScroll
+			return line
 		end
 
-		local function fetchRegDate(userId)
-			local ok, result = pcall(function()
-				return syn.request({
-					Url = "https://users.roblox.com/v1/users/" .. userId,
-					Method = "GET"
-				})
+		local function calcRegDate(accountAge)
+			local now = os.time()
+			local utc = os.date("!*t", now)
+			local d = utc.day - math.max(accountAge - 1, 0)
+			local m = utc.month
+			local y = utc.year
+			local dim = {31,28,31,30,31,30,31,31,30,31,30,31}
+			while d < 1 do
+				m = m - 1
+				if m < 1 then m = 12; y = y - 1 end
+				local dm = dim[m]
+				if m == 2 and (y%4==0 and (y%100~=0 or y%400==0)) then dm = 29 end
+				d = d + dm
+			end
+			return string.format("%02d/%02d/%04d", d, m, y)
+		end
+
+	local function fetchRegDate(userId, accountAge)
+		local created = nil
+		local exactUnix = nil
+		local ok, result = pcall(function()
+			return (syn or _G).request({
+				Url = "https://users.roblox.com/v1/users/" .. userId,
+				Method = "GET"
+			})
+		end)
+		if not (ok and result and result.StatusCode == 200) then
+			ok, result = pcall(function()
+				return game:HttpGetAsync("https://users.roblox.com/v1/users/" .. userId)
 			end)
-			if ok and result and result.StatusCode == 200 then
+		end
+		if ok and result then
+			local rawCreated = nil
+			if type(result) == "string" then
+				local data = game:GetService("HttpService"):JSONDecode(result)
+				if data and data.created then
+					rawCreated = data.created
+					local y, m, d = data.created:match("(%d+)-(%d+)-(%d+)")
+					if y and m and d then created = string.format("%02d/%02d/%04d", tonumber(d), tonumber(m), tonumber(y)) end
+				end
+			elseif result.StatusCode == 200 and result.Body then
 				local data = game:GetService("HttpService"):JSONDecode(result.Body)
 				if data and data.created then
+					rawCreated = data.created
 					local y, m, d = data.created:match("(%d+)-(%d+)-(%d+)")
-					if y and m and d then
-						return string.format("%02d/%02d/%04d", tonumber(d), tonumber(m), tonumber(y))
-					end
+					if y and m and d then created = string.format("%02d/%02d/%04d", tonumber(d), tonumber(m), tonumber(y)) end
 				end
 			end
-			return formatRegDate(plr.AccountAge)
+			if rawCreated then
+				exactUnix = isoToUnix(rawCreated)
+			end
 		end
+		return (created or calcRegDate(accountAge)), exactUnix
+	end
 
 		addInfoLine("Display Name: " .. plr.DisplayName)
 		addInfoLine("Username: " .. plr.Name)
 		addInfoLine("User ID: " .. plr.UserId)
 
-		addInfoLine("Registered: " .. fetchRegDate(plr.UserId))
+		local regDateStr, exactRegUnix = fetchRegDate(plr.UserId, plr.AccountAge)
+		addInfoLine("Registered: " .. regDateStr)
 
 		local years = math.floor(plr.AccountAge / 365)
 		local remaining = plr.AccountAge % 365
@@ -4894,19 +5716,81 @@ local function createTeamerPlayerButton(plr)
 		end
 		addInfoLine("Account Age: " .. ageText)
 
-		if plr.Character then
-			local humanoid = plr.Character:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				addInfoLine("Walk Speed: " .. humanoid.WalkSpeed)
-				addInfoLine("Health: " .. math.floor(humanoid.Health) .. "/" .. humanoid.MaxHealth)
-			else
-				addInfoLine("Walk Speed: N/A")
-				addInfoLine("Health: N/A")
-			end
-		else
-			addInfoLine("Walk Speed: N/A")
-			addInfoLine("Health: N/A")
+		local exactAgeLine = addInfoLine("Exact Age: N/A")
+
+		-- Живые лейблы скорости/прыжка
+		local speedLine  = addInfoLine("Walk Speed: N/A")
+		local jumpLine   = addInfoLine("Jump Power: N/A")
+		local healthLine = addInfoLine("Health: N/A")
+
+		local teamerConns = {}
+		local teamerLoopAlive = true
+
+		local teamerCreationTime = exactRegUnix or (os.time() - plr.AccountAge * 86400)
+
+		local function disconnectTeamerConns()
+			for _, c in ipairs(teamerConns) do c:Disconnect() end
+			teamerConns = {}
 		end
+
+		local function attachTeamerStats(char)
+			disconnectTeamerConns()
+			local hum  = char and char:FindFirstChildOfClass("Humanoid")
+			local root = char and char:FindFirstChild("HumanoidRootPart")
+			if not hum or not root then return end
+			local function updateJP()
+				if jumpLine and jumpLine.Parent then
+					jumpLine.Text = "Jump Power: " .. hum.JumpPower
+				end
+			end
+			updateJP()
+			table.insert(teamerConns, hum:GetPropertyChangedSignal("JumpPower"):Connect(updateJP))
+		end
+
+		attachTeamerStats(plr.Character)
+		table.insert(teamerConns, plr.CharacterAdded:Connect(function(newChar)
+			task.wait(1)
+			if teamerLoopAlive then attachTeamerStats(newChar) end
+		end))
+
+		task.spawn(function()
+			while teamerLoopAlive do
+				task.wait(0.1)
+				local char = plr.Character
+				if char then
+					local hum  = char:FindFirstChildOfClass("Humanoid")
+					local root = char:FindFirstChild("HumanoidRootPart")
+					if hum and root then
+						local vel = root.AssemblyLinearVelocity
+						local horizSpeed = math.floor(math.sqrt(vel.X*vel.X + vel.Z*vel.Z) + 0.5)
+						if speedLine and speedLine.Parent then
+							speedLine.Text = "Walk Speed: " .. horizSpeed
+						end
+						if healthLine and healthLine.Parent then
+							healthLine.Text = "Health: " .. math.floor(hum.Health) .. "/" .. hum.MaxHealth
+						end
+					end
+				end
+				if exactAgeLine and exactAgeLine.Parent then
+					local diff = os.time() - teamerCreationTime
+					local totalDays = math.floor(diff / 86400)
+					local y = math.floor(totalDays / 365)
+					local rd = totalDays % 365
+					local m = math.floor(rd / 30)
+					local d = rd % 30
+					local h = math.floor((diff % 86400) / 3600)
+					local mn = math.floor((diff % 3600) / 60)
+					local s = diff % 60
+					exactAgeLine.Text = string.format("Exact Age: %dy, %dm, %dd, %dh, %dm, %ds", y, m, d, h, mn, s)
+				end
+			end
+		end)
+
+		popupGui.Destroying:Connect(function()
+			teamerLoopAlive = false
+			friendRefreshAlive = false
+			disconnectTeamerConns()
+		end)
 
 		addInfoLine("Gravity: " .. math.floor(workspace.Gravity))
 
@@ -4949,10 +5833,11 @@ local function createTeamerPlayerButton(plr)
 		local escConn
 		escConn = UserInputService.InputBegan:Connect(function(input)
 			if input.KeyCode == Enum.KeyCode.Escape then
-				popupGui:Destroy()
-				escConn:Disconnect()
+				popupGui.Enabled = false
 			end
 		end)
+
+		teamerPopupCache[plr.Name] = popupGui
 	end)
 end
 
@@ -4965,6 +5850,10 @@ Players.PlayerAdded:Connect(function(plr)
 end)
 
 Players.PlayerRemoving:Connect(function(plr)
+	if teamerPopupCache[plr.Name] then
+		teamerPopupCache[plr.Name]:Destroy()
+		teamerPopupCache[plr.Name] = nil
+	end
 	local button = teamerPlayerList:FindFirstChild(plr.Name)
 	if button then
 		button:Destroy()
@@ -4984,7 +5873,7 @@ createSection("Main", 700)
 
 local mainProfileFrame = Instance.new("Frame")
 mainProfileFrame.Name = "MainProfileFrame"
-mainProfileFrame.Size = UDim2.new(1, 0, 0, 280)
+mainProfileFrame.Size = UDim2.new(1, 0, 0, 300)
 mainProfileFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 mainProfileFrame.BorderSizePixel = 0
 mainProfileFrame.LayoutOrder = 701
@@ -5033,7 +5922,64 @@ createProfileLabel("Display Name: " .. player.DisplayName, 76)
 createProfileLabel("Username: " .. player.Name, 98)
 createProfileLabel("User ID: " .. player.UserId, 120)
 
-createProfileLabel("Registered: " .. formatRegDate(player.AccountAge), 142)
+local regDateLabel = createProfileLabel("Registered: Loading...", 142)
+local mainCreationTime = os.time() - player.AccountAge * 86400
+coroutine.wrap(function()
+	local function calcRegDate(accountAge)
+		local now = os.time()
+		local utc = os.date("!*t", now)
+		local d = utc.day - math.max(accountAge - 1, 0)
+		local m = utc.month
+		local y = utc.year
+		local dim = {31,28,31,30,31,30,31,31,30,31,30,31}
+		while d < 1 do
+			m = m - 1
+			if m < 1 then m = 12; y = y - 1 end
+			local dm = dim[m]
+			if m == 2 and (y%4==0 and (y%100~=0 or y%400==0)) then dm = 29 end
+			d = d + dm
+		end
+		return string.format("%02d/%02d/%04d", d, m, y)
+	end
+	local created = nil
+	local exactUnix = nil
+	local ok, result = pcall(function()
+		return (syn or _G).request({
+			Url = "https://users.roblox.com/v1/users/" .. player.UserId,
+			Method = "GET"
+		})
+	end)
+	if not (ok and result and result.StatusCode == 200) then
+		ok, result = pcall(function()
+			return game:HttpGetAsync("https://users.roblox.com/v1/users/" .. player.UserId)
+		end)
+	end
+	if ok and result then
+		local rawCreated = nil
+		if type(result) == "string" then
+			local data = game:GetService("HttpService"):JSONDecode(result)
+			if data and data.created then
+				rawCreated = data.created
+				local y, m, d = data.created:match("(%d+)-(%d+)-(%d+)")
+				if y and m and d then created = string.format("%02d/%02d/%04d", tonumber(d), tonumber(m), tonumber(y)) end
+			end
+		elseif result.StatusCode == 200 and result.Body then
+			local data = game:GetService("HttpService"):JSONDecode(result.Body)
+			if data and data.created then
+				rawCreated = data.created
+				local y, m, d = data.created:match("(%d+)-(%d+)-(%d+)")
+				if y and m and d then created = string.format("%02d/%02d/%04d", tonumber(d), tonumber(m), tonumber(y)) end
+			end
+		end
+		if rawCreated then
+			exactUnix = isoToUnix(rawCreated)
+		end
+	end
+	regDateLabel.Text = "Registered: " .. (created or calcRegDate(player.AccountAge))
+	if exactUnix then
+		mainCreationTime = exactUnix
+	end
+end)()
 
 local years = math.floor(player.AccountAge / 365)
 local remaining = player.AccountAge % 365
@@ -5045,9 +5991,12 @@ if years > 0 or months > 0 or days > 0 then
 end
 createProfileLabel("Account Age: " .. ageText, 164)
 
-local speedLabel = createProfileLabel("Walk Speed: N/A", 186)
-local healthLabel = createProfileLabel("Health: N/A", 208)
-local gravityLabel = createProfileLabel("Gravity: N/A", 230)
+local exactAgeLabel = createProfileLabel("Exact Age: N/A", 186)
+
+local speedLabel = createProfileLabel("Walk Speed: N/A", 208)
+local jumpPowerLabel = createProfileLabel("Jump Power: N/A", 230)
+local healthLabel = createProfileLabel("Health: N/A", 252)
+local gravityLabel = createProfileLabel("Gravity: N/A", 274)
 
 local function updatePlayerStats()
 	local char = player.Character
@@ -5055,13 +6004,16 @@ local function updatePlayerStats()
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum then
 			speedLabel.Text = "Walk Speed: " .. hum.WalkSpeed
+			jumpPowerLabel.Text = "Jump Power: " .. hum.JumpPower
 			healthLabel.Text = "Health: " .. math.floor(hum.Health) .. "/" .. hum.MaxHealth
 		else
 			speedLabel.Text = "Walk Speed: N/A"
+			jumpPowerLabel.Text = "Jump Power: N/A"
 			healthLabel.Text = "Health: N/A"
 		end
 	else
 		speedLabel.Text = "Walk Speed: N/A"
+		jumpPowerLabel.Text = "Jump Power: N/A"
 		healthLabel.Text = "Health: N/A"
 	end
 	gravityLabel.Text = "Gravity: " .. math.floor(workspace.Gravity)
@@ -5074,19 +6026,56 @@ player.CharacterAdded:Connect(function()
 	updatePlayerStats()
 end)
 
-local lastWalkSpeed = nil
+-- JumpPower: GetPropertyChangedSignal -- реальные изменения без измерений скорости
+local mainJumpConn = nil
+
+local function attachMainStats(char)
+	if mainJumpConn then mainJumpConn:Disconnect(); mainJumpConn = nil end
+	local hum = char and char:FindFirstChildOfClass("Humanoid")
+	if not hum then return end
+	local function updateJP()
+		jumpPowerLabel.Text = "Jump Power: " .. hum.JumpPower
+	end
+	updateJP()
+	mainJumpConn = hum:GetPropertyChangedSignal("JumpPower"):Connect(updateJP)
+end
+
+attachMainStats(player.Character)
+player.CharacterAdded:Connect(function(newChar)
+	task.wait(1)
+	attachMainStats(newChar)
+end)
+
 task.spawn(function()
 	while true do
-		task.wait(0.15)
+		task.wait(0.1)
 		local char = player.Character
 		if char then
 			local hum = char:FindFirstChildOfClass("Humanoid")
-			if hum and hum.WalkSpeed ~= lastWalkSpeed then
-				lastWalkSpeed = hum.WalkSpeed
-				speedLabel.Text = "Walk Speed: " .. hum.WalkSpeed
+			local root = char:FindFirstChild("HumanoidRootPart")
+			if hum and root then
+				local vel = root.AssemblyLinearVelocity
+				local horizSpeed = math.floor(math.sqrt(vel.X * vel.X + vel.Z * vel.Z) + 0.5)
+				speedLabel.Text = "Walk Speed: " .. horizSpeed
 				healthLabel.Text = "Health: " .. math.floor(hum.Health) .. "/" .. hum.MaxHealth
 			end
 		end
+	end
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(1)
+		local diff = os.time() - mainCreationTime
+		local totalDays = math.floor(diff / 86400)
+		local y = math.floor(totalDays / 365)
+		local rd = totalDays % 365
+		local m = math.floor(rd / 30)
+		local d = rd % 30
+		local h = math.floor((diff % 86400) / 3600)
+		local mn = math.floor((diff % 3600) / 60)
+		local s = diff % 60
+		exactAgeLabel.Text = string.format("Exact Age: %dy, %dm, %dd, %dh, %dm, %ds", y, m, d, h, mn, s)
 	end
 end)
 
@@ -5128,6 +6117,10 @@ pingLabel.Parent = fpsPingFrame
 local displayedFPS = 0
 local displayedPing = 0
 local lastTime = tick()
+local lastFPSText = ""
+local lastPingText = ""
+
+extractedButtons = {}
 
 RunService.RenderStepped:Connect(function()
 	local currentTime = tick()
@@ -5138,8 +6131,265 @@ RunService.RenderStepped:Connect(function()
 	displayedFPS = displayedFPS + (fps - displayedFPS) * 0.1
 	displayedPing = displayedPing + (ping - displayedPing) * 0.1
 
-	fpsLabel.Text = string.format("FPS: %d", math.floor(displayedFPS))
-	pingLabel.Text = string.format("PING: %d", math.floor(displayedPing))
+	local fpsInt = math.floor(displayedFPS)
+	local pingInt = math.floor(displayedPing)
+	local fpsStr = "FPS: " .. fpsInt
+	local pingStr = "PING: " .. pingInt
+
+	if fpsStr ~= lastFPSText then
+		lastFPSText = fpsStr
+		fpsLabel.Text = fpsStr
+	end
+	if pingStr ~= lastPingText then
+		lastPingText = pingStr
+		pingLabel.Text = pingStr
+	end
+
+	local fpsData = extractedButtons["FPS"]
+	if fpsData and fpsData.popupBtn then
+		fpsData.popupBtn.Text = fpsStr
+	end
+	local pingData = extractedButtons["Ping"]
+	if pingData and pingData.popupBtn then
+		pingData.popupBtn.Text = pingStr
+	end
+	local bothData = extractedButtons["FPS+Ping"]
+	if bothData and bothData.fpsText and bothData.pingText then
+		bothData.fpsText.Text = fpsStr
+		bothData.pingText.Text = pingStr
+	end
+end)
+
+-- Main transparency controls
+toggleBgTransparency = 0
+mainBgTransparency = 0
+toggleButtonSize = 60
+mainMenuWidth = 550
+mainMenuHeight = 300
+
+currentCategory = "Settings"
+createSection("Settings", 700)
+
+local toggleBgRow = Instance.new("Frame")
+toggleBgRow.Size = UDim2.new(1, 0, 0, 42)
+toggleBgRow.BackgroundTransparency = 1
+toggleBgRow.LayoutOrder = 701
+toggleBgRow.Parent = categoryFrames["Settings"]
+
+local toggleBgLabel = Instance.new("TextLabel")
+toggleBgLabel.Size = UDim2.new(1, -82, 1, 0)
+toggleBgLabel.BackgroundTransparency = 1
+toggleBgLabel.Text = "WIN-X Transparency"
+toggleBgLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBgLabel.Font = Enum.Font.SourceSansBold
+toggleBgLabel.TextSize = 16
+toggleBgLabel.TextXAlignment = Enum.TextXAlignment.Left
+toggleBgLabel.Parent = toggleBgRow
+
+local toggleBgInput = Instance.new("TextBox")
+toggleBgInput.Size = UDim2.new(0, 74, 1, 0)
+toggleBgInput.Position = UDim2.new(1, -78, 0, 0)
+toggleBgInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+toggleBgInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBgInput.Text = "0"
+toggleBgInput.PlaceholderText = "0-100"
+toggleBgInput.Font = Enum.Font.SourceSansBold
+toggleBgInput.TextSize = 15
+toggleBgInput.ClearTextOnFocus = false
+toggleBgInput.Parent = toggleBgRow
+
+local toggleBgInputCorner = Instance.new("UICorner")
+toggleBgInputCorner.CornerRadius = UDim.new(0, 6)
+toggleBgInputCorner.Parent = toggleBgInput
+
+toggleBgInput.FocusLost:Connect(function()
+	local val = tonumber(toggleBgInput.Text)
+	if val and val >= 0 and val <= 100 then
+		toggleBgTransparency = val / 100
+	else
+		toggleBgInput.Text = tostring(math.floor(toggleBgTransparency * 100))
+	end
+	local tg = playerGui:FindFirstChild("AdrenalinXToggleGui")
+	if tg then
+		local btn = tg:FindFirstChild("ToggleButton")
+		if btn then
+			btn.BackgroundTransparency = toggleBgTransparency
+		end
+	end
+	saveConfig()
+end)
+
+local mainBgRow = Instance.new("Frame")
+mainBgRow.Size = UDim2.new(1, 0, 0, 42)
+mainBgRow.BackgroundTransparency = 1
+mainBgRow.LayoutOrder = 702
+mainBgRow.Parent = categoryFrames["Settings"]
+
+local mainBgLabel = Instance.new("TextLabel")
+mainBgLabel.Size = UDim2.new(1, -82, 1, 0)
+mainBgLabel.BackgroundTransparency = 1
+mainBgLabel.Text = "Menu Transparency"
+mainBgLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+mainBgLabel.Font = Enum.Font.SourceSansBold
+mainBgLabel.TextSize = 16
+mainBgLabel.TextXAlignment = Enum.TextXAlignment.Left
+mainBgLabel.Parent = mainBgRow
+
+local mainBgInput = Instance.new("TextBox")
+mainBgInput.Size = UDim2.new(0, 74, 1, 0)
+mainBgInput.Position = UDim2.new(1, -78, 0, 0)
+mainBgInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+mainBgInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+mainBgInput.Text = "0"
+mainBgInput.PlaceholderText = "0-100"
+mainBgInput.Font = Enum.Font.SourceSansBold
+mainBgInput.TextSize = 15
+mainBgInput.ClearTextOnFocus = false
+mainBgInput.Parent = mainBgRow
+
+local mainBgInputCorner = Instance.new("UICorner")
+mainBgInputCorner.CornerRadius = UDim.new(0, 6)
+mainBgInputCorner.Parent = mainBgInput
+
+mainBgInput.FocusLost:Connect(function()
+	local val = tonumber(mainBgInput.Text)
+	if val and val >= 0 and val <= 100 then
+		mainBgTransparency = val / 100
+	else
+		mainBgInput.Text = tostring(math.floor(mainBgTransparency * 100))
+	end
+	mainFrame.BackgroundTransparency = mainBgTransparency
+	if leftSidebar then
+		leftSidebar.BackgroundTransparency = mainBgTransparency
+	end
+	if topBar then
+		topBar.BackgroundTransparency = mainBgTransparency
+	end
+	if topFix then
+		topFix.BackgroundTransparency = mainBgTransparency
+	end
+	saveConfig()
+end)
+
+-- Toggle Button Size
+local toggleSizeRow = Instance.new("Frame")
+toggleSizeRow.Size = UDim2.new(1, 0, 0, 42)
+toggleSizeRow.BackgroundTransparency = 1
+toggleSizeRow.LayoutOrder = 704
+toggleSizeRow.Parent = categoryFrames["Settings"]
+
+local toggleSizeLabel = Instance.new("TextLabel")
+toggleSizeLabel.Size = UDim2.new(1, -82, 1, 0)
+toggleSizeLabel.BackgroundTransparency = 1
+toggleSizeLabel.Text = "WIN-X Size"
+toggleSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleSizeLabel.Font = Enum.Font.SourceSansBold
+toggleSizeLabel.TextSize = 16
+toggleSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+toggleSizeLabel.Parent = toggleSizeRow
+
+local toggleSizeInput = Instance.new("TextBox")
+toggleSizeInput.Size = UDim2.new(0, 74, 1, 0)
+toggleSizeInput.Position = UDim2.new(1, -78, 0, 0)
+toggleSizeInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+toggleSizeInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleSizeInput.Text = tostring(toggleButtonSize)
+toggleSizeInput.PlaceholderText = "Size"
+toggleSizeInput.Font = Enum.Font.SourceSansBold
+toggleSizeInput.TextSize = 15
+toggleSizeInput.ClearTextOnFocus = false
+toggleSizeInput.Parent = toggleSizeRow
+
+local toggleSizeInputCorner = Instance.new("UICorner")
+toggleSizeInputCorner.CornerRadius = UDim.new(0, 6)
+toggleSizeInputCorner.Parent = toggleSizeInput
+
+toggleSizeInput.FocusLost:Connect(function()
+	local val = tonumber(toggleSizeInput.Text)
+	if val and val >= 20 and val <= 200 then
+		toggleButtonSize = val
+		if toggleButton then
+			toggleButton.Size = UDim2.new(0, val, 0, val)
+		end
+	else
+		toggleSizeInput.Text = tostring(toggleButtonSize)
+	end
+	saveConfig()
+end)
+
+-- Main Menu Size
+local mainSizeRow = Instance.new("Frame")
+mainSizeRow.Size = UDim2.new(1, 0, 0, 42)
+mainSizeRow.BackgroundTransparency = 1
+mainSizeRow.LayoutOrder = 705
+mainSizeRow.Parent = categoryFrames["Settings"]
+
+local mainSizeLabel = Instance.new("TextLabel")
+mainSizeLabel.Size = UDim2.new(1, -160, 1, 0)
+mainSizeLabel.BackgroundTransparency = 1
+mainSizeLabel.Text = "Menu Size (W x H)"
+mainSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+mainSizeLabel.Font = Enum.Font.SourceSansBold
+mainSizeLabel.TextSize = 16
+mainSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+mainSizeLabel.Parent = mainSizeRow
+
+local mainWidthInput = Instance.new("TextBox")
+mainWidthInput.Size = UDim2.new(0, 68, 1, 0)
+mainWidthInput.Position = UDim2.new(1, -146, 0, 0)
+mainWidthInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+mainWidthInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+mainWidthInput.Text = tostring(mainMenuWidth)
+mainWidthInput.PlaceholderText = "W"
+mainWidthInput.Font = Enum.Font.SourceSansBold
+mainWidthInput.TextSize = 15
+mainWidthInput.ClearTextOnFocus = false
+mainWidthInput.Parent = mainSizeRow
+
+local mainWidthInputCorner = Instance.new("UICorner")
+mainWidthInputCorner.CornerRadius = UDim.new(0, 6)
+mainWidthInputCorner.Parent = mainWidthInput
+
+local mainHeightInput = Instance.new("TextBox")
+mainHeightInput.Size = UDim2.new(0, 68, 1, 0)
+mainHeightInput.Position = UDim2.new(1, -74, 0, 0)
+mainHeightInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+mainHeightInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+mainHeightInput.Text = tostring(mainMenuHeight)
+mainHeightInput.PlaceholderText = "H"
+mainHeightInput.Font = Enum.Font.SourceSansBold
+mainHeightInput.TextSize = 15
+mainHeightInput.ClearTextOnFocus = false
+mainHeightInput.Parent = mainSizeRow
+
+local mainHeightInputCorner = Instance.new("UICorner")
+mainHeightInputCorner.CornerRadius = UDim.new(0, 6)
+mainHeightInputCorner.Parent = mainHeightInput
+
+mainWidthInput.FocusLost:Connect(function()
+	local val = tonumber(mainWidthInput.Text)
+	if val and val >= 400 and val <= 1000 then
+		mainMenuWidth = val
+		if mainFrame then
+			mainFrame.Size = UDim2.new(0, val, 0, mainMenuHeight)
+		end
+	else
+		mainWidthInput.Text = tostring(mainMenuWidth)
+	end
+	saveConfig()
+end)
+
+mainHeightInput.FocusLost:Connect(function()
+	local val = tonumber(mainHeightInput.Text)
+	if val and val >= 200 and val <= 800 then
+		mainMenuHeight = val
+		if mainFrame then
+			mainFrame.Size = UDim2.new(0, mainMenuWidth, 0, val)
+		end
+	else
+		mainHeightInput.Text = tostring(mainMenuHeight)
+	end
+	saveConfig()
 end)
 
 -- ============================================
@@ -5148,7 +6398,6 @@ end)
 currentCategory = "Buttons"
 createSection("Buttons", 900)
 
-local extractedButtons = {}
 local popupBtnGui = Instance.new("ScreenGui")
 popupBtnGui.Name = "AdrenalinPopupBtns"
 popupBtnGui.ResetOnSpawn = false
@@ -5188,6 +6437,12 @@ local btnFeatures = {
 	{name = "Invisibility",
 	 toggle = function() invis_on = not invis_on; if invis_on then local s = player.Character.HumanoidRootPart.CFrame; task.wait(); player.Character:MoveTo(Vector3.new(-25.95, 84, 3537.55)); task.wait(0.15); local Seat = Instance.new("Seat", workspace); Seat.Anchored = false; Seat.CanCollide = false; Seat.Name = "invischair"; Seat.Transparency = 1; Seat.Position = Vector3.new(-25.95, 84, 3537.55); local Weld = Instance.new("Weld", Seat); Weld.Part0 = Seat; Weld.Part1 = player.Character:FindFirstChild("Torso") or player.Character.UpperTorso; task.wait(); Seat.CFrame = s; setToggleState(button5, true, "Invisibility: ON", "Invisibility: OFF") else local chair = workspace:FindFirstChild("invischair"); if chair then chair:Destroy() end; setToggleState(button5, false, "Invisibility: ON", "Invisibility: OFF") end; setExtractedBtnState("Invisibility", invis_on) end,
 	 getState = function() return invis_on end},
+	{name = "Auto Invisibility",
+	 toggle = function() toggleAutoInvis(); setExtractedBtnState("Auto Invisibility", autoInvisEnabled) end,
+	 getState = function() return autoInvisEnabled end},
+	{name = "Auto TP",
+	 toggle = function() toggleAutoTp(); setExtractedBtnState("Auto TP", autoTpEnabled) end,
+	 getState = function() return autoTpEnabled end},
 	{name = "AutoGrab Gun",
 	 toggle = function() toggleAutoGrabGun(); setToggleState(btn.autoGrabGun, autoGrabGunEnabled, "AutoGrab Gun: ON", "AutoGrab Gun: OFF"); setExtractedBtnState("AutoGrab Gun", autoGrabGunEnabled) end,
 	 getState = function() return autoGrabGunEnabled end},
@@ -5201,7 +6456,7 @@ local btnFeatures = {
 	 toggle = function() toggleAutoDeleteCorpses(); setToggleState(btn.autoDeleteCorpses, autoDeleteCorpsesEnabled, "Auto Delete Corpses: ON", "Auto Delete Corpses: OFF"); setExtractedBtnState("Auto Delete Corpses", autoDeleteCorpsesEnabled) end,
 	 getState = function() return autoDeleteCorpsesEnabled end},
 	{name = "Desync",
-	 toggle = function() PastedSources = not PastedSources; setToggleState(desyncButton, PastedSources, "Desync: ON", "Desync: OFF"); setExtractedBtnState("Desync", PastedSources) end,
+	 toggle = function() toggleDesync(); setToggleState(desyncButton, PastedSources, "Desync: ON", "Desync: OFF"); setExtractedBtnState("Desync", PastedSources) end,
 	 getState = function() return PastedSources end},
 	{name = "Clumsy",
 	 toggle = function() clumsy_on = not clumsy_on; if clumsy_on then local s = player.Character.HumanoidRootPart.CFrame; task.wait(); player.Character:MoveTo(s.Position); task.wait(0.15); local Seat = Instance.new("Seat", workspace); Seat.Anchored = false; Seat.CanCollide = false; Seat.Name = "clumsychair"; Seat.Transparency = 1; Seat.CFrame = s; local Weld = Instance.new("Weld", Seat); Weld.Part0 = Seat; Weld.Part1 = player.Character:FindFirstChild("Torso") or player.Character.UpperTorso; task.wait(); Seat.CFrame = s; createClumsyGhost(s.Position); setToggleState(clumsyButton, true, "Clumsy: ON", "Clumsy: OFF") else local chair = workspace:FindFirstChild("clumsychair"); if chair then chair:Destroy() end; removeClumsyGhost(); setToggleState(clumsyButton, false, "Clumsy: ON", "Clumsy: OFF") end; setExtractedBtnState("Clumsy", clumsy_on) end,
@@ -5212,6 +6467,9 @@ local btnFeatures = {
 	{name = "KillAura",
 	 toggle = function() toggleReach(); setToggleState(reachButton, reachEnabled, "KillAura: ON", "KillAura: OFF"); setExtractedBtnState("KillAura", reachEnabled) end,
 	 getState = function() return reachEnabled end},
+	{name = "Air Strafe",
+	 toggle = function() toggleAirStrafe(); setToggleState(airStrafeButton, airStrafeEnabled, "Air Strafe: ON", "Air Strafe: OFF"); setExtractedBtnState("Air Strafe", airStrafeEnabled) end,
+	 getState = function() return airStrafeEnabled end},
 	{name = "Touch Fling",
 	 toggle = function() hiddenfling = not hiddenfling; setToggleState(touchFlingButton, hiddenfling, "Touch Fling: ON", "Touch Fling: OFF"); setExtractedBtnState("Touch Fling", hiddenfling); if hiddenfling then flingThread = coroutine.create(fling); coroutine.resume(flingThread) end end,
 	 getState = function() return hiddenfling end},
@@ -5242,14 +6500,216 @@ local btnFeatures = {
 	 toggle = function() tpToRole("Sheriff") end},
 	{name = "TP to Murderer",
 	 toggle = function() tpToRole("Murderer") end},
+	{name = "FPS",
+	 toggle = function() end},
+	{name = "Ping",
+	 toggle = function() end},
+	{name = "FPS+Ping",
+	 toggle = function() end},
 }
+
+popupDragLocked = false
+popupBgTransparency = 0
+popupBtnWidth = 204
+popupBtnHeight = 46
+
+local lockDragBtn = Instance.new("TextButton")
+lockDragBtn.Name = "LockDragBtn"
+lockDragBtn.Size = UDim2.new(1, 0, 0, 36)
+lockDragBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+lockDragBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+lockDragBtn.Text = "Lock Buttons Drag: OFF"
+lockDragBtn.Font = Enum.Font.SourceSansBold
+lockDragBtn.TextSize = 14
+lockDragBtn.AutoButtonColor = false
+lockDragBtn.LayoutOrder = 708
+lockDragBtn.Parent = categoryFrames["Settings"]
+
+local lockDragCorner = Instance.new("UICorner")
+lockDragCorner.CornerRadius = UDim.new(0, 6)
+lockDragCorner.Parent = lockDragBtn
+
+lockDragBtn.MouseButton1Click:Connect(function()
+	popupDragLocked = not popupDragLocked
+	if popupDragLocked then
+		lockDragBtn.Text = "Lock Buttons Drag: ON"
+		lockDragBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		lockDragBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	else
+		lockDragBtn.Text = "Lock Buttons Drag: OFF"
+		lockDragBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		lockDragBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+end)
+
+toggleDragLocked = false
+
+local toggleDragBtn = Instance.new("TextButton")
+toggleDragBtn.Name = "ToggleDragBtn"
+toggleDragBtn.Size = UDim2.new(1, 0, 0, 36)
+toggleDragBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+toggleDragBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleDragBtn.Text = "Lock WIN-X Drag: OFF"
+toggleDragBtn.Font = Enum.Font.SourceSansBold
+toggleDragBtn.TextSize = 14
+toggleDragBtn.AutoButtonColor = false
+toggleDragBtn.LayoutOrder = 707
+toggleDragBtn.Parent = categoryFrames["Settings"]
+
+local toggleDragCorner = Instance.new("UICorner")
+toggleDragCorner.CornerRadius = UDim.new(0, 6)
+toggleDragCorner.Parent = toggleDragBtn
+
+toggleDragBtn.MouseButton1Click:Connect(function()
+	toggleDragLocked = not toggleDragLocked
+	if toggleDragLocked then
+		toggleDragBtn.Text = "Lock WIN-X Drag: ON"
+		toggleDragBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		toggleDragBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	else
+		toggleDragBtn.Text = "Lock WIN-X Drag: OFF"
+		toggleDragBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		toggleDragBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+end)
+
+local bgTranspRow = Instance.new("Frame")
+bgTranspRow.Size = UDim2.new(1, 0, 0, 42)
+bgTranspRow.BackgroundTransparency = 1
+bgTranspRow.LayoutOrder = 703
+bgTranspRow.Parent = categoryFrames["Settings"]
+
+local bgTranspLabel = Instance.new("TextLabel")
+bgTranspLabel.Size = UDim2.new(1, -82, 1, 0)
+bgTranspLabel.BackgroundTransparency = 1
+bgTranspLabel.Text = "Buttons Transparency"
+bgTranspLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+bgTranspLabel.Font = Enum.Font.SourceSansBold
+bgTranspLabel.TextSize = 16
+bgTranspLabel.TextXAlignment = Enum.TextXAlignment.Left
+bgTranspLabel.Parent = bgTranspRow
+
+local bgTranspInput = Instance.new("TextBox")
+bgTranspInput.Size = UDim2.new(0, 74, 1, 0)
+bgTranspInput.Position = UDim2.new(1, -78, 0, 0)
+bgTranspInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+bgTranspInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+bgTranspInput.Text = "0"
+bgTranspInput.PlaceholderText = "0-100"
+bgTranspInput.Font = Enum.Font.SourceSansBold
+bgTranspInput.TextSize = 15
+bgTranspInput.ClearTextOnFocus = false
+bgTranspInput.Parent = bgTranspRow
+
+local bgTranspInputCorner = Instance.new("UICorner")
+bgTranspInputCorner.CornerRadius = UDim.new(0, 6)
+bgTranspInputCorner.Parent = bgTranspInput
+
+bgTranspInput.FocusLost:Connect(function()
+	local val = tonumber(bgTranspInput.Text)
+	if val and val >= 0 and val <= 100 then
+		popupBgTransparency = val / 100
+	else
+		bgTranspInput.Text = tostring(math.floor(popupBgTransparency * 100))
+	end
+	for name, data in pairs(extractedButtons) do
+		if data.popupBtn then
+			data.popupBtn.BackgroundTransparency = popupBgTransparency
+		end
+		if data.btn then
+			data.btn.BackgroundTransparency = popupBgTransparency
+		end
+	end
+	saveConfig()
+end)
+
+-- Popup Button Size
+local popupSizeRow = Instance.new("Frame")
+popupSizeRow.Size = UDim2.new(1, 0, 0, 42)
+popupSizeRow.BackgroundTransparency = 1
+popupSizeRow.LayoutOrder = 706
+popupSizeRow.Parent = categoryFrames["Settings"]
+
+local popupSizeLabel = Instance.new("TextLabel")
+popupSizeLabel.Size = UDim2.new(1, -160, 1, 0)
+popupSizeLabel.BackgroundTransparency = 1
+popupSizeLabel.Text = "Button Size (W x H)"
+popupSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+popupSizeLabel.Font = Enum.Font.SourceSansBold
+popupSizeLabel.TextSize = 16
+popupSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+popupSizeLabel.Parent = popupSizeRow
+
+local popupWidthInput = Instance.new("TextBox")
+popupWidthInput.Size = UDim2.new(0, 68, 1, 0)
+popupWidthInput.Position = UDim2.new(1, -146, 0, 0)
+popupWidthInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+popupWidthInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+popupWidthInput.Text = tostring(popupBtnWidth)
+popupWidthInput.PlaceholderText = "W"
+popupWidthInput.Font = Enum.Font.SourceSansBold
+popupWidthInput.TextSize = 15
+popupWidthInput.ClearTextOnFocus = false
+popupWidthInput.Parent = popupSizeRow
+
+local popupWidthInputCorner = Instance.new("UICorner")
+popupWidthInputCorner.CornerRadius = UDim.new(0, 6)
+popupWidthInputCorner.Parent = popupWidthInput
+
+local popupHeightInput = Instance.new("TextBox")
+popupHeightInput.Size = UDim2.new(0, 68, 1, 0)
+popupHeightInput.Position = UDim2.new(1, -74, 0, 0)
+popupHeightInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+popupHeightInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+popupHeightInput.Text = tostring(popupBtnHeight)
+popupHeightInput.PlaceholderText = "H"
+popupHeightInput.Font = Enum.Font.SourceSansBold
+popupHeightInput.TextSize = 15
+popupHeightInput.ClearTextOnFocus = false
+popupHeightInput.Parent = popupSizeRow
+
+local popupHeightInputCorner = Instance.new("UICorner")
+popupHeightInputCorner.CornerRadius = UDim.new(0, 6)
+popupHeightInputCorner.Parent = popupHeightInput
+
+popupWidthInput.FocusLost:Connect(function()
+	local val = tonumber(popupWidthInput.Text)
+	if val and val >= 100 and val <= 400 then
+		popupBtnWidth = val
+		for name, data in pairs(extractedButtons) do
+			if data.btn then
+				data.btn.Size = UDim2.new(0, val, 0, popupBtnHeight)
+			end
+		end
+	else
+		popupWidthInput.Text = tostring(popupBtnWidth)
+	end
+	saveConfig()
+end)
+
+popupHeightInput.FocusLost:Connect(function()
+	local val = tonumber(popupHeightInput.Text)
+	if val and val >= 30 and val <= 100 then
+		popupBtnHeight = val
+		for name, data in pairs(extractedButtons) do
+			if data.btn then
+				data.btn.Size = UDim2.new(0, popupBtnWidth, 0, val)
+			end
+		end
+	else
+		popupHeightInput.Text = tostring(popupBtnHeight)
+	end
+	saveConfig()
+end)
+
+local extractHandlers = {}
 
 for bindOrder, feature in ipairs(btnFeatures) do
 	local row = Instance.new("Frame")
 	row.Name = "BtnRow_" .. feature.name:gsub("%W", "")
 	row.Size = UDim2.new(1, 0, 0, 42)
 	row.BackgroundTransparency = 1
-	row.LayoutOrder = 900 + bindOrder
+	row.LayoutOrder = 905 + bindOrder
 	row.Parent = categoryFrames["Buttons"]
 
 	local label = Instance.new("TextLabel")
@@ -5292,8 +6752,122 @@ for bindOrder, feature in ipairs(btnFeatures) do
 	extractCorner.CornerRadius = UDim.new(0, 6)
 	extractCorner.Parent = extractButton
 
-	extractButton.MouseButton1Click:Connect(function()
+	extractHandlers[feature.name] = function()
 		if extractedButtons[feature.name] then return end
+
+		local isFpsPingFeature = feature.name == "FPS" or feature.name == "Ping" or feature.name == "FPS+Ping"
+
+		if isFpsPingFeature then
+			local extractedCount = 0
+			for _ in pairs(extractedButtons) do
+				extractedCount = extractedCount + 1
+			end
+
+			local isBoth = feature.name == "FPS+Ping"
+			local width = isBoth and 200 or 150
+			local height = isBoth and 64 or 46
+
+			local popupBorder = Instance.new("Frame")
+			popupBorder.Size = UDim2.new(0, width, 0, height)
+			popupBorder.Position = UDim2.new(0.5, -297, 0.5, 79 - extractedCount * (height + 2))
+			popupBorder.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			popupBorder.BackgroundTransparency = popupBgTransparency
+			popupBorder.BorderSizePixel = 0
+			popupBorder.Parent = popupBtnGui
+
+			local borderStroke = Instance.new("UIStroke")
+			borderStroke.Color = Color3.fromRGB(255, 255, 255)
+			borderStroke.Thickness = 1.5
+			borderStroke.Parent = popupBorder
+
+			local borderCorner = Instance.new("UICorner")
+			borderCorner.CornerRadius = UDim.new(0, 6)
+			borderCorner.Parent = popupBorder
+
+			local function fpsPingMakeDraggable(dragFrame)
+				local d = false
+				local dm = false
+				local ds, sp
+				local TH = 5
+				dragFrame.InputBegan:Connect(function(ipt)
+					if popupDragLocked then return end
+					if ipt.UserInputType == Enum.UserInputType.MouseButton1 then
+						d = true; dm = false; ds = ipt.Position; sp = popupBorder.Position
+					end
+				end)
+				local conn = UserInputService.InputChanged:Connect(function(ipt)
+					if popupDragLocked then return end
+					if ipt.UserInputType == Enum.UserInputType.MouseMovement and d then
+						local delta = ipt.Position - ds
+						if delta.Magnitude >= TH then dm = true end
+						if dm then
+							popupBorder.Position = UDim2.new(sp.X.Scale, sp.X.Offset + delta.X, sp.Y.Scale, sp.Y.Offset + delta.Y)
+						end
+					end
+				end)
+				dragFrame.InputEnded:Connect(function(ipt)
+					if ipt.UserInputType == Enum.UserInputType.MouseButton1 then
+						local wasDragged = dm
+						d = false; dm = false
+						if wasDragged then saveConfig() end
+					end
+				end)
+				return conn
+			end
+
+			local data = { btn = popupBorder, popupBtn = nil, popupLockBtn = nil, dragConn = nil }
+
+			if isBoth then
+				local fpsText = Instance.new("TextLabel")
+				fpsText.Size = UDim2.new(1, -4, 0.5, 0)
+				fpsText.Position = UDim2.new(0, 2, 0, 2)
+				fpsText.BackgroundTransparency = 1
+				fpsText.TextColor3 = Color3.fromRGB(255, 255, 255)
+				fpsText.Text = string.format("FPS: %d", math.floor(displayedFPS))
+				fpsText.Font = Enum.Font.Code
+				fpsText.TextSize = 20
+				fpsText.TextXAlignment = Enum.TextXAlignment.Left
+				fpsText.Parent = popupBorder
+
+				local pingText = Instance.new("TextLabel")
+				pingText.Size = UDim2.new(1, -4, 0.5, 0)
+				pingText.Position = UDim2.new(0, 2, 0.5, 0)
+				pingText.BackgroundTransparency = 1
+				pingText.TextColor3 = Color3.fromRGB(255, 255, 255)
+				pingText.Text = string.format("PING: %d", math.floor(displayedPing))
+				pingText.Font = Enum.Font.Code
+				pingText.TextSize = 20
+				pingText.TextXAlignment = Enum.TextXAlignment.Left
+				pingText.Parent = popupBorder
+
+				data.fpsText = fpsText
+				data.pingText = pingText
+				data.dragConn = fpsPingMakeDraggable(popupBorder)
+			else
+				local textBtn = Instance.new("TextButton")
+				textBtn.Size = UDim2.new(1, -4, 1, -4)
+				textBtn.Position = UDim2.new(0, 2, 0, 2)
+				textBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				textBtn.BackgroundTransparency = popupBgTransparency
+				textBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+				textBtn.Text = feature.name == "FPS" and string.format("FPS: %d", math.floor(displayedFPS)) or string.format("PING: %d", math.floor(displayedPing))
+				textBtn.Font = Enum.Font.Code
+				textBtn.TextSize = 22
+				textBtn.AutoButtonColor = false
+				textBtn.BorderSizePixel = 0
+				textBtn.Parent = popupBorder
+
+				local btnCorner = Instance.new("UICorner")
+				btnCorner.CornerRadius = UDim.new(0, 6)
+				btnCorner.Parent = textBtn
+
+				data.popupBtn = textBtn
+				data.dragConn = fpsPingMakeDraggable(textBtn)
+			end
+
+			extractedButtons[feature.name] = data
+			return
+		end
 
 		local extractedCount = 0
 		for _ in pairs(extractedButtons) do
@@ -5301,7 +6875,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		end
 
 		local popupBorder = Instance.new("Frame")
-		popupBorder.Size = UDim2.new(0, 204, 0, 46)
+		popupBorder.Size = UDim2.new(0, popupBtnWidth, 0, popupBtnHeight)
 		popupBorder.Position = UDim2.new(0.5, -297, 0.5, 79 - extractedCount * 48)
 		popupBorder.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		popupBorder.BackgroundTransparency = 1
@@ -5318,9 +6892,10 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		borderCorner.Parent = popupBorder
 
 		local popupBtn = Instance.new("TextButton")
-		popupBtn.Size = UDim2.new(1, -4, 1, -4)
+		popupBtn.Size = UDim2.new(1, -30, 1, -4)
 		popupBtn.Position = UDim2.new(0, 2, 0, 2)
 		popupBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		popupBtn.BackgroundTransparency = popupBgTransparency
 		popupBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		popupBtn.Text = feature.getState and (feature.name .. ": OFF") or feature.name
 		popupBtn.Font = Enum.Font.SourceSansBold
@@ -5333,6 +6908,35 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		popupCorner.CornerRadius = UDim.new(0, 6)
 		popupCorner.Parent = popupBtn
 
+		local popupLockBtn = Instance.new("TextButton")
+		popupLockBtn.Size = UDim2.new(0, 22, 0, 22)
+		popupLockBtn.Position = UDim2.new(1, -27, 0.5, -11)
+		popupLockBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		popupLockBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		popupLockBtn.Text = "U"
+		popupLockBtn.Font = Enum.Font.SourceSansBold
+		popupLockBtn.TextSize = 12
+		popupLockBtn.AutoButtonColor = false
+		popupLockBtn.BorderSizePixel = 0
+		popupLockBtn.Parent = popupBorder
+
+		local popupLockCorner = Instance.new("UICorner")
+		popupLockCorner.CornerRadius = UDim.new(0, 4)
+		popupLockCorner.Parent = popupLockBtn
+
+		local popupLocked = false
+
+		popupLockBtn.MouseButton1Click:Connect(function()
+			popupLocked = not popupLocked
+			if popupLocked then
+				popupLockBtn.Text = "L"
+				popupLockBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+			else
+				popupLockBtn.Text = "U"
+				popupLockBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+			end
+		end)
+
 		local popupDragging = false
 		local popupDidMove = false
 		local popupDragStart
@@ -5340,6 +6944,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		local POPUP_DRAG_THRESHOLD = 5
 
 		popupBtn.InputBegan:Connect(function(input)
+			if popupDragLocked or popupLocked then return end
 			if input.UserInputType == Enum.UserInputType.MouseButton1 then
 				popupDragging = true
 				popupDidMove = false
@@ -5349,6 +6954,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		end)
 
 		local popupDragConn = UserInputService.InputChanged:Connect(function(input)
+			if popupDragLocked or popupLocked then return end
 			if input.UserInputType == Enum.UserInputType.MouseMovement and popupDragging then
 				local delta = input.Position - popupDragStart
 				if delta.Magnitude >= POPUP_DRAG_THRESHOLD then
@@ -5363,8 +6969,15 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		popupBtn.InputEnded:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1 then
 				local shouldToggle = popupDragging and not popupDidMove
+				if not popupDragging then
+					shouldToggle = not popupLocked
+				end
+				local wasDragged = popupDragging and popupDidMove
 				popupDragging = false
 				popupDidMove = false
+				if wasDragged then
+					saveConfig()
+				end
 				if shouldToggle then
 					feature.toggle()
 				end
@@ -5374,13 +6987,18 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		extractedButtons[feature.name] = {
 			btn = popupBorder,
 			popupBtn = popupBtn,
+			popupLockBtn = popupLockBtn,
 			dragConn = popupDragConn,
 		}
 
 		if feature.getState and feature.getState() then
 			setExtractedBtnState(feature.name, true, feature.getStatusText and feature.getStatusText())
 		end
-	end)
+
+		saveConfig()
+	end
+
+	extractButton.MouseButton1Click:Connect(extractHandlers[feature.name])
 
 	removeButton.MouseButton1Click:Connect(function()
 		local data = extractedButtons[feature.name]
@@ -5388,6 +7006,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		if data.dragConn then data.dragConn:Disconnect() end
 		if data.btn then data.btn:Destroy() end
 		extractedButtons[feature.name] = nil
+		saveConfig()
 	end)
 end
 
@@ -5419,13 +7038,19 @@ end)
 closeButton.MouseButton1Click:Connect(function()
 	mainGui:Destroy()
 	toggleGui:Destroy()
+	if popupBtnGui then popupBtnGui:Destroy() end
+	if airStrafeConnection then airStrafeConnection:Disconnect() airStrafeConnection = nil end
+	if airStrafeInputConnection then airStrafeInputConnection:Disconnect() airStrafeInputConnection = nil end
+	if voidReturnConn then voidReturnConn:Disconnect() voidReturnConn = nil end
+	getgenv().AdrenalinWinLoaded = nil
 end)
 
-local toggleButton = Instance.new("Frame")
+toggleButton = Instance.new("Frame")
 toggleButton.Name = "ToggleButton"
-toggleButton.Size = UDim2.new(0, 60, 0, 60)
+toggleButton.Size = UDim2.new(0, toggleButtonSize, 0, toggleButtonSize)
 toggleButton.Position = UDim2.new(0.5, -295, 0.5, 125)
 toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+toggleButton.BackgroundTransparency = toggleBgTransparency or 0
 toggleButton.Active = true
 toggleButton.Parent = toggleGui
 
@@ -5499,6 +7124,7 @@ end)
 local DRAG_THRESHOLD = 5
 
 toggleClickButton.InputBegan:Connect(function(input)
+	if toggleDragLocked then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 		toggleDragging = true
 		toggleDidMove = false
@@ -5514,6 +7140,7 @@ toggleClickButton.InputChanged:Connect(function(input)
 end)
 
 UserInputService.InputChanged:Connect(function(input)
+	if toggleDragLocked then return end
 	if input == toggleDragInput and toggleDragging then
 		local delta = input.Position - toggleDragStart
 		if delta.Magnitude >= DRAG_THRESHOLD then
@@ -5532,7 +7159,8 @@ end)
 
 toggleClickButton.InputEnded:Connect(function(input)
 	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-		if toggleDragging and not toggleDidMove then
+		local wasDragged = toggleDragging and toggleDidMove
+		if (toggleDragging and not toggleDidMove) or not toggleDragging then
 			menuVisible = not menuVisible
 			if mainGui and mainGui.Parent then
 				mainGui.Enabled = menuVisible
@@ -5544,12 +7172,15 @@ toggleClickButton.InputEnded:Connect(function(input)
 				task.wait(0.15)
 				if toggleButton and toggleButton.Parent then
 					toggleButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-					toggleButton.BackgroundTransparency = 0
+					toggleButton.BackgroundTransparency = toggleBgTransparency
 				end
 			end)
 		end
 		toggleDragging = false
 		toggleDidMove = false
+		if wasDragged then
+			saveConfig()
+		end
 	end
 end)		clumsy_on = false
 		removeClumsyGhost()
@@ -5615,4 +7246,322 @@ task.spawn(function()
 		task.wait(5)
 		removeGlitchProof()
 	end
+end)
+
+-- ============================================
+-- Restore full config after UI is loaded
+-- ============================================
+local function restoreFullConfig()
+	local c = loadedConfig
+	if not c or not c.toggles then return end
+	local T = c.toggles
+
+	-- Restore variables (they were overwritten by original declarations)
+	isEnabled = T.isEnabled or false
+	wallhopToggle = T.wallhopToggle or false
+	noclipEnabled = T.noclipEnabled or false
+	reachEnabled = T.reachEnabled or false
+	fakeSpeedEnabled = T.fakeSpeedEnabled or false
+	secondLifeEnabled = T.secondLifeEnabled or false
+	invis_on = T.invis_on or false
+	autoInvisEnabled = T.autoInvisEnabled or false
+	autoTpEnabled = T.autoTpEnabled or false
+	clumsy_on = T.clumsy_on or false
+	PastedSources = false
+	antiFlingEnabled = T.antiFlingEnabled or false
+	antiVoidEnabled = T.antiVoidEnabled or false
+	espEnabled = T.espEnabled or false
+	autoGrabGunEnabled = T.autoGrabGunEnabled or false
+	gunAuraEnabled = T.gunAuraEnabled or false
+	autoDeleteCoinsEnabled = T.autoDeleteCoinsEnabled or false
+	autoDeleteCorpsesEnabled = T.autoDeleteCorpsesEnabled or false
+	hiddenfling = T.hiddenfling or false
+	currentMode = T.antiAimMode or 0
+	gameNotifEnabled = T.gameNotifEnabled or false
+
+	-- Restore values
+	if c.values then
+		if c.values.JUMP_BOOST_POWER then JUMP_BOOST_POWER = c.values.JUMP_BOOST_POWER end
+		if c.values.FAKE_SPEED_CFRAME_SPEED then FAKE_SPEED_CFRAME_SPEED = c.values.FAKE_SPEED_CFRAME_SPEED end
+		if c.values.range then range = c.values.range end
+		if c.values.autoInvisActivateDist then autoInvisActivateDist = c.values.autoInvisActivateDist end
+		if c.values.autoInvisDeactivateDist then autoInvisDeactivateDist = c.values.autoInvisDeactivateDist end
+		if c.values.autoTpDist then autoTpDist = c.values.autoTpDist end
+		if c.values.autoTpTarget then autoTpTarget = c.values.autoTpTarget end
+		if c.values.MAGNET_DISTANCE then MAGNET_DISTANCE = c.values.MAGNET_DISTANCE end
+		if c.values.toggleBgTransparency ~= nil then toggleBgTransparency = c.values.toggleBgTransparency end
+		if c.values.mainBgTransparency ~= nil then mainBgTransparency = c.values.mainBgTransparency end
+		if c.values.popupBgTransparency ~= nil then popupBgTransparency = c.values.popupBgTransparency end
+		if c.values.toggleButtonSize ~= nil then toggleButtonSize = c.values.toggleButtonSize end
+		if c.values.mainMenuWidth ~= nil then mainMenuWidth = c.values.mainMenuWidth end
+		if c.values.mainMenuHeight ~= nil then mainMenuHeight = c.values.mainMenuHeight end
+		if c.values.popupBtnWidth ~= nil then popupBtnWidth = c.values.popupBtnWidth end
+		if c.values.popupBtnHeight ~= nil then popupBtnHeight = c.values.popupBtnHeight end
+	end
+
+	-- Restore lock states
+	if c.locks then
+		popupDragLocked = c.locks.popupDragLocked or false
+		toggleDragLocked = c.locks.toggleDragLocked or false
+
+		if lockDragBtn then
+			if popupDragLocked then
+				lockDragBtn.Text = "Lock Buttons Drag: ON"
+				lockDragBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+				lockDragBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+			else
+				lockDragBtn.Text = "Lock Buttons Drag: OFF"
+				lockDragBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				lockDragBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			end
+		end
+
+		if toggleDragBtn then
+			if toggleDragLocked then
+				toggleDragBtn.Text = "Lock WIN-X Drag: ON"
+				toggleDragBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+				toggleDragBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+			else
+				toggleDragBtn.Text = "Lock WIN-X Drag: OFF"
+				toggleDragBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				toggleDragBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+			end
+		end
+	end
+
+	-- Restore WIN-X toggle button position
+	if c.togglePos and toggleButton then
+		local p = c.togglePos
+		toggleButton.Position = UDim2.new(p.X.Scale, p.X.Offset, p.Y.Scale, p.Y.Offset)
+	end
+
+	-- Restore value inputs
+	if speedInputBox and c.values and c.values.FAKE_SPEED_CFRAME_SPEED then
+		speedInputBox.Text = tostring(c.values.FAKE_SPEED_CFRAME_SPEED)
+	end
+	if ui.jumpBoostInput and c.values and c.values.JUMP_BOOST_POWER then
+		ui.jumpBoostInput.Text = tostring(c.values.JUMP_BOOST_POWER)
+	end
+	if rangeInputBox and c.values and c.values.range then
+		rangeInputBox.Text = tostring(c.values.range)
+	end
+	if autoInvisActivateBox and c.values and c.values.autoInvisActivateDist then
+		autoInvisActivateBox.Text = tostring(c.values.autoInvisActivateDist)
+	end
+	if autoInvisDeactivateBox and c.values and c.values.autoInvisDeactivateDist then
+		autoInvisDeactivateBox.Text = tostring(c.values.autoInvisDeactivateDist)
+	end
+	if autoTpDistBox and c.values and c.values.autoTpDist then
+		autoTpDistBox.Text = tostring(c.values.autoTpDist)
+	end
+	if autoTpTargetBtn and c.values and c.values.autoTpTarget then
+		autoTpTarget = c.values.autoTpTarget
+		autoTpTargetBtn.Text = autoTpTargetNames[autoTpTarget]
+	end
+	if ui.magnetDistInput and c.values and c.values.MAGNET_DISTANCE then
+		ui.magnetDistInput.Text = tostring(c.values.MAGNET_DISTANCE)
+	end
+	if toggleBgInput and c.values and c.values.toggleBgTransparency ~= nil then
+		toggleBgInput.Text = tostring(math.floor(c.values.toggleBgTransparency * 100))
+	end
+	if mainBgInput and c.values and c.values.mainBgTransparency ~= nil then
+		mainBgInput.Text = tostring(math.floor(c.values.mainBgTransparency * 100))
+	end
+	if bgTranspInput and c.values and c.values.popupBgTransparency ~= nil then
+		bgTranspInput.Text = tostring(math.floor(c.values.popupBgTransparency * 100))
+		for name, data in pairs(extractedButtons) do
+			if data.popupBtn then data.popupBtn.BackgroundTransparency = popupBgTransparency end
+			if data.btn then data.btn.BackgroundTransparency = popupBgTransparency end
+		end
+	end
+	-- Apply WIN-X transparency to the toggle button
+	if toggleButton then
+		toggleButton.BackgroundTransparency = toggleBgTransparency
+	end
+	-- Apply main menu transparency to the frame and its parts
+	mainFrame.BackgroundTransparency = mainBgTransparency
+	if leftSidebar then
+		leftSidebar.BackgroundTransparency = mainBgTransparency
+	end
+	if topBar then
+		topBar.BackgroundTransparency = mainBgTransparency
+	end
+	if topFix then
+		topFix.BackgroundTransparency = mainBgTransparency
+	end
+
+	-- Apply sizes
+	if toggleButton then
+		toggleButton.Size = UDim2.new(0, toggleButtonSize, 0, toggleButtonSize)
+	end
+	if mainFrame then
+		mainFrame.Size = UDim2.new(0, mainMenuWidth, 0, mainMenuHeight)
+	end
+	for name, data in pairs(extractedButtons) do
+		if data.btn then
+			data.btn.Size = UDim2.new(0, popupBtnWidth, 0, popupBtnHeight)
+		end
+	end
+	-- Restore size input texts
+	if toggleSizeInput and c.values and c.values.toggleButtonSize ~= nil then
+		toggleSizeInput.Text = tostring(c.values.toggleButtonSize)
+	end
+	if mainWidthInput and c.values and c.values.mainMenuWidth ~= nil then
+		mainWidthInput.Text = tostring(c.values.mainMenuWidth)
+	end
+	if mainHeightInput and c.values and c.values.mainMenuHeight ~= nil then
+		mainHeightInput.Text = tostring(c.values.mainMenuHeight)
+	end
+	if popupWidthInput and c.values and c.values.popupBtnWidth ~= nil then
+		popupWidthInput.Text = tostring(c.values.popupBtnWidth)
+	end
+	if popupHeightInput and c.values and c.values.popupBtnHeight ~= nil then
+		popupHeightInput.Text = tostring(c.values.popupBtnHeight)
+	end
+
+	-- Restore binds UI FIRST (before toggles, so saveConfig sees them)
+	if c.binds then
+		for name, keyStr in pairs(c.binds) do
+			local key = stringToKey(keyStr)
+			if key then
+				featureBinds[name] = key
+				for _, feature in ipairs(bindableFeatures) do
+					if feature.name == name then
+						keyBinds[key] = {callback = feature.callback, description = name}
+						break
+					end
+				end
+			end
+		end
+		for _, feature in ipairs(bindableFeatures) do
+			local row = categoryFrames["Binds"]:FindFirstChild("BindRow_" .. feature.name:gsub("%W", ""))
+			if row then
+				for _, child in ipairs(row:GetChildren()) do
+					if child:IsA("TextButton") and child.Text ~= "X" then
+						child.Text = featureBinds[feature.name] and bindKeyToName(featureBinds[feature.name]) or "None"
+					end
+				end
+			end
+		end
+	end
+
+	-- Restore extracted buttons (before toggles, so saveConfig sees them)
+	if c.extractedBtns then
+		for name, btnData in pairs(c.extractedBtns) do
+			if not extractedButtons[name] and extractHandlers[name] then
+				extractHandlers[name]()
+			end
+			if extractedButtons[name] and extractedButtons[name].btn and btnData.pos then
+				local p = btnData.pos
+				extractedButtons[name].btn.Position = UDim2.new(p.X.Scale, p.X.Offset, p.Y.Scale, p.Y.Offset)
+			end
+			if extractedButtons[name] and extractedButtons[name].popupLockBtn and btnData.locked then
+				extractedButtons[name].popupLockBtn.Text = "L"
+				extractedButtons[name].popupLockBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+			end
+		end
+	end
+
+	-- Restore toggle buttons UI and enable features (read from T directly)
+	if T.isEnabled and button1 then
+		setToggleState(button1, true, "Infinite Jump: ON", "Infinite Jump: OFF")
+		setExtractedBtnState("Infinite Jump", true)
+	end
+	if T.wallhopToggle and button2 then
+		setToggleState(button2, true, "Wallhop: ON", "Wallhop: OFF")
+		setExtractedBtnState("Wallhop", true)
+	end
+	if T.fakeSpeedEnabled then
+		if button4 then setToggleState(button4, true, "Speed Glitch: ON", "Speed Glitch: OFF") end
+		setExtractedBtnState("Speed Glitch", true)
+		setupFakeSpeed()
+	end
+	if T.secondLifeEnabled then
+		if secondLifeButton then setToggleState(secondLifeButton, true, "Second Life: ON", "Second Life: OFF") end
+		setExtractedBtnState("Second Life", true)
+		enableSecondLife()
+	end
+	if T.noclipEnabled then
+		noclipEnabled = false; toggleNoclip()
+		if noclipButton then setToggleState(noclipButton, true, "Noclip: ON", "Noclip: OFF") end
+		setExtractedBtnState("Noclip", true)
+	end
+	if T.reachEnabled then
+		reachEnabled = false; toggleReach()
+		if reachButton then setToggleState(reachButton, true, "KillAura: ON", "KillAura: OFF") end
+		setExtractedBtnState("KillAura", true)
+	end
+	if T.airStrafeEnabled then
+		if airStrafeButton then setToggleState(airStrafeButton, true, "Air Strafe: ON", "Air Strafe: OFF") end
+		setExtractedBtnState("Air Strafe", true)
+		airStrafeEnabled = true
+		setupAirStrafe()
+	end
+	if T.PastedSources then
+		toggleDesync()
+		if desyncButton then setToggleState(desyncButton, true, "Desync: ON", "Desync: OFF") end
+		setExtractedBtnState("Desync", true)
+	end
+	if T.antiVoidEnabled then
+		antiVoidEnabled = false; toggleAntiVoid()
+		if antiVoidButton then setToggleState(antiVoidButton, true, "Anti-Void: ON", "Anti-Void: OFF") end
+		setExtractedBtnState("Anti-Void", true)
+	end
+	if T.antiFlingEnabled then
+		antiFlingEnabled = false; toggleAntiFling()
+		if antiFlingButton then setToggleState(antiFlingButton, true, "Anti-Fling: ON", "Anti-Fling: OFF") end
+		setExtractedBtnState("Anti-Fling", true)
+	end
+	if T.espEnabled then
+		espEnabled = false; toggleEsp()
+		if espButton then setToggleState(espButton, true, "Esp: ON", "Esp: OFF") end
+		setExtractedBtnState("ESP", true)
+	end
+	if T.autoGrabGunEnabled then
+		autoGrabGunEnabled = false; toggleAutoGrabGun()
+		if btn.autoGrabGun then setToggleState(btn.autoGrabGun, true, "AutoGrab Gun: ON", "AutoGrab Gun: OFF") end
+		setExtractedBtnState("AutoGrab Gun", true)
+	end
+	if T.gunAuraEnabled then
+		gunAuraEnabled = false; toggleGunAura()
+		if btn.gunAura then setToggleState(btn.gunAura, true, "Gun Aura: ON", "Gun Aura: OFF") end
+		setExtractedBtnState("Gun Aura", true)
+	end
+	if T.autoDeleteCoinsEnabled then
+		autoDeleteCoinsEnabled = false; toggleAutoDeleteCoins()
+		if btn.autoDeleteCoins then setToggleState(btn.autoDeleteCoins, true, "Auto Remove Coins: ON", "Auto Remove Coins: OFF") end
+		setExtractedBtnState("Auto Remove Coins", true)
+	end
+	if T.autoDeleteCorpsesEnabled then
+		autoDeleteCorpsesEnabled = false; toggleAutoDeleteCorpses()
+		if btn.autoDeleteCorpses then setToggleState(btn.autoDeleteCorpses, true, "Auto Delete Corpses: ON", "Auto Delete Corpses: OFF") end
+		setExtractedBtnState("Auto Delete Corpses", true)
+	end
+	if T.hiddenfling then
+		if touchFlingButton then setToggleState(touchFlingButton, true, "Touch Fling: ON", "Touch Fling: OFF") end
+		setExtractedBtnState("Touch Fling", true)
+	end
+	if T.antiAimMode and T.antiAimMode ~= 0 then
+		currentMode = T.antiAimMode
+		running = false; cycleMode()
+	end
+	if T.gameNotifEnabled then
+		if btn.gameNotif then setToggleState(btn.gameNotif, true, "Notifications: ON", "Notifications: OFF") end
+	end
+
+	if T.autoInvisEnabled then
+		autoInvisEnabled = false; toggleAutoInvis()
+		setExtractedBtnState("Auto Invisibility", true)
+	end
+	if T.autoTpEnabled then
+		autoTpEnabled = false; toggleAutoTp()
+		setExtractedBtnState("Auto TP", true)
+	end
+
+	updateAntiAimButtonVisual()
+end
+
+task.spawn(function()
+	task.wait(1)
+	restoreFullConfig()
 end)
