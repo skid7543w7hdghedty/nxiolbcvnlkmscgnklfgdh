@@ -24,7 +24,7 @@ cachedIsMurderer = false
 lastMurdererCheck = 0
 
 function isPlayerMurderer()
-	if tick() - lastMurdererCheck > 0.5 then
+	if tick() - lastMurdererCheck > 1.0 then
 		lastMurdererCheck = tick()
 		local ok, result = pcall(function()
 			return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
@@ -89,11 +89,16 @@ local function saveConfig()
 	config.toggles.antiVoidEnabled = antiVoidEnabled
 	config.toggles.espEnabled = espEnabled
 	config.toggles.autoGrabGunEnabled = autoGrabGunEnabled
+	config.toggles.autoDodgeEnabled = autoDodgeEnabled
 	config.toggles.gunAuraEnabled = gunAuraEnabled
 	config.toggles.autoDeleteCoinsEnabled = autoDeleteCoinsEnabled
 	config.toggles.autoDeleteCorpsesEnabled = autoDeleteCorpsesEnabled
 	config.toggles.hiddenfling = hiddenfling
 	config.toggles.airStrafeEnabled = airStrafeEnabled
+	config.toggles.autoResetPlayerEnabled = autoResetPlayerEnabled
+	config.toggles.autoResetEveryoneEnabled = autoResetEveryoneEnabled
+	config.toggles.autoResetSheriffEnabled = autoResetSheriffEnabled
+	config.toggles.autoResetMurdererEnabled = autoResetMurdererEnabled
 
 	config.toggles.antiAimMode = currentMode
 	config.toggles.gameNotifEnabled = gameNotifEnabled
@@ -114,6 +119,7 @@ local function saveConfig()
 	config.values.mainMenuHeight = mainMenuHeight
 	config.values.popupBtnWidth = popupBtnWidth
 	config.values.popupBtnHeight = popupBtnHeight
+	config.values.customFov = customFov
 
 	if featureBinds then
 		for name, key in pairs(featureBinds) do
@@ -143,8 +149,11 @@ local function saveConfig()
 		config.togglePos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}}
 	end
 
-	pcall(function()
-		writefile(CONFIG_PATH, game:GetService("HttpService"):JSONEncode(config))
+	local encoded = game:GetService("HttpService"):JSONEncode(config)
+	task.defer(function()
+		pcall(function()
+			writefile(CONFIG_PATH, encoded)
+		end)
 	end)
 end
 
@@ -427,7 +436,10 @@ function toggleNoclip()
 	noclipEnabled = not noclipEnabled
 	
 	if noclipEnabled then
-		noclipConnection = RunService.Stepped:Connect(function()
+		local _noclipFrame = 0
+		noclipConnection = RunService.Heartbeat:Connect(function()
+			_noclipFrame = _noclipFrame + 1
+			if _noclipFrame % 2 ~= 0 then return end
 			if player.Character then
 				for _, part in pairs(player.Character:GetChildren()) do
 					if part:IsA("BasePart") then
@@ -472,7 +484,7 @@ Players.PlayerRemoving:Connect(reachBuildCache)
 function toggleReach()
 	reachEnabled = not reachEnabled
 	if reachEnabled then
-		reachConnection = RunService.RenderStepped:Connect(function()
+		reachConnection = RunService.Heartbeat:Connect(function()
 			local p = reachCachePlayers
 			for i = 2, #p do
 				local plr = p[i]
@@ -540,7 +552,7 @@ function setupAirStrafe()
 		end
 	end)
 
-	airStrafeConnection = RunService.RenderStepped:Connect(function()
+	airStrafeConnection = RunService.Heartbeat:Connect(function()
 		if not airStrafeEnabled then return end
 		local c = player.Character
 		if not c then return end
@@ -600,6 +612,7 @@ fakeSpeedEnabled = false
 fakeSpeedRenderConnection = nil
 fakeSpeedDiedConnection = nil
 FAKE_SPEED_CFRAME_SPEED = 110
+customFov = 70
 
 -- Fake Speed Glitch setup function
 function setupFakeSpeed()
@@ -677,7 +690,10 @@ function antiFlingCollide(plr)
 	end
 end
 
+local _antiFlingFrame = 0
 function antiFlingEnable()
+	_antiFlingFrame = _antiFlingFrame + 1
+	if _antiFlingFrame % 5 ~= 0 then return end
 	for i,v in pairs(reachCachePlayers) do
 		antiFlingCollide(v)
 	end
@@ -686,7 +702,7 @@ end
 function toggleAntiFling()
 	antiFlingEnabled = not antiFlingEnabled
 	if antiFlingEnabled then
-		antiFlingConnection = RunService.RenderStepped:Connect(antiFlingEnable)
+		antiFlingConnection = RunService.Heartbeat:Connect(antiFlingEnable)
 	else
 		if antiFlingConnection then
 			antiFlingConnection:Disconnect()
@@ -1000,11 +1016,19 @@ function espCleanCharacter(character)
 	end
 end
 
+local _espFrameCounter = 0
+RunService.Heartbeat:Connect(function()
+	_espFrameCounter = _espFrameCounter + 1
+end)
+
 function espHookCharacter(plr, character)
 	character:WaitForChild("HumanoidRootPart", 10)
+	local myOffset = math.random(0, 2)
 	local conn = RunService.Heartbeat:Connect(function()
 		if not espEnabled then return end
 		if not character.Parent then return end
+		-- Stagger players across 3 frames to reduce per-frame cost
+		if _espFrameCounter % 3 ~= myOffset then return end
 		espUpdatePlayer(plr)
 	end)
 	local prev = espTrackedData[plr]
@@ -1074,7 +1098,7 @@ function espEnableAll()
 			if ok and result then
 				espRoles = result
 			end
-			task.wait(0.5)
+			task.wait(0.75)
 		end
 	end)
 
@@ -1217,7 +1241,7 @@ function antiVoidDochar(character)
 		table.insert(antiVoidConnections, stateConn)
 		local oldstate = nil
 		while hum ~= nil and hum.Parent ~= nil and not antiVoidStopped do
-			task.wait()
+			task.wait(0.1)
 			if state ~= oldstate and (state ~= Enum.HumanoidStateType.Jumping and state ~= Enum.HumanoidStateType.Freefall) or (state == Enum.HumanoidStateType.Running or state == Enum.HumanoidStateType.Landed) then
 				antiVoidTpcframe = antiVoidCharcframe
 			end
@@ -1401,7 +1425,7 @@ animationButtons = {
 	81147896850705, "Asian Squat", 72007752012770, "Poop sniff", 90333292347820, "The Worm",
 	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 110146282544198, "Orange Justice",
 	108747312576405, "Les goooo", 93014787120483, "Garry's Dance",
-	99499783161907, "Aura farm", 80177289449617, "Snow angel", 70432904702322, "Get skinwalked", 123916423751437, "Rat Dance",
+	99499783161907, "Aura farm", 114400428765989, "180° Flip", 70432904702322, "Get skinwalked", 109873544976020, "Weird Spin",
 	129537633250603, "It's Peanut Butter Jelly Time"
 }
 animationObject = Instance.new("Animation")
@@ -1775,7 +1799,7 @@ function onCharacterAdded(char)
 			antiFlingConnection:Disconnect()
 			antiFlingConnection = nil
 		end
-		antiFlingConnection = RunService.RenderStepped:Connect(antiFlingEnable)
+		antiFlingConnection = RunService.Heartbeat:Connect(antiFlingEnable)
 	end
 
 	-- Переподключить ESP если он был включен (ESP сам обрабатывает CharacterAdded через espHookPlayer)
@@ -2277,6 +2301,7 @@ end
 createCategoryScrollFrame("Main")
 createCategoryScrollFrame("Movement")
 createCategoryScrollFrame("Combat")
+createCategoryScrollFrame("Trolling")
 createCategoryScrollFrame("Teleports")
 createCategoryScrollFrame("Utilities")
 createCategoryScrollFrame("Teamers")
@@ -2294,6 +2319,7 @@ function createCategoryButton(shortName, layoutOrder)
 	fullNames = {
 		["Mvmt"] = "Movement",
 		["Cmbt"] = "Combat",
+		["Trl"] = "Trolling",
 		["Tele"] = "Teleports",
 		["Util"] = "Utilities",
 		["Anim"] = "Animations",
@@ -2355,6 +2381,7 @@ end
 createCategoryButton("Main", 1)
 createCategoryButton("Mvmt", 2)
 createCategoryButton("Cmbt", 3)
+createCategoryButton("Trl", 3.5)
 createCategoryButton("Tele", 4)
 createCategoryButton("Util", 5)
 createCategoryButton("Team", 6)
@@ -2610,6 +2637,117 @@ secondLifeButton.MouseButton1Click:Connect(function()
 	setExtractedBtnState("Second Life", secondLifeEnabled)
 end)
 
+-- ============================================================
+-- AutoDodge (Jump Dodge)
+-- ============================================================
+autoDodgeEnabled = false
+autoDodgeConnection = nil
+autoDodgeDiedConnection = nil
+autoDodgeCharAddedConn = nil
+autoDodgeLastDodge = 0
+autoDodgeCooldown = 0.1
+autoDodgeShift = 10
+autoDodgeWallCheck = 10
+
+local function autoDodgeCheckWall(origin, direction)
+	local rayParams = RaycastParams.new()
+	rayParams.FilterDescendantsInstances = {player.Character}
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	local result = Workspace:Raycast(origin, direction * autoDodgeWallCheck, rayParams)
+	return result ~= nil
+end
+
+local function autoDodgePerform()
+	if tick() - autoDodgeLastDodge < autoDodgeCooldown then return end
+	local char = player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	if not hrp or not hum or hum.Health <= 0 then return end
+
+	local origin = hrp.Position
+	local rightVec = hrp.CFrame.RightVector
+
+	local wallRight = autoDodgeCheckWall(origin, rightVec)
+	local wallLeft = autoDodgeCheckWall(origin, -rightVec)
+
+	local dodgeDir
+	if not wallRight and not wallLeft then
+		dodgeDir = (math.random(0, 1) == 0) and rightVec or -rightVec
+	elseif not wallRight then
+		dodgeDir = rightVec
+	elseif not wallLeft then
+		dodgeDir = -rightVec
+	else
+		return
+	end
+
+	local originalCF = hrp.CFrame
+	local dodgePos = origin + dodgeDir * autoDodgeShift
+	hrp.CFrame = CFrame.new(dodgePos) * (originalCF - originalCF.Position)
+	hrp.AssemblyLinearVelocity = Vector3.zero
+	autoDodgeLastDodge = tick()
+
+	task.delay(0.45, function()
+		if hrp and hrp.Parent then
+			hrp.CFrame = originalCF
+			hrp.AssemblyLinearVelocity = Vector3.zero
+		end
+	end)
+end
+
+function setupAutoDodge()
+	if autoDodgeConnection then
+		autoDodgeConnection:Disconnect()
+		autoDodgeConnection = nil
+	end
+	if autoDodgeDiedConnection then
+		autoDodgeDiedConnection:Disconnect()
+		autoDodgeDiedConnection = nil
+	end
+	if autoDodgeCharAddedConn then
+		autoDodgeCharAddedConn:Disconnect()
+		autoDodgeCharAddedConn = nil
+	end
+	if not autoDodgeEnabled then return end
+
+	autoDodgeConnection = UserInputService.JumpRequest:Connect(function()
+		if autoDodgeEnabled then
+			autoDodgePerform()
+		end
+	end)
+
+	local function onCharAdded(char)
+		char:WaitForChild("Humanoid", 10)
+		local hum = char:FindFirstChildOfClass("Humanoid")
+		if hum then
+			autoDodgeDiedConnection = hum.Died:Connect(function()
+				if autoDodgeConnection then
+					autoDodgeConnection:Disconnect()
+					autoDodgeConnection = nil
+				end
+			end)
+		end
+	end
+
+	if player.Character then
+		onCharAdded(player.Character)
+	end
+	autoDodgeCharAddedConn = player.CharacterAdded:Connect(onCharAdded)
+end
+
+function toggleAutoDodge()
+	autoDodgeEnabled = not autoDodgeEnabled
+	setupAutoDodge()
+end
+
+autoDodgeButton = createButton("AutoDodgeButton", "Auto Dodge Knife: OFF", 202.5)
+autoDodgeButton.MouseButton1Click:Connect(function()
+	toggleAutoDodge()
+	setToggleState(autoDodgeButton, autoDodgeEnabled, "Auto Dodge Knife: ON", "Auto Dodge Knife: OFF")
+	setExtractedBtnState("Auto Dodge Knife", autoDodgeEnabled)
+end)
+
 button5 = createButton("InvisButton", "Invisibility: OFF", 205)
 	invis_on = false
 	autoInvisEnabled = false
@@ -2742,7 +2880,7 @@ function toggleAutoInvis()
 		autoInvisConnection = RunService.Heartbeat:Connect(function()
 			if not autoInvisEnabled then return end
 			autoInvisFrame = autoInvisFrame + 1
-			if autoInvisFrame % 30 ~= 0 then return end
+			if autoInvisFrame % 45 ~= 0 then return end
 			local murdererPos = getMurdererPosition()
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -2846,27 +2984,27 @@ end
 
 function autoGrabStartMagnet(drop)
 	if autoGrabGunMagnets[drop] then return end
+	local isModel = drop:IsA("Model")
+	local isPart = drop:IsA("BasePart")
 	autoGrabGunMagnets[drop] = RunService.Heartbeat:Connect(function()
 		if not drop or not drop.Parent then
-			if autoGrabGunMagnets[drop] then
-				autoGrabGunMagnets[drop]:Disconnect()
-				autoGrabGunMagnets[drop] = nil
-			end
+			local c = autoGrabGunMagnets[drop]
+			if c then c:Disconnect() end
+			autoGrabGunMagnets[drop] = nil
 			return
 		end
-		if isPlayerMurderer() then return end
-		local root = autoGrabGetRoot()
+		if cachedIsMurderer then return end
+		local char2 = player.Character
+		local root = char2 and char2:FindFirstChild("HumanoidRootPart")
 		if not root then return end
 		local cf = root.CFrame
-		if drop:IsA("BasePart") then
+		if isPart then
 			drop.CFrame = cf
-		elseif drop:IsA("Model") then
+		elseif isModel then
 			drop:PivotTo(cf)
 		else
 			local part = drop:FindFirstChildWhichIsA("BasePart", true)
-			if part then
-				part.CFrame = cf
-			end
+			if part then part.CFrame = cf end
 		end
 	end)
 end
@@ -2882,75 +3020,82 @@ function autoGrabClaimDrop(drop)
 	if not autoGrabGunEnabled then return end
 	if autoGrabGunProcessed[drop] then return end
 	if not drop or not drop.Parent then return end
-	if isPlayerMurderer() then return end
+	if cachedIsMurderer then return end  -- используем кэш напрямую, без вызова функции
 	autoGrabGunProcessed[drop] = true
-	local root = autoGrabGetRoot()
+
+	local char = player.Character
+	local root = char and char:FindFirstChild("HumanoidRootPart")
 	if not root then
 		autoGrabGunProcessed[drop] = nil
 		return
 	end
-	local char = player.Character
-	local cf = root.CFrame
 
-	-- Сверхбыстрая многократная телепортация для максимальной скорости
-	for i = 1, 50 do
-		if not drop or not drop.Parent then break end
-		if drop:IsA("BasePart") then
-			drop.CFrame = cf
-			drop.CanCollide = false
-			drop.Transparency = 1
-			drop.Parent = char
-			drop.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-		elseif drop:IsA("Model") then
-			drop:PivotTo(cf)
-			drop.Parent = char
-			for _, v in ipairs(drop:GetDescendants()) do
-				if v:IsA("BasePart") then
-					v.CanCollide = false
-					v.Transparency = 1
-					v.CFrame = cf
-					v.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-				end
-			end
-		else
-			local part = drop:FindFirstChildWhichIsA("BasePart", true)
-			if part then
-				part.CFrame = cf
-				part.CanCollide = false
-				part.Transparency = 1
-				part.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-			end
-			drop.Parent = char
+	-- Собираем части дропа
+	local parts = {}
+	if drop:IsA("BasePart") then
+		parts[1] = drop
+	elseif drop:IsA("Model") then
+		local i = 0
+		for _, v in ipairs(drop:GetDescendants()) do
+			if v:IsA("BasePart") then i = i + 1; parts[i] = v end
 		end
+	else
+		local p = drop:FindFirstChildWhichIsA("BasePart", true)
+		if p then parts[1] = p end
 	end
 
-	-- Мгновенное касание всех частей для подбора
-	if char then
-		local hrp = char:FindFirstChild("HumanoidRootPart")
-		if hrp and drop then
-			local parts = {}
-			if drop:IsA("BasePart") then
-				table.insert(parts, drop)
-			elseif drop:IsA("Model") then
-				for _, v in ipairs(drop:GetDescendants()) do
-					if v:IsA("BasePart") then
-						table.insert(parts, v)
-					end
-				end
-			end
-			for i = 1, 10 do
-				for _, part in ipairs(parts) do
-					pcall(function()
-						firetouchinterest(hrp, part, 0)
-						firetouchinterest(hrp, part, 1)
-					end)
-				end
-			end
-		end
+	if #parts == 0 then
+		autoGrabGunProcessed[drop] = nil
+		return
+	end
+
+	-- Нулевая физика + телепорт к игроку — без pcall для скорости
+	local cf = root.CFrame
+	local zero = Vector3.zero
+	for i = 1, #parts do
+		local part = parts[i]
+		part.CanCollide = false
+		part.Anchored = true
+		part.AssemblyLinearVelocity = zero
+		part.AssemblyAngularVelocity = zero
+		part.CFrame = cf
+	end
+
+	if drop:IsA("Model") then
+		drop:PivotTo(cf)
+	end
+
+	-- firetouchinterest СРАЗУ, ещё до запуска Heartbeat
+	for i = 1, #parts do
+		firetouchinterest(root, parts[i], 0)
+		firetouchinterest(root, parts[i], 1)
 	end
 
 	-- Запускаем магнит
 	autoGrabStartMagnet(drop)
+
+	-- Heartbeat: держим дроп на нас и бьём firetouchinterest каждый кадр
+	local touchConn
+	touchConn = RunService.Heartbeat:Connect(function()
+		if not drop or not drop.Parent then
+			touchConn:Disconnect(); touchConn = nil
+			return
+		end
+		if not autoGrabGunEnabled then
+			touchConn:Disconnect(); touchConn = nil
+			return
+		end
+		local freshRoot = char and char:FindFirstChild("HumanoidRootPart")
+		if not freshRoot then return end
+		local freshCf = freshRoot.CFrame
+		for i = 1, #parts do
+			local part = parts[i]
+			part.CFrame = freshCf
+			part.AssemblyLinearVelocity = zero
+			firetouchinterest(freshRoot, part, 0)
+			firetouchinterest(freshRoot, part, 1)
+		end
+	end)
 
 	drop.AncestryChanged:Connect(function()
 		if not drop.Parent or drop.Parent == Workspace then
@@ -2971,23 +3116,21 @@ function autoGrabConnectModel(model)
 		end
 	end
 
-	-- DescendantAdded для моментального перехвата
+	-- DescendantAdded — прямой вызов без задержки (быстрее task.defer)
 	local conn = model.DescendantAdded:Connect(function(descendant)
 		if not autoGrabGunEnabled then return end
 		if descendant.Name == "GunDrop" then
-			-- Без задержки — мгновенный захват
 			autoGrabClaimDrop(descendant)
 		end
 	end)
 	autoGrabGunConnections[model] = conn
 
-	-- ChildAdded тоже для скорости
+	-- ChildAdded — дублирующий перехват
 	local conn2 = model.ChildAdded:Connect(function(child)
 		if not autoGrabGunEnabled then return end
 		if child.Name == "GunDrop" then
 			autoGrabClaimDrop(child)
 		end
-		-- Проверяем потомков нового ребёнка
 		if child:IsA("Model") or child:IsA("Folder") then
 			for _, desc in ipairs(child:GetDescendants()) do
 				if desc.Name == "GunDrop" then
@@ -3036,14 +3179,14 @@ function enableAutoGrabGun()
 
 	autoGrabScanWorkspace()
 
-	-- Workspace.DescendantAdded — мгновенный перехват
+	-- Workspace.DescendantAdded — прямой вызов, без задержки
 	table.insert(autoGrabGunConnections, Workspace.DescendantAdded:Connect(function(obj)
 		if not autoGrabGunEnabled then return end
-		if obj:IsA("Model") and autoGrabGunTargets[obj.Name] then
-			autoGrabConnectModel(obj)
-		end
 		if obj.Name == "GunDrop" then
+			-- GunDrop в первую очередь — самый приоритетный случай
 			autoGrabClaimDrop(obj)
+		elseif obj:IsA("Model") and autoGrabGunTargets[obj.Name] then
+			autoGrabConnectModel(obj)
 		end
 	end))
 
@@ -3070,10 +3213,10 @@ function enableAutoGrabGun()
 		autoGrabScanWorkspace()
 	end))
 
-	-- Быстрый цикл сканирования — каждые 3 секунды
+	-- Периодическое сканирование — каждые 5 секунд (DescendantAdded ловит мгновенно)
 	task.spawn(function()
 		while autoGrabGunEnabled do
-			task.wait(3)
+			task.wait(5)
 			if autoGrabGunEnabled then
 				autoGrabScanWorkspace()
 			end
@@ -3107,6 +3250,724 @@ function toggleAutoGrabGun()
 	end
 end
 
+-- ============================================================
+-- Reset Player (NaN Fling)
+-- ============================================================
+nanFlingTargetName = ""
+nanFlingCallCounter = 0
+nanFlingConnection = nil
+
+function executeNanFling()
+	if nanFlingTargetName == "" then
+		notify("Error", "Enter a player name first", 2)
+		return
+	end
+
+	nanFlingCallCounter = nanFlingCallCounter + 1
+	local currentFlingId = nanFlingCallCounter
+
+	if nanFlingConnection then
+		nanFlingConnection:Disconnect()
+		nanFlingConnection = nil
+	end
+
+	local targetPlayer
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Name:lower():find(nanFlingTargetName:lower()) then
+			targetPlayer = plr
+			break
+		end
+	end
+
+	if not targetPlayer or not targetPlayer.Character then
+		notify("Error", "Target not found", 2)
+		return
+	end
+
+	local char = player.Character
+	if not char then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hrp or not hum then return end
+
+	local targetRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not targetRoot then
+		notify("Error", "Target has no character", 2)
+		return
+	end
+
+	local savedCFrame = hrp.CFrame
+	local savedVelocity = hrp.Velocity
+	local savedPlatformStand = hum.PlatformStand
+	local nanValue = 0 / 0
+	local nanVector = Vector3.new(nanValue, nanValue, nanValue)
+
+	hum.PlatformStand = true
+	local startTime = tick()
+
+	nanFlingConnection = RunService.Heartbeat:Connect(function()
+		if nanFlingCallCounter ~= currentFlingId then return end
+
+		if tick() - startTime >= 1.5 then
+			nanFlingConnection:Disconnect()
+			nanFlingConnection = nil
+			task.defer(function()
+				if nanFlingCallCounter ~= currentFlingId then return end
+				hum.PlatformStand = savedPlatformStand
+
+				pcall(sethiddenproperty, hrp, "PhysicsRepRootPart", hrp)
+
+				local restoreCF = savedCFrame
+				if restoreCF then
+					local safeY = (workspace.FallenPartsDestroyHeight or -500) + 50
+					if restoreCF.Position.Y < safeY then
+						restoreCF = CFrame.new(restoreCF.Position.X, safeY, restoreCF.Position.Z)
+					end
+				end
+
+				for i = 1, 15 do
+					if nanFlingCallCounter ~= currentFlingId then return end
+					for _, part in pairs(char:GetDescendants()) do
+						if part:IsA("BasePart") then
+							part.Velocity = Vector3.zero
+							part.RotVelocity = Vector3.zero
+							part.AssemblyLinearVelocity = Vector3.zero
+							part.AssemblyAngularVelocity = Vector3.zero
+						end
+					end
+					hrp.CFrame = restoreCF
+					char:SetPrimaryPartCFrame(restoreCF)
+					task.wait()
+				end
+
+				pcall(function()
+					hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+				end)
+			end)
+			return
+		end
+
+		hrp.CFrame = targetRoot.CFrame
+		hrp.AssemblyLinearVelocity = nanVector
+		hrp.AssemblyAngularVelocity = nanVector
+		pcall(function()
+			hum:Move(nanVector)
+		end)
+		pcall(sethiddenproperty, hrp, "PhysicsRepRootPart", targetRoot)
+	end)
+
+	notify("NaN Fling", "Flinging " .. targetPlayer.Name, 2)
+end
+
+function executeNanFlingByRole(roleName)
+	local ok, result = pcall(function()
+		return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+	end)
+	if not (ok and result) then
+		notify("Error", "Could not get roles", 2)
+		return
+	end
+	if roleName == "Sheriff" then
+		local heroTarget, sheriffTarget = nil, nil
+		for name, data in pairs(result) do
+			if name ~= player.Name then
+				if data.Role == "Hero" or (data.HasGun and data.Role ~= "Murderer") then
+					if not heroTarget then heroTarget = name end
+				elseif data.Role == "Sheriff" then
+					if not sheriffTarget then sheriffTarget = name end
+				end
+			end
+		end
+		local chosen = heroTarget or sheriffTarget
+		if chosen then
+			nanFlingTargetName = chosen
+			executeNanFling()
+			return
+		end
+	elseif roleName == "Murderer" then
+		for name, data in pairs(result) do
+			if data.Role == "Murderer" and name ~= player.Name then
+				nanFlingTargetName = name
+				executeNanFling()
+				return
+			end
+		end
+	end
+	notify("Error", "No " .. roleName .. " found", 2)
+end
+
+-- Trolling Tab
+currentCategory = "Trolling"
+
+local trollingTargetName = ""
+local trollingHB = game:GetService("RunService").Heartbeat
+
+local trollingInputRow = Instance.new("Frame")
+trollingInputRow.Name = "TrollingInputRow"
+trollingInputRow.Size = UDim2.new(1, 0, 0, 42)
+trollingInputRow.BackgroundTransparency = 1
+trollingInputRow.LayoutOrder = 290.1
+trollingInputRow.Parent = categoryFrames["Trolling"]
+
+local trollingInputBtn = Instance.new("TextButton")
+trollingInputBtn.Name = "TrollingInputButton"
+trollingInputBtn.Size = UDim2.new(1, -140, 1, 0)
+trollingInputBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+trollingInputBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+trollingInputBtn.Text = "Troll Player"
+trollingInputBtn.Font = Enum.Font.SourceSansBold
+trollingInputBtn.TextSize = 14
+trollingInputBtn.Parent = trollingInputRow
+
+local trollingInputBtnCorner = Instance.new("UICorner")
+trollingInputBtnCorner.CornerRadius = UDim.new(0, 6)
+trollingInputBtnCorner.Parent = trollingInputBtn
+
+local trollingInputBox = Instance.new("TextBox")
+trollingInputBox.Name = "TrollingInputBox"
+trollingInputBox.Size = UDim2.new(0, 134, 1, 0)
+trollingInputBox.Position = UDim2.new(1, -134, 0, 0)
+trollingInputBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+trollingInputBox.TextColor3 = Color3.fromRGB(170, 170, 170)
+trollingInputBox.Text = ""
+trollingInputBox.PlaceholderText = "Player Name"
+trollingInputBox.Font = Enum.Font.SourceSansBold
+trollingInputBox.TextSize = 14
+trollingInputBox.Parent = trollingInputRow
+
+local trollingInputBoxCorner = Instance.new("UICorner")
+trollingInputBoxCorner.CornerRadius = UDim.new(0, 6)
+trollingInputBoxCorner.Parent = trollingInputBox
+
+trollingInputBox.FocusLost:Connect(function()
+	trollingTargetName = trollingInputBox.Text
+end)
+
+local function getTrollingTarget()
+	if trollingTargetName == "" then
+		notify("Error", "Enter a player name first", 2)
+		return nil
+	end
+	local target
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Name:lower():find(trollingTargetName:lower()) then
+			target = plr
+			break
+		end
+	end
+	if not target then
+		notify("Error", "Target not found", 2)
+		return nil
+	end
+	return target
+end
+
+-- Anti-Jump
+local antiJumpEnabled = false
+local antiJumpConn = nil
+
+-- Movement Breaker
+local mvmtBreakEnabled = false
+local mvmtBreakConn = nil
+
+-- Platform Fly
+local platformFlyEnabled = false
+local platformFlyConn = nil
+
+-- Elevator
+local elevatorEnabled = false
+local elevatorConn = nil
+
+-- Speed Boost (slow)
+local sbSlowEnabled = false
+local sbSlowConn = nil
+
+-- Speed Boost (medium)
+local sbMedEnabled = false
+local sbMedConn = nil
+
+-- Speed Boost (fast)
+local sbFastEnabled = false
+local sbFastConn = nil
+
+createSection("Trolling Functions", 290.2)
+
+-- Anti-Jump
+local antiJumpBtn = createButton("AntiJumpButton", "Anti-Jump: OFF", 291)
+antiJumpBtn.MouseButton1Click:Connect(function()
+	if not antiJumpEnabled then
+		local target = getTrollingTarget()
+		if not target then return end
+		local targetRoot = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+		if not targetRoot then notify("Error", "Target has no character", 2) return end
+		antiJumpEnabled = true
+		antiJumpBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		antiJumpBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		antiJumpBtn.Text = "Anti-Jump: ON"
+		local playerChar = player.Character or player.CharacterAdded:Wait()
+		local playerRoot = playerChar:WaitForChild("HumanoidRootPart")
+		antiJumpConn = trollingHB:Connect(function()
+			if not antiJumpEnabled then return end
+			local tr = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+			if not tr then
+				antiJumpEnabled = false; antiJumpConn:Disconnect(); antiJumpConn = nil
+				antiJumpBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				antiJumpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+				antiJumpBtn.Text = "Anti-Jump: OFF"
+				return
+			end
+			local pr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not pr then return end
+			pr.Velocity = Vector3.zero; pr.RotVelocity = Vector3.zero
+			pr.CFrame = CFrame.new(tr.Position + Vector3.new(0, 3.5, 0)) * CFrame.Angles(-math.pi / 2, 0, 0)
+			sethiddenproperty(pr, "PhysicsRepRootPart", tr)
+		end)
+	else
+		if antiJumpConn then antiJumpConn:Disconnect() end
+		antiJumpEnabled = false; antiJumpConn = nil
+		antiJumpBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		antiJumpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		antiJumpBtn.Text = "Anti-Jump: OFF"
+	end
+end)
+
+-- Movement Breaker
+local mvmtBreakBtn = createButton("MovementBreakerButton", "Movement Breaker: OFF", 291.5)
+mvmtBreakBtn.MouseButton1Click:Connect(function()
+	if not mvmtBreakEnabled then
+		local target = getTrollingTarget()
+		if not target then return end
+		mvmtBreakEnabled = true
+		mvmtBreakBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		mvmtBreakBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		mvmtBreakBtn.Text = "Movement Breaker: ON"
+		mvmtBreakConn = trollingHB:Connect(function()
+			if not mvmtBreakEnabled then return end
+			local tr = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+			local pr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not tr or not pr then
+				mvmtBreakEnabled = false
+				if mvmtBreakConn then mvmtBreakConn:Disconnect() end
+				mvmtBreakConn = nil
+				mvmtBreakBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				mvmtBreakBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+				mvmtBreakBtn.Text = "Movement Breaker: OFF"
+				return
+			end
+			pr.CFrame = tr.CFrame * CFrame.new(0, 0.7, -0.8)
+			pr.Velocity = Vector3.zero
+			sethiddenproperty(pr, "PhysicsRepRootPart", tr)
+		end)
+	else
+		if mvmtBreakConn then mvmtBreakConn:Disconnect() end
+		mvmtBreakEnabled = false; mvmtBreakConn = nil
+		mvmtBreakBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		mvmtBreakBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		mvmtBreakBtn.Text = "Movement Breaker: OFF"
+	end
+end)
+
+-- Platform Fly
+local pfBtn = createButton("PlatformFlyButton", "Platform Fly: OFF", 292)
+pfBtn.MouseButton1Click:Connect(function()
+	if not platformFlyEnabled then
+		local target = getTrollingTarget()
+		if not target then return end
+		platformFlyEnabled = true
+		pfBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		pfBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		pfBtn.Text = "Platform Fly: ON"
+		platformFlyConn = trollingHB:Connect(function()
+			if not platformFlyEnabled then return end
+			local tr = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+			local pr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not tr or not pr then
+				platformFlyEnabled = false
+				if platformFlyConn then platformFlyConn:Disconnect() end
+				platformFlyConn = nil
+				pfBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				pfBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+				pfBtn.Text = "Platform Fly: OFF"
+				return
+			end
+			pr.CFrame = tr.CFrame * CFrame.new(0, -4, 0)
+			pr.Velocity = Vector3.zero
+			sethiddenproperty(pr, "PhysicsRepRootPart", tr)
+		end)
+	else
+		if platformFlyConn then platformFlyConn:Disconnect() end
+		platformFlyEnabled = false; platformFlyConn = nil
+		pfBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		pfBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		pfBtn.Text = "Platform Fly: OFF"
+	end
+end)
+
+-- Elevator
+local elevBtn = createButton("ElevatorButton", "Elevator: OFF", 293)
+elevBtn.MouseButton1Click:Connect(function()
+	if not elevatorEnabled then
+		local target = getTrollingTarget()
+		if not target then return end
+		elevatorEnabled = true
+		elevBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		elevBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		elevBtn.Text = "Elevator: ON"
+		elevatorConn = trollingHB:Connect(function()
+			if not elevatorEnabled then return end
+			local tr = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+			local pr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not tr or not pr then
+				elevatorEnabled = false
+				if elevatorConn then elevatorConn:Disconnect() end
+				elevatorConn = nil
+				elevBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				elevBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+				elevBtn.Text = "Elevator: OFF"
+				return
+			end
+			pr.CFrame = tr.CFrame * CFrame.new(0, -3, 0)
+			pr.Velocity = Vector3.zero
+			sethiddenproperty(pr, "PhysicsRepRootPart", tr)
+		end)
+	else
+		if elevatorConn then elevatorConn:Disconnect() end
+		elevatorEnabled = false; elevatorConn = nil
+		elevBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		elevBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		elevBtn.Text = "Elevator: OFF"
+	end
+end)
+
+-- Speed Boost (slow)
+local sbSlowBtn = createButton("SpeedBoostSlowButton", "Speed Boost (slow): OFF", 294)
+sbSlowBtn.MouseButton1Click:Connect(function()
+	if not sbSlowEnabled then
+		local target = getTrollingTarget()
+		if not target then return end
+		sbSlowEnabled = true
+		sbSlowBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		sbSlowBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		sbSlowBtn.Text = "Speed Boost (slow): ON"
+		sbSlowConn = trollingHB:Connect(function()
+			if not sbSlowEnabled then return end
+			local tr = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+			local pr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not tr or not pr then
+				sbSlowEnabled = false
+				if sbSlowConn then sbSlowConn:Disconnect() end
+				sbSlowConn = nil
+				sbSlowBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				sbSlowBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+				sbSlowBtn.Text = "Speed Boost (slow): OFF"
+				return
+			end
+			pr.CFrame = tr.CFrame * CFrame.new(0, 0.7, 1)
+			pr.Velocity = Vector3.zero
+			sethiddenproperty(pr, "PhysicsRepRootPart", tr)
+		end)
+	else
+		if sbSlowConn then sbSlowConn:Disconnect() end
+		sbSlowEnabled = false; sbSlowConn = nil
+		sbSlowBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		sbSlowBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		sbSlowBtn.Text = "Speed Boost (slow): OFF"
+	end
+end)
+
+-- Speed Boost (medium)
+local sbMedBtn = createButton("SpeedBoostMediumButton", "Speed Boost (medium): OFF", 295)
+sbMedBtn.MouseButton1Click:Connect(function()
+	if not sbMedEnabled then
+		local target = getTrollingTarget()
+		if not target then return end
+		sbMedEnabled = true
+		sbMedBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		sbMedBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		sbMedBtn.Text = "Speed Boost (medium): ON"
+		sbMedConn = trollingHB:Connect(function()
+			if not sbMedEnabled then return end
+			local tr = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+			local pr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not tr or not pr then
+				sbMedEnabled = false
+				if sbMedConn then sbMedConn:Disconnect() end
+				sbMedConn = nil
+				sbMedBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				sbMedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+				sbMedBtn.Text = "Speed Boost (medium): OFF"
+				return
+			end
+			pr.CFrame = tr.CFrame * CFrame.new(0, 0.7, 0.5)
+			pr.Velocity = Vector3.zero
+			sethiddenproperty(pr, "PhysicsRepRootPart", tr)
+		end)
+	else
+		if sbMedConn then sbMedConn:Disconnect() end
+		sbMedEnabled = false; sbMedConn = nil
+		sbMedBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		sbMedBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		sbMedBtn.Text = "Speed Boost (medium): OFF"
+	end
+end)
+
+-- Speed Boost (fast)
+local sbFastBtn = createButton("SpeedBoostFastButton", "Speed Boost (fast): OFF", 296)
+sbFastBtn.MouseButton1Click:Connect(function()
+	if not sbFastEnabled then
+		local target = getTrollingTarget()
+		if not target then return end
+		sbFastEnabled = true
+		sbFastBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		sbFastBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		sbFastBtn.Text = "Speed Boost (fast): ON"
+		sbFastConn = trollingHB:Connect(function()
+			if not sbFastEnabled then return end
+			local tr = target.Character and target.Character:FindFirstChild("HumanoidRootPart")
+			local pr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not tr or not pr then
+				sbFastEnabled = false
+				if sbFastConn then sbFastConn:Disconnect() end
+				sbFastConn = nil
+				sbFastBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				sbFastBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+				sbFastBtn.Text = "Speed Boost (fast): OFF"
+				return
+			end
+			pr.CFrame = tr.CFrame * CFrame.new(0, 0.7, 0.35)
+			pr.Velocity = Vector3.zero
+			sethiddenproperty(pr, "PhysicsRepRootPart", tr)
+		end)
+	else
+		if sbFastConn then sbFastConn:Disconnect() end
+		sbFastEnabled = false; sbFastConn = nil
+		sbFastBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		sbFastBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		sbFastBtn.Text = "Speed Boost (fast): OFF"
+	end
+end)
+
+-- Jerk Off
+local jerkOffBtn = createButton("JerkOffButton", "Jerk Off", 297)
+jerkOffBtn.MouseButton1Click:Connect(function()
+	loadstring(game:HttpGet("https://pastefy.app/YZoglOyJ/raw"))()
+end)
+
+-- Punch Fling
+local punchFlingBtn = createButton("PunchFlingButton", "Punch Fling", 298)
+punchFlingBtn.MouseButton1Click:Connect(function()
+	loadstring(game:HttpGet('https://raw.githubusercontent.com/fedoratums/Base-Script/Base-Script/fedoratum%20punch%20fling', true))()
+end)
+
+-- Fake Knife
+local fakeKnifeEnabled = false
+local fakeKnifeConn = nil
+local fakeKnifeBtn = createButton("FakeKnifeButton", "Fake Knife: OFF", 299)
+fakeKnifeBtn.MouseButton1Click:Connect(function()
+	if not fakeKnifeEnabled then
+		fakeKnifeEnabled = true
+		fakeKnifeBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		fakeKnifeBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		fakeKnifeBtn.Text = "Fake Knife: ON"
+		local Players = game:GetService('Players')
+		local RunService = game:GetService('RunService')
+		local LocalPlayer = Players.LocalPlayer
+		fakeKnifeConn = RunService.RenderStepped:Connect(function()
+			if not fakeKnifeEnabled then return end
+			for _, player in pairs(Players:GetChildren()) do
+				if player ~= LocalPlayer and player.Character then
+					local knife = player.Character:FindFirstChild('Knife')
+						or player.Backpack:FindFirstChild('Knife')
+					if knife then
+						if not LocalPlayer.Backpack:FindFirstChild('Knife')
+							and not LocalPlayer.Character:FindFirstChild('Knife') then
+							local clonedKnife = knife:Clone()
+							clonedKnife.Parent = LocalPlayer.Backpack
+						end
+					end
+				end
+			end
+		end)
+	else
+		if fakeKnifeConn then fakeKnifeConn:Disconnect() end
+		fakeKnifeEnabled = false; fakeKnifeConn = nil
+		fakeKnifeBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		fakeKnifeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		fakeKnifeBtn.Text = "Fake Knife: OFF"
+	end
+end)
+
+-- Face Changer
+local faceChangerBtn = createButton("FaceChangerButton", "Face Changer", 300)
+faceChangerBtn.MouseButton1Click:Connect(function()
+	loadstring(game:HttpGet('https://raw.githubusercontent.com/Gazer-Ha/Gaze-stuff/refs/heads/main/Mood'))()
+end)
+
+currentCategory = "Utilities"
+local resetPlayerRow = Instance.new("Frame")
+resetPlayerRow.Name = "ResetPlayerRow"
+resetPlayerRow.Size = UDim2.new(1, 0, 0, 42)
+resetPlayerRow.BackgroundTransparency = 1
+resetPlayerRow.LayoutOrder = 115.1
+resetPlayerRow.Parent = categoryFrames["Utilities"]
+
+local resetPlayerBtn = Instance.new("TextButton")
+resetPlayerBtn.Name = "ResetPlayerButton"
+resetPlayerBtn.Size = UDim2.new(1, -140, 1, 0)
+resetPlayerBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+resetPlayerBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+resetPlayerBtn.Text = "Reset Player"
+resetPlayerBtn.Font = Enum.Font.SourceSansBold
+resetPlayerBtn.TextSize = 14
+resetPlayerBtn.Parent = resetPlayerRow
+
+local resetPlayerBtnCorner = Instance.new("UICorner")
+resetPlayerBtnCorner.CornerRadius = UDim.new(0, 6)
+resetPlayerBtnCorner.Parent = resetPlayerBtn
+
+local resetPlayerInput = Instance.new("TextBox")
+resetPlayerInput.Name = "ResetPlayerInput"
+resetPlayerInput.Size = UDim2.new(0, 134, 1, 0)
+resetPlayerInput.Position = UDim2.new(1, -134, 0, 0)
+resetPlayerInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+resetPlayerInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+resetPlayerInput.PlaceholderText = "Name"
+resetPlayerInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+resetPlayerInput.Text = ""
+resetPlayerInput.Font = Enum.Font.SourceSansBold
+resetPlayerInput.TextSize = 13
+resetPlayerInput.ClearTextOnFocus = false
+resetPlayerInput.Parent = resetPlayerRow
+
+local resetPlayerInputCorner = Instance.new("UICorner")
+resetPlayerInputCorner.CornerRadius = UDim.new(0, 6)
+resetPlayerInputCorner.Parent = resetPlayerInput
+
+resetPlayerInput.FocusLost:Connect(function()
+	nanFlingTargetName = resetPlayerInput.Text
+end)
+
+resetPlayerBtn.MouseButton1Click:Connect(function()
+	nanFlingTargetName = resetPlayerInput.Text
+	executeNanFling()
+end)
+
+function executeNanFlingEveryone()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player then
+			local char = plr.Character
+			if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
+				nanFlingTargetName = plr.Name
+				executeNanFling()
+				task.wait(0.7)
+			end
+		end
+	end
+end
+
+local resetEveryoneBtn = createButton("ResetEveryoneButton", "Reset Everyone", 115.2)
+resetEveryoneBtn.MouseButton1Click:Connect(function()
+	executeNanFlingEveryone()
+end)
+
+local resetSheriffBtn = createButton("ResetSheriffButton", "Reset Sheriff/Hero", 115.3)
+resetSheriffBtn.MouseButton1Click:Connect(function()
+	executeNanFlingByRole("Sheriff")
+end)
+
+local resetMurdererBtn = createButton("ResetMurdererButton", "Reset Murderer", 115.4)
+resetMurdererBtn.MouseButton1Click:Connect(function()
+	executeNanFlingByRole("Murderer")
+end)
+
+autoResetPlayerEnabled = false
+
+function toggleAutoResetPlayer()
+	autoResetPlayerEnabled = not autoResetPlayerEnabled
+	if autoResetPlayerEnabled then
+		task.spawn(function()
+			while autoResetPlayerEnabled do
+				nanFlingTargetName = resetPlayerInput.Text
+				if nanFlingTargetName ~= "" then
+					executeNanFling()
+				end
+				task.wait(0.3)
+			end
+		end)
+	end
+end
+
+autoResetPlayerBtn = createButton("AutoResetPlayerButton", "Auto Reset Player: OFF", 115.5)
+autoResetPlayerBtn.MouseButton1Click:Connect(function()
+	toggleAutoResetPlayer()
+	setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF")
+	setExtractedBtnState("Auto Reset Player", autoResetPlayerEnabled)
+end)
+
+autoResetEveryoneEnabled = false
+
+function toggleAutoResetEveryone()
+	autoResetEveryoneEnabled = not autoResetEveryoneEnabled
+	if autoResetEveryoneEnabled then
+		task.spawn(function()
+			while autoResetEveryoneEnabled do
+				executeNanFlingEveryone()
+				task.wait(0.3)
+			end
+		end)
+	end
+end
+
+autoResetEveryoneBtn = createButton("AutoResetEveryoneButton", "Auto Reset Everyone: OFF", 115.6)
+autoResetEveryoneBtn.MouseButton1Click:Connect(function()
+	toggleAutoResetEveryone()
+	setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF")
+	setExtractedBtnState("Auto Reset Everyone", autoResetEveryoneEnabled)
+end)
+
+autoResetSheriffEnabled = false
+
+function toggleAutoResetSheriff()
+	autoResetSheriffEnabled = not autoResetSheriffEnabled
+	if autoResetSheriffEnabled then
+		task.spawn(function()
+			while autoResetSheriffEnabled do
+				executeNanFlingByRole("Sheriff")
+				task.wait(0.3)
+			end
+		end)
+	end
+end
+
+autoResetSheriffBtn = createButton("AutoResetSheriffButton", "Auto Reset Sheriff/Hero: OFF", 115.7)
+autoResetSheriffBtn.MouseButton1Click:Connect(function()
+	toggleAutoResetSheriff()
+	setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF")
+	setExtractedBtnState("Auto Reset Sheriff/Hero", autoResetSheriffEnabled)
+end)
+
+autoResetMurdererEnabled = false
+
+function toggleAutoResetMurderer()
+	autoResetMurdererEnabled = not autoResetMurdererEnabled
+	if autoResetMurdererEnabled then
+		task.spawn(function()
+			while autoResetMurdererEnabled do
+				executeNanFlingByRole("Murderer")
+				task.wait(0.3)
+			end
+		end)
+	end
+end
+
+autoResetMurdererBtn = createButton("AutoResetMurdererButton", "Auto Reset Murderer: OFF", 115.8)
+autoResetMurdererBtn.MouseButton1Click:Connect(function()
+	toggleAutoResetMurderer()
+	setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF")
+	setExtractedBtnState("Auto Reset Murderer", autoResetMurdererEnabled)
+end)
+
+currentCategory = "Combat"
 btn.autoGrabGun = createButton("AutoGrabGunButton", "AutoGrab Gun: OFF", 207)
 btn.autoGrabGun.MouseButton1Click:Connect(function()
 	toggleAutoGrabGun()
@@ -3288,8 +4149,11 @@ function enableGunAura()
 	end))
 
 	-- Главный цикл проверки расстояния
+local _gunAuraFrame = 0
 	table.insert(gunAuraConnections, RunService.Heartbeat:Connect(function()
 		if not gunAuraEnabled then return end
+		_gunAuraFrame = _gunAuraFrame + 1
+		if _gunAuraFrame % 2 ~= 0 then return end
 		if isPlayerMurderer() then return end
 		local root = gunAuraGetRoot()
 		if not root then return end
@@ -3438,7 +4302,7 @@ function enableAutoDeleteCoins()
 
 	task.spawn(function()
 		while autoDeleteCoinsEnabled do
-			task.wait(5)
+			task.wait(8)
 			if autoDeleteCoinsEnabled then
 				fullCoinScan()
 			end
@@ -3510,12 +4374,32 @@ function tpGetRoles()
 	end
 end
 
+-- Мгновенная телепортация к CFrame
+local function doInstantTp(myHrp, myChar, targetCF)
+	myHrp.CFrame = targetCF
+	myChar:SetPrimaryPartCFrame(targetCF)
+	myHrp.AssemblyLinearVelocity = Vector3.zero
+	myHrp.AssemblyAngularVelocity = Vector3.zero
+	-- Фиксируем на 2 кадра чтоб физика не откинула
+	local n = 0
+	local fixConn
+	fixConn = RunService.Heartbeat:Connect(function()
+		n = n + 1
+		myHrp.CFrame = targetCF
+		myHrp.AssemblyLinearVelocity = Vector3.zero
+		if n >= 2 then fixConn:Disconnect() end
+	end)
+end
+
 function tpToRole(roleName)
 	tpGetRoles()
 	if not tpRoles then
 		notify("Error", "Could not get roles", 2)
 		return
 	end
+
+	local lastTarget = nil
+	local lastName = nil
 
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= player then
@@ -3532,35 +4416,38 @@ function tpToRole(roleName)
 				end
 
 				if isTarget then
-					local char = plr.Character
-					local hrp = char and char:FindFirstChild("HumanoidRootPart")
-					local myChar = player.Character
-					local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-
-					if hrp and myHrp then
-						local targetCF = hrp.CFrame * CFrame.new(0, 0, 3)
-						-- Многократная телепортация для гарантии
-						for i = 1, 10 do
-							myHrp.CFrame = targetCF
-							myChar:SetPrimaryPartCFrame(targetCF)
-							myHrp.Velocity = Vector3.new(0, 0, 0)
-							myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-							myHrp.RotVelocity = Vector3.new(0, 0, 0)
-						end
-						-- Фиксируем позицию через Heartbeat на 1 кадр
-						local fixConn
-						fixConn = RunService.Heartbeat:Connect(function()
-							myHrp.CFrame = targetCF
-							myHrp.Velocity = Vector3.new(0, 0, 0)
-							myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
-							fixConn:Disconnect()
-						end)
-						notify("Teleported", "TP to " .. roleName .. ": " .. plr.Name, 2)
-					end
-					return
+					lastTarget = plr
+					lastName = plr.Name
 				end
 			end
 		end
+	end
+
+	if lastTarget then
+		local char = lastTarget.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		local myChar = player.Character
+		local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+
+		if hrp and myHrp then
+			local targetCF = hrp.CFrame * CFrame.new(0, 0, 3)
+			for i = 1, 10 do
+				myHrp.CFrame = targetCF
+				myChar:SetPrimaryPartCFrame(targetCF)
+				myHrp.Velocity = Vector3.new(0, 0, 0)
+				myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				myHrp.RotVelocity = Vector3.new(0, 0, 0)
+			end
+			local fixConn
+			fixConn = RunService.Heartbeat:Connect(function()
+				myHrp.CFrame = targetCF
+				myHrp.Velocity = Vector3.new(0, 0, 0)
+				myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				fixConn:Disconnect()
+			end)
+			notify("Teleported", "TP to " .. roleName .. ": " .. lastName, 2)
+		end
+		return
 	end
 
 	notify("Error", "No " .. roleName .. " found", 2)
@@ -3722,55 +4609,12 @@ end)
 
 btn.tpSheriff = createButton("TpSheriffButton", "TP to Sheriff", 114)
 btn.tpSheriff.MouseButton1Click:Connect(function()
-	tpGetRoles()
-	if not tpRoles then
-		notify("Error", "Could not get roles", 2)
-		return
-	end
+	tpToRole("Sheriff")
+end)
 
-	-- Сначала ищем Hero
-	local hasHero = false
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= player then
-			local data = tpRoles[plr.Name]
-			if data and data.Role == "Hero" then
-				-- Проверяем что герой жив
-				local char = plr.Character
-				local hum = char and char:FindFirstChild("Humanoid")
-				if char and char:FindFirstChild("HumanoidRootPart") then
-					hasHero = true
-					break
-				end
-			end
-		end
-	end
-
-	if hasHero then
-		tpToRole("Hero")
-		return
-	end
-
-	-- Потом ищем Sheriff (живого)
-	local hasSheriff = false
-	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= player then
-			local data = tpRoles[plr.Name]
-			if data and (data.Role == "Sheriff" or data.HasGun) then
-				local char = plr.Character
-				local hum = char and char:FindFirstChild("Humanoid")
-				if char and char:FindFirstChild("HumanoidRootPart") then
-					hasSheriff = true
-					break
-				end
-			end
-		end
-	end
-
-	if hasSheriff then
-		tpToRole("Sheriff")
-	else
-		notify("Error", "No Sheriff or Hero found", 2)
-	end
+btn.tpHero = createButton("TpHeroButton", "TP to Hero", 114.5)
+btn.tpHero.MouseButton1Click:Connect(function()
+	tpToRole("Hero")
 end)
 
 btn.tpMurderer = createButton("TpMurdererButton", "TP to Murderer", 115)
@@ -3885,7 +4729,7 @@ function toggleAutoTp()
 		autoTpConnection = RunService.Heartbeat:Connect(function()
 			if not autoTpEnabled then return end
 			autoTpFrame = autoTpFrame + 1
-			if autoTpFrame % 30 ~= 0 then return end
+			if autoTpFrame % 45 ~= 0 then return end
 			local murdererPos = getMurdererPosition()
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
@@ -3949,6 +4793,21 @@ end)
 btn.tradeHelper = createButton("TradeHelperButton", "Trade Helper", 116)
 btn.tradeHelper.MouseButton1Click:Connect(function()
 	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/zxcgfbhrefgdfsdfg/refs/heads/main/asrdgfdsg"))()
+end)
+
+function executeAntiBang()
+	local hrp = game.Players.LocalPlayer.Character.HumanoidRootPart
+	workspace.FallenPartsDestroyHeight = -1000
+	local lastCFrame = hrp.CFrame
+	hrp.CFrame = CFrame.new(Vector3.new(0, -500, 0))
+	wait(0.7)
+	hrp.CFrame = lastCFrame
+	workspace.FallenPartsDestroyHeight = -500
+end
+
+antiBangButton = createButton("AntiBangButton", "Anti-Bang", 116.1)
+antiBangButton.MouseButton1Click:Connect(function()
+	executeAntiBang()
 end)
 
 btn.zombieBtn = createButton("ZombieButton", "Zombie Tryhard", 116.5)
@@ -4134,7 +4993,7 @@ function enableAutoDeleteCorpses()
 	-- Периодическая проверка + чистка хитбоксов
 	task.spawn(function()
 		while autoDeleteCorpsesEnabled do
-			task.wait(3)
+			task.wait(5)
 			if autoDeleteCorpsesEnabled then
 				for _, obj in ipairs(Workspace:GetDescendants()) do
 					if obj.Name == "Raggy" then
@@ -4414,7 +5273,7 @@ end)
 -- Отслеживание подбора GunDrop
 task.spawn(function()
 	while true do
-		task.wait(0.3)
+		task.wait(0.5)
 		if not gameNotifEnabled then continue end
 
 		local currentGuns = {}
@@ -4681,6 +5540,13 @@ rangeInputBox.FocusLost:Connect(function()
 	else
 		rangeInputBox.Text = tostring(range)
 	end
+end)
+
+airStrafeButton = createButton("AirStrafeButton", "Air Strafe: OFF", 209.5)
+airStrafeButton.MouseButton1Click:Connect(function()
+	toggleAirStrafe()
+	setToggleState(airStrafeButton, airStrafeEnabled, "Air Strafe: ON", "Air Strafe: OFF")
+	setExtractedBtnState("Air Strafe", airStrafeEnabled)
 end)
 
 
@@ -5063,6 +5929,27 @@ local bindableFeatures = {
 	end},
 	{name = "Anti-Aim", defaultKey = nil, callback = function()
 		cycleMode()
+	end},
+	{name = "Auto Dodge Knife", defaultKey = nil, callback = function()
+		toggleAutoDodge()
+		setToggleState(autoDodgeButton, autoDodgeEnabled, "Auto Dodge Knife: ON", "Auto Dodge Knife: OFF")
+	end},
+	{name = "Reset Sheriff/Hero", defaultKey = nil, callback = function()
+		executeNanFlingByRole("Sheriff")
+	end},
+	{name = "Reset Murderer", defaultKey = nil, callback = function()
+		executeNanFlingByRole("Murderer")
+	end},
+	{name = "Auto Reset Sheriff/Hero", defaultKey = nil, callback = function()
+		toggleAutoResetSheriff()
+		setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF")
+	end},
+	{name = "Auto Reset Murderer", defaultKey = nil, callback = function()
+		toggleAutoResetMurderer()
+		setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF")
+	end},
+	{name = "Anti-Bang", defaultKey = nil, callback = function()
+		executeAntiBang()
 	end},
 }
 
@@ -5510,6 +6397,7 @@ local function createTeamerPlayerButton(plr)
 		friendContainer.Name = "FriendContainer"
 		friendContainer.Size = UDim2.new(1, 0, 0, 0)
 		friendContainer.BackgroundTransparency = 1
+		friendContainer.AutomaticSize = Enum.AutomaticSize.Y
 		friendContainer.Parent = friendsScroll
 
 		local friendContainerLayout = Instance.new("UIListLayout")
@@ -5716,7 +6604,9 @@ local function createTeamerPlayerButton(plr)
 		end
 		addInfoLine("Account Age: " .. ageText)
 
-		local exactAgeLine = addInfoLine("Exact Age: N/A")
+		local exactAgeLine = addInfoLine("Current Age: N/A")
+		local avatarPriceLine = addInfoLine("Avatar Price: N/A")
+		local positionLine = addInfoLine("Player Position: N/A")
 
 		-- Живые лейблы скорости/прыжка
 		local speedLine  = addInfoLine("Walk Speed: N/A")
@@ -5755,7 +6645,7 @@ local function createTeamerPlayerButton(plr)
 
 		task.spawn(function()
 			while teamerLoopAlive do
-				task.wait(0.1)
+				task.wait(0.15)
 				local char = plr.Character
 				if char then
 					local hum  = char:FindFirstChildOfClass("Humanoid")
@@ -5781,10 +6671,19 @@ local function createTeamerPlayerButton(plr)
 					local h = math.floor((diff % 86400) / 3600)
 					local mn = math.floor((diff % 3600) / 60)
 					local s = diff % 60
-					exactAgeLine.Text = string.format("Exact Age: %dy, %dm, %dd, %dh, %dm, %ds", y, m, d, h, mn, s)
+					exactAgeLine.Text = string.format("Current Age: %dy, %dm, %dd, %dh, %dm, %ds", y, m, d, h, mn, s)
+				if positionLine and positionLine.Parent and char then
+					local root = char:FindFirstChild("HumanoidRootPart")
+					if root then
+						local p = root.Position
+						positionLine.Text = string.format("Player Position: %.1f, %.1f, %.1f", p.X, p.Y, p.Z)
+					end
+				end
 				end
 			end
 		end)
+
+		fetchAvatarPriceAsync(plr.UserId, avatarPriceLine)
 
 		popupGui.Destroying:Connect(function()
 			teamerLoopAlive = false
@@ -5873,7 +6772,7 @@ createSection("Main", 700)
 
 local mainProfileFrame = Instance.new("Frame")
 mainProfileFrame.Name = "MainProfileFrame"
-mainProfileFrame.Size = UDim2.new(1, 0, 0, 300)
+mainProfileFrame.Size = UDim2.new(1, 0, 0, 360)
 mainProfileFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 mainProfileFrame.BorderSizePixel = 0
 mainProfileFrame.LayoutOrder = 701
@@ -5900,6 +6799,78 @@ coroutine.wrap(function()
 	mainAvatar.Image = thumb
 end)()
 
+function fetchAvatarPriceAsync(userId, label)
+	task.spawn(function()
+		local total = 0
+		local found = false
+
+		-- Method 1: currently-wearing items via MarketplaceService
+		local ok, result = pcall(function()
+			return (syn or _G).request({
+				Url = "https://avatar.roblox.com/v1/users/" .. userId .. "/currently-wearing",
+				Method = "GET"
+			})
+		end)
+		if not (ok and result and result.StatusCode == 200) then
+			ok, result = pcall(function()
+				return game:HttpGetAsync("https://avatar.roblox.com/v1/users/" .. userId .. "/currently-wearing")
+			end)
+		end
+		if ok and result then
+			local body = result
+			if type(result) == "table" and result.Body then
+				body = result.Body
+			end
+			local ok2, data = pcall(function()
+				return game:GetService("HttpService"):JSONDecode(body)
+			end)
+			if ok2 and data and data.assetIds then
+				for _, aid in ipairs(data.assetIds) do
+					local s, info = pcall(function()
+						return game:GetService("MarketplaceService"):GetProductInfo(aid)
+					end)
+					if s and info and info.PriceInRobux ~= nil then
+						total = total + math.max(info.PriceInRobux, 0)
+						found = true
+					end
+				end
+			end
+		end
+
+		-- Method 2: collectibles RAP
+		local ok3, result3 = pcall(function()
+			return (syn or _G).request({
+				Url = "https://inventory.roblox.com/v1/users/" .. userId .. "/assets/collectibles?sortOrder=Asc&limit=100",
+				Method = "GET"
+			})
+		end)
+		if not (ok3 and result3 and result3.StatusCode == 200) then
+			ok3, result3 = pcall(function()
+				return game:HttpGetAsync("https://inventory.roblox.com/v1/users/" .. userId .. "/assets/collectibles?sortOrder=Asc&limit=100")
+			end)
+		end
+		if ok3 and result3 then
+			local body3 = result3
+			if type(result3) == "table" and result3.Body then
+				body3 = result3.Body
+			end
+			local ok4, inv = pcall(function()
+				return game:GetService("HttpService"):JSONDecode(body3)
+			end)
+			if ok4 and inv and inv.data then
+				for _, item in ipairs(inv.data) do
+					if item.recentAveragePrice and item.recentAveragePrice > 0 then
+						total = total + item.recentAveragePrice
+						found = true
+					end
+				end
+			end
+		end
+
+		label.Text = "Avatar Price: " .. (found and tostring(total) .. " R$" or "N/A")
+	end)
+end
+
 local function createProfileLabel(text, yPos)
 	local lbl = Instance.new("TextLabel")
 	lbl.Size = UDim2.new(1, -110, 0, 18)
@@ -5914,15 +6885,24 @@ local function createProfileLabel(text, yPos)
 	return lbl
 end
 
-createProfileLabel("Subscription: WIN-X Premium", 10)
+local currentPlaceLabel = createProfileLabel("Current Place: Loading...", 10)
+coroutine.wrap(function()
+	local suc, info = pcall(function()
+		return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
+	end)
+	if suc and info and info.Name then
+		currentPlaceLabel.Text = "Current Place: " .. info.Name
+	end
+end)()
 createProfileLabel("Discord: Verified", 32)
-createProfileLabel("Role: Owner & Developer", 54)
+createProfileLabel("Subscription: WIN-X Premium & Star+", 76)
+createProfileLabel("Roles: Owner & Developer", 54)
 
-createProfileLabel("Display Name: " .. player.DisplayName, 76)
-createProfileLabel("Username: " .. player.Name, 98)
-createProfileLabel("User ID: " .. player.UserId, 120)
+createProfileLabel("Display Name: " .. player.DisplayName, 98)
+createProfileLabel("Username: " .. player.Name, 120)
+createProfileLabel("User ID: " .. player.UserId, 142)
 
-local regDateLabel = createProfileLabel("Registered: Loading...", 142)
+local regDateLabel = createProfileLabel("Registered: Loading...", 164)
 local mainCreationTime = os.time() - player.AccountAge * 86400
 coroutine.wrap(function()
 	local function calcRegDate(accountAge)
@@ -5989,14 +6969,16 @@ local ageText = player.AccountAge .. " days"
 if years > 0 or months > 0 or days > 0 then
 	ageText = ageText .. " (" .. years .. "y, " .. months .. "m, " .. days .. "d)"
 end
-createProfileLabel("Account Age: " .. ageText, 164)
+createProfileLabel("Account Age: " .. ageText, 186)
 
-local exactAgeLabel = createProfileLabel("Exact Age: N/A", 186)
+local exactAgeLabel = createProfileLabel("Current Age: N/A", 208)
+local avatarPriceLabel = createProfileLabel("Avatar Price: N/A", 230)
 
-local speedLabel = createProfileLabel("Walk Speed: N/A", 208)
-local jumpPowerLabel = createProfileLabel("Jump Power: N/A", 230)
-local healthLabel = createProfileLabel("Health: N/A", 252)
-local gravityLabel = createProfileLabel("Gravity: N/A", 274)
+local positionLabel = createProfileLabel("Player Position: N/A", 252)
+local speedLabel = createProfileLabel("Walk Speed: N/A", 274)
+local jumpPowerLabel = createProfileLabel("Jump Power: N/A", 296)
+local healthLabel = createProfileLabel("Health: N/A", 318)
+local gravityLabel = createProfileLabel("Gravity: N/A", 340)
 
 local function updatePlayerStats()
 	local char = player.Character
@@ -6048,7 +7030,7 @@ end)
 
 task.spawn(function()
 	while true do
-		task.wait(0.1)
+		task.wait(0.15)
 		local char = player.Character
 		if char then
 			local hum = char:FindFirstChildOfClass("Humanoid")
@@ -6058,6 +7040,8 @@ task.spawn(function()
 				local horizSpeed = math.floor(math.sqrt(vel.X * vel.X + vel.Z * vel.Z) + 0.5)
 				speedLabel.Text = "Walk Speed: " .. horizSpeed
 				healthLabel.Text = "Health: " .. math.floor(hum.Health) .. "/" .. hum.MaxHealth
+				local pos = root.Position
+				positionLabel.Text = string.format("Player Position: %.1f, %.1f, %.1f", pos.X, pos.Y, pos.Z)
 			end
 		end
 	end
@@ -6075,9 +7059,11 @@ task.spawn(function()
 		local h = math.floor((diff % 86400) / 3600)
 		local mn = math.floor((diff % 3600) / 60)
 		local s = diff % 60
-		exactAgeLabel.Text = string.format("Exact Age: %dy, %dm, %dd, %dh, %dm, %ds", y, m, d, h, mn, s)
+		exactAgeLabel.Text = string.format("Current Age: %dy, %dm, %dd, %dh, %dm, %ds", y, m, d, h, mn, s)
 	end
 end)
+
+fetchAvatarPriceAsync(player.UserId, avatarPriceLabel)
 
 -- FPS / Ping display
 local fpsPingFrame = Instance.new("Frame")
@@ -6117,46 +7103,117 @@ pingLabel.Parent = fpsPingFrame
 local displayedFPS = 0
 local displayedPing = 0
 local lastTime = tick()
+local lastFPSInt = -1
+local lastPingInt = -1
 local lastFPSText = ""
 local lastPingText = ""
 
 extractedButtons = {}
 
+local _fpsFrame = 0
 RunService.RenderStepped:Connect(function()
 	local currentTime = tick()
 	local fps = 1 / (currentTime - lastTime)
 	lastTime = currentTime
-	local ping = player:GetNetworkPing() * 1000
-
 	displayedFPS = displayedFPS + (fps - displayedFPS) * 0.1
+
+	_fpsFrame = _fpsFrame + 1
+	-- Обновляем пинг и метки только раз в 3 кадра (~20fps при 60fps)
+	if _fpsFrame % 3 ~= 0 then return end
+
+	local ping = player:GetNetworkPing() * 1000
 	displayedPing = displayedPing + (ping - displayedPing) * 0.1
 
 	local fpsInt = math.floor(displayedFPS)
 	local pingInt = math.floor(displayedPing)
-	local fpsStr = "FPS: " .. fpsInt
-	local pingStr = "PING: " .. pingInt
 
-	if fpsStr ~= lastFPSText then
-		lastFPSText = fpsStr
-		fpsLabel.Text = fpsStr
+	local fpsChanged = fpsInt ~= lastFPSInt
+	local pingChanged = pingInt ~= lastPingInt
+
+	if fpsChanged then
+		lastFPSInt = fpsInt
+		lastFPSText = "FPS: " .. fpsInt
+		fpsLabel.Text = lastFPSText
 	end
-	if pingStr ~= lastPingText then
-		lastPingText = pingStr
-		pingLabel.Text = pingStr
+	if pingChanged then
+		lastPingInt = pingInt
+		lastPingText = "PING: " .. pingInt
+		pingLabel.Text = lastPingText
 	end
 
-	local fpsData = extractedButtons["FPS"]
-	if fpsData and fpsData.popupBtn then
-		fpsData.popupBtn.Text = fpsStr
+	if fpsChanged or pingChanged then
+		local fpsData = extractedButtons["FPS"]
+		if fpsData and fpsData.popupBtn and fpsChanged then
+			fpsData.popupBtn.Text = lastFPSText
+		end
+		local pingData = extractedButtons["Ping"]
+		if pingData and pingData.popupBtn and pingChanged then
+			pingData.popupBtn.Text = lastPingText
+		end
+		local bothData = extractedButtons["FPS+Ping"]
+		if bothData and bothData.fpsText and bothData.pingText then
+			if fpsChanged then bothData.fpsText.Text = lastFPSText end
+			if pingChanged then bothData.pingText.Text = lastPingText end
+		end
 	end
-	local pingData = extractedButtons["Ping"]
-	if pingData and pingData.popupBtn then
-		pingData.popupBtn.Text = pingStr
+end)
+
+-- FOV control
+local fovFrame = Instance.new("Frame")
+fovFrame.Name = "FOVFrame"
+fovFrame.Size = UDim2.new(1, 0, 0, 42)
+fovFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+fovFrame.BorderSizePixel = 0
+fovFrame.LayoutOrder = 703
+fovFrame.Parent = categoryFrames["Main"]
+
+local fovCorner = Instance.new("UICorner")
+fovCorner.CornerRadius = UDim.new(0, 8)
+fovCorner.Parent = fovFrame
+
+local fovLabel = Instance.new("TextLabel")
+fovLabel.Size = UDim2.new(0, 100, 1, 0)
+fovLabel.Position = UDim2.new(0, 10, 0, 0)
+fovLabel.BackgroundTransparency = 1
+fovLabel.Text = "FOV"
+fovLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovLabel.Font = Enum.Font.Gotham
+fovLabel.TextSize = 16
+fovLabel.TextXAlignment = Enum.TextXAlignment.Left
+fovLabel.Parent = fovFrame
+
+local fovInputBox = Instance.new("TextBox")
+fovInputBox.Size = UDim2.new(0, 60, 0, 28)
+fovInputBox.Position = UDim2.new(1, -72, 0.5, -14)
+fovInputBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+fovInputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+fovInputBox.Text = tostring(customFov)
+fovInputBox.PlaceholderText = "FOV"
+fovInputBox.Font = Enum.Font.SourceSansBold
+fovInputBox.TextSize = 15
+fovInputBox.ClearTextOnFocus = false
+fovInputBox.Parent = fovFrame
+
+local fovInputCorner = Instance.new("UICorner")
+fovInputCorner.CornerRadius = UDim.new(0, 6)
+fovInputCorner.Parent = fovInputBox
+
+fovInputBox.FocusLost:Connect(function()
+	local val = tonumber(fovInputBox.Text)
+	if val and val >= 30 and val <= 120 then
+		customFov = val
+	else
+		fovInputBox.Text = tostring(customFov)
 	end
-	local bothData = extractedButtons["FPS+Ping"]
-	if bothData and bothData.fpsText and bothData.pingText then
-		bothData.fpsText.Text = fpsStr
-		bothData.pingText.Text = pingStr
+end)
+
+local _lastAppliedFov = -1
+RunService.Heartbeat:Connect(function()
+	if customFov == _lastAppliedFov then return end
+	_lastAppliedFov = customFov
+	local cam = workspace.CurrentCamera
+	if cam then
+		cam.FieldOfView = customFov
 	end
 end)
 
@@ -6470,6 +7527,9 @@ local btnFeatures = {
 	{name = "Air Strafe",
 	 toggle = function() toggleAirStrafe(); setToggleState(airStrafeButton, airStrafeEnabled, "Air Strafe: ON", "Air Strafe: OFF"); setExtractedBtnState("Air Strafe", airStrafeEnabled) end,
 	 getState = function() return airStrafeEnabled end},
+	{name = "Auto Dodge Knife",
+	 toggle = function() toggleAutoDodge(); setToggleState(autoDodgeButton, autoDodgeEnabled, "Auto Dodge Knife: ON", "Auto Dodge Knife: OFF"); setExtractedBtnState("Auto Dodge Knife", autoDodgeEnabled) end,
+	 getState = function() return autoDodgeEnabled end},
 	{name = "Touch Fling",
 	 toggle = function() hiddenfling = not hiddenfling; setToggleState(touchFlingButton, hiddenfling, "Touch Fling: ON", "Touch Fling: OFF"); setExtractedBtnState("Touch Fling", hiddenfling); if hiddenfling then flingThread = coroutine.create(fling); coroutine.resume(flingThread) end end,
 	 getState = function() return hiddenfling end},
@@ -6498,8 +7558,32 @@ local btnFeatures = {
 	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then voidTpPreviousPos = h.CFrame; h.CFrame = CFrame.new(voidBaseplatePos.X, voidBaseplatePos.Y + 1, voidBaseplatePos.Z); notify("Teleported", "Teleported to Void Baseplate", 2) end end},
 	{name = "TP to Sheriff",
 	 toggle = function() tpToRole("Sheriff") end},
+	{name = "TP to Hero",
+	 toggle = function() tpToRole("Hero") end},
 	{name = "TP to Murderer",
 	 toggle = function() tpToRole("Murderer") end},
+	{name = "Reset Player",
+	 toggle = function() executeNanFling() end},
+	{name = "Reset Everyone",
+	 toggle = function() executeNanFlingEveryone() end},
+	{name = "Reset Sheriff/Hero",
+	 toggle = function() executeNanFlingByRole("Sheriff") end},
+	{name = "Reset Murderer",
+	 toggle = function() executeNanFlingByRole("Murderer") end},
+	{name = "Auto Reset Player",
+	 toggle = function() toggleAutoResetPlayer(); setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF"); setExtractedBtnState("Auto Reset Player", autoResetPlayerEnabled) end,
+	 getState = function() return autoResetPlayerEnabled end},
+	{name = "Auto Reset Everyone",
+	 toggle = function() toggleAutoResetEveryone(); setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF"); setExtractedBtnState("Auto Reset Everyone", autoResetEveryoneEnabled) end,
+	 getState = function() return autoResetEveryoneEnabled end},
+	{name = "Auto Reset Sheriff/Hero",
+	 toggle = function() toggleAutoResetSheriff(); setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF"); setExtractedBtnState("Auto Reset Sheriff/Hero", autoResetSheriffEnabled) end,
+	 getState = function() return autoResetSheriffEnabled end},
+	{name = "Auto Reset Murderer",
+	 toggle = function() toggleAutoResetMurderer(); setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF"); setExtractedBtnState("Auto Reset Murderer", autoResetMurdererEnabled) end,
+	 getState = function() return autoResetMurdererEnabled end},
+	{name = "Anti-Bang",
+	 toggle = function() executeAntiBang() end},
 	{name = "FPS",
 	 toggle = function() end},
 	{name = "Ping",
@@ -7041,6 +8125,12 @@ closeButton.MouseButton1Click:Connect(function()
 	if popupBtnGui then popupBtnGui:Destroy() end
 	if airStrafeConnection then airStrafeConnection:Disconnect() airStrafeConnection = nil end
 	if airStrafeInputConnection then airStrafeInputConnection:Disconnect() airStrafeInputConnection = nil end
+	if autoDodgeConnection then autoDodgeConnection:Disconnect() autoDodgeConnection = nil end
+	if nanFlingConnection then nanFlingConnection:Disconnect() nanFlingConnection = nil end
+	autoResetPlayerEnabled = false
+	autoResetEveryoneEnabled = false
+	autoResetSheriffEnabled = false
+	autoResetMurdererEnabled = false
 	if voidReturnConn then voidReturnConn:Disconnect() voidReturnConn = nil end
 	getgenv().AdrenalinWinLoaded = nil
 end)
@@ -7243,7 +8333,7 @@ end
 -- Периодическая проверка на всякий случай
 task.spawn(function()
 	while true do
-		task.wait(5)
+		task.wait(10)
 		removeGlitchProof()
 	end
 end)
@@ -7297,6 +8387,7 @@ local function restoreFullConfig()
 		if c.values.mainMenuHeight ~= nil then mainMenuHeight = c.values.mainMenuHeight end
 		if c.values.popupBtnWidth ~= nil then popupBtnWidth = c.values.popupBtnWidth end
 		if c.values.popupBtnHeight ~= nil then popupBtnHeight = c.values.popupBtnHeight end
+		if c.values.customFov then customFov = c.values.customFov end
 	end
 
 	-- Restore lock states
@@ -7417,6 +8508,9 @@ local function restoreFullConfig()
 	end
 	if popupHeightInput and c.values and c.values.popupBtnHeight ~= nil then
 		popupHeightInput.Text = tostring(c.values.popupBtnHeight)
+	end
+	if fovInputBox and c.values and c.values.customFov then
+		fovInputBox.Text = tostring(c.values.customFov)
 	end
 
 	-- Restore binds UI FIRST (before toggles, so saveConfig sees them)
@@ -7557,11 +8651,34 @@ local function restoreFullConfig()
 		autoTpEnabled = false; toggleAutoTp()
 		setExtractedBtnState("Auto TP", true)
 	end
+	if T.autoDodgeEnabled then
+		autoDodgeEnabled = false; toggleAutoDodge()
+		if autoDodgeButton then setToggleState(autoDodgeButton, true, "Auto Dodge Knife: ON", "Auto Dodge Knife: OFF") end
+		setExtractedBtnState("Auto Dodge Knife", true)
+	end
+	if T.autoResetPlayerEnabled then
+		autoResetPlayerEnabled = false; toggleAutoResetPlayer()
+		if autoResetPlayerBtn then setToggleState(autoResetPlayerBtn, true, "Auto Reset Player: ON", "Auto Reset Player: OFF") end
+		setExtractedBtnState("Auto Reset Player", true)
+	end
+	if T.autoResetEveryoneEnabled then
+		autoResetEveryoneEnabled = false; toggleAutoResetEveryone()
+		if autoResetEveryoneBtn then setToggleState(autoResetEveryoneBtn, true, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF") end
+		setExtractedBtnState("Auto Reset Everyone", true)
+	end
+	if T.autoResetSheriffEnabled then
+		autoResetSheriffEnabled = false; toggleAutoResetSheriff()
+		if autoResetSheriffBtn then setToggleState(autoResetSheriffBtn, true, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF") end
+		setExtractedBtnState("Auto Reset Sheriff/Hero", true)
+	end
+	if T.autoResetMurdererEnabled then
+		autoResetMurdererEnabled = false; toggleAutoResetMurderer()
+		if autoResetMurdererBtn then setToggleState(autoResetMurdererBtn, true, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF") end
+		setExtractedBtnState("Auto Reset Murderer", true)
+	end
 
 	updateAntiAimButtonVisual()
 end
 
-task.spawn(function()
-	task.wait(1)
-	restoreFullConfig()
-end)
+-- Config restore без задержки — UI уже готов к этому моменту
+task.defer(restoreFullConfig)
