@@ -3380,14 +3380,23 @@ function executeNanFlingByRole(roleName)
 		notify("Error", "Could not get roles", 2)
 		return
 	end
+	local function isAlive(name)
+		local plr = Players:FindFirstChild(name)
+		return plr and plr.Character and plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health > 0
+	end
+
 	if roleName == "Sheriff" then
 		local heroTarget, sheriffTarget = nil, nil
 		for name, data in pairs(result) do
 			if name ~= player.Name and not isPlayerWhitelisted(name) then
 				if data.Role == "Hero" or (data.HasGun and data.Role ~= "Murderer") then
-					if not heroTarget then heroTarget = name end
+					if not heroTarget or (not isAlive(heroTarget) and isAlive(name)) then
+						heroTarget = name
+					end
 				elseif data.Role == "Sheriff" then
-					if not sheriffTarget then sheriffTarget = name end
+					if not sheriffTarget or (not isAlive(sheriffTarget) and isAlive(name)) then
+						sheriffTarget = name
+					end
 				end
 			end
 		end
@@ -3398,12 +3407,20 @@ function executeNanFlingByRole(roleName)
 			return
 		end
 	elseif roleName == "Murderer" then
+		local aliveTarget = nil
 		for name, data in pairs(result) do
 			if data.Role == "Murderer" and name ~= player.Name and not isPlayerWhitelisted(name) then
-				nanFlingTargetName = name
-				executeNanFling()
-				return
+				if isAlive(name) then
+					aliveTarget = name
+					break
+				end
+				if not aliveTarget then aliveTarget = name end
 			end
+		end
+		if aliveTarget then
+			nanFlingTargetName = aliveTarget
+			executeNanFling()
+			return
 		end
 	end
 	notify("Error", "No " .. roleName .. " found", 2)
