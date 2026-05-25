@@ -7637,6 +7637,7 @@ lockDragBtn.MouseButton1Click:Connect(function()
 		lockDragBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		lockDragBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 	end
+	saveConfig()
 end)
 
 toggleDragLocked = false
@@ -7668,6 +7669,7 @@ toggleDragBtn.MouseButton1Click:Connect(function()
 		toggleDragBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		toggleDragBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 	end
+	saveConfig()
 end)
 
 local bgTranspRow = Instance.new("Frame")
