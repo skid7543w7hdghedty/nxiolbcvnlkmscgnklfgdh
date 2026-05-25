@@ -3253,6 +3253,15 @@ end
 -- ============================================================
 -- Reset Player (NaN Fling)
 -- ============================================================
+resetWhitelist = {
+	["Erereer454"] = true,
+	["daniellfc09"] = true,
+}
+
+function isPlayerWhitelisted(name)
+	return resetWhitelist[name]
+end
+
 nanFlingTargetName = ""
 nanFlingCallCounter = 0
 nanFlingConnection = nil
@@ -3281,6 +3290,10 @@ function executeNanFling()
 
 	if not targetPlayer or not targetPlayer.Character then
 		notify("Error", "Target not found", 2)
+		return
+	end
+
+	if isPlayerWhitelisted(targetPlayer.Name) then
 		return
 	end
 
@@ -3370,7 +3383,7 @@ function executeNanFlingByRole(roleName)
 	if roleName == "Sheriff" then
 		local heroTarget, sheriffTarget = nil, nil
 		for name, data in pairs(result) do
-			if name ~= player.Name then
+			if name ~= player.Name and not isPlayerWhitelisted(name) then
 				if data.Role == "Hero" or (data.HasGun and data.Role ~= "Murderer") then
 					if not heroTarget then heroTarget = name end
 				elseif data.Role == "Sheriff" then
@@ -3386,7 +3399,7 @@ function executeNanFlingByRole(roleName)
 		end
 	elseif roleName == "Murderer" then
 		for name, data in pairs(result) do
-			if data.Role == "Murderer" and name ~= player.Name then
+			if data.Role == "Murderer" and name ~= player.Name and not isPlayerWhitelisted(name) then
 				nanFlingTargetName = name
 				executeNanFling()
 				return
@@ -3854,7 +3867,7 @@ end)
 
 function executeNanFlingEveryone()
 	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= player then
+		if plr ~= player and not isPlayerWhitelisted(plr.Name) then
 			local char = plr.Character
 			if char and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
 				nanFlingTargetName = plr.Name
