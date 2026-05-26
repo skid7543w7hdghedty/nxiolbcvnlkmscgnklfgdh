@@ -3256,6 +3256,7 @@ end
 resetWhitelist = {
 	["Erereer454"] = true,
 	["daniellfc09"] = true,
+	["Zero_RuO"] = true,
 }
 
 function isPlayerWhitelisted(name)
