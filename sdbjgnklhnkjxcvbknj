@@ -1962,7 +1962,7 @@ animationButtons = {
 	81147896850705, "Asian Squat", 72007752012770, "Poop sniff", 90333292347820, "The Worm",
 	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 110146282544198, "Orange Justice",
 	108747312576405, "Les goooo", 93616720070707, "Omni Man",
-	99499783161907, "Aura farm", 114400428765989, "180В° Flip", 70432904702322, "Get skinwalked", 109873544976020, "Weird Spin",
+	99499783161907, "Aura farm", 114400428765989, "180° Flip", 70432904702322, "Get skinwalked", 109873544976020, "Weird Spin",
 	129537633250603, "It's Peanut Butter Jelly Time"
 }
 animationObject = Instance.new("Animation")
@@ -3569,7 +3569,7 @@ function autoGrabClaimDrop(drop)
 	if not autoGrabGunEnabled then return end
 	if autoGrabGunProcessed[drop] then return end
 	if not drop or not drop.Parent then return end
-	if cachedIsMurderer then return end  -- РёСЃРїРѕР»СЊР·СѓРµРј РєСЌС€ РЅР°РїСЂСЏРјСѓСЋ, Р±РµР· РІС‹Р·РѕРІР° С„СѓРЅРєС†РёРё
+	if cachedIsMurderer then return end
 	autoGrabGunProcessed[drop] = true
 
 	local char = player.Character
@@ -3579,7 +3579,6 @@ function autoGrabClaimDrop(drop)
 		return
 	end
 
-	-- РЎРѕР±РёСЂР°РµРј С‡Р°СЃС‚Рё РґСЂРѕРїР°
 	local parts = {}
 	if drop:IsA("BasePart") then
 		parts[1] = drop
@@ -3598,9 +3597,10 @@ function autoGrabClaimDrop(drop)
 		return
 	end
 
-	-- РќСѓР»РµРІР°СЏ С„РёР·РёРєР° + С‚РµР»РµРїРѕСЂС‚ Рє РёРіСЂРѕРєСѓ - Р±РµР· pcall РґР»СЏ СЃРєРѕСЂРѕСЃС‚Рё
 	local cf = root.CFrame
 	local zero = Vector3.zero
+
+	-- Instant zero-physics + teleport to player
 	for i = 1, #parts do
 		local part = parts[i]
 		part.CanCollide = false
@@ -3614,16 +3614,31 @@ function autoGrabClaimDrop(drop)
 		drop:PivotTo(cf)
 	end
 
-	-- firetouchinterest РЎР РђР-РЈ, РµС‰С‘ РґРѕ Р·Р°РїСѓСЃРєР° Heartbeat
+	-- First firetouchinterest burst immediately
 	for i = 1, #parts do
 		firetouchinterest(root, parts[i], 0)
 		firetouchinterest(root, parts[i], 1)
 	end
 
-	-- Р-Р°РїСѓСЃРєР°РµРј РјР°РіРЅРёС‚
+	-- Second burst on next engine frame via task.defer for guaranteed pickup
+	task.defer(function()
+		if not drop or not drop.Parent then return end
+		local freshRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not freshRoot then return end
+		local freshCf = freshRoot.CFrame
+		for i = 1, #parts do
+			local part = parts[i]
+			part.CFrame = freshCf
+			part.AssemblyLinearVelocity = zero
+			firetouchinterest(freshRoot, part, 0)
+			firetouchinterest(freshRoot, part, 1)
+		end
+	end)
+
+	-- Start magnet
 	autoGrabStartMagnet(drop)
 
-	-- Heartbeat: РґРµСЂР¶РёРј РґСЂРѕРї РЅР° РЅР°СЃ Рё Р±СЊС‘Рј firetouchinterest РєР°Р¶РґС‹Р№ РєР°РґСЂ
+	-- Heartbeat: keep drop on player and fire touch every frame
 	local touchConn
 	touchConn = RunService.Heartbeat:Connect(function()
 		if not drop or not drop.Parent then
@@ -3765,7 +3780,7 @@ function enableAutoGrabGun()
 	-- РџРµСЂРёРѕРґРёС‡РµСЃРєРѕРµ СЃРєР°РЅРёСЂРѕРІР°РЅРёРµ - РєР°Р¶РґС‹Рµ 5 СЃРµРєСѓРЅРґ (DescendantAdded Р»РѕРІРёС‚ РјРіРЅРѕРІРµРЅРЅРѕ)
 	task.spawn(function()
 		while autoGrabGunEnabled do
-			task.wait(5)
+			task.wait(1)
 			if autoGrabGunEnabled then
 				autoGrabScanWorkspace()
 			end
@@ -4699,6 +4714,7 @@ function enableGunAura()
 
 	gunAuraScanWorkspace()
 
+	-- On new GunDrop: immediately check if it spawned inside aura range
 	table.insert(gunAuraConnections, Workspace.DescendantAdded:Connect(function(obj)
 		if not gunAuraEnabled then return end
 		if obj:IsA("Model") and gunAuraTargets[obj.Name] then
@@ -4709,6 +4725,40 @@ function enableGunAura()
 			while parent and parent ~= Workspace do
 				if gunAuraTargets[parent.Name] then
 					gunAuraTrackDrop(obj)
+					-- Instant range check on spawn
+					local root = gunAuraGetRoot()
+					if root and not gunAuraMagnets[obj] then
+						local dropPos = gunAuraGetDropPosition(obj)
+						if dropPos and (root.Position - dropPos).Magnitude <= MAGNET_DISTANCE then
+							gunAuraTeleportDrop(obj, root.CFrame)
+							gunAuraStartMagnet(obj)
+							-- firetouchinterest burst on spawn-in-range
+							local parts = {}
+							if obj:IsA("BasePart") then
+								parts[1] = obj
+							elseif obj:IsA("Model") then
+								for _, v in ipairs(obj:GetDescendants()) do
+									if v:IsA("BasePart") then
+										parts[#parts+1] = v
+									end
+								end
+							end
+							for i = 1, #parts do
+								firetouchinterest(root, parts[i], 0)
+								firetouchinterest(root, parts[i], 1)
+							end
+							task.defer(function()
+								if not obj or not obj.Parent then return end
+								local r2 = gunAuraGetRoot()
+								if not r2 then return end
+								for i = 1, #parts do
+									parts[i].CFrame = r2.CFrame
+									firetouchinterest(r2, parts[i], 0)
+									firetouchinterest(r2, parts[i], 1)
+								end
+							end)
+						end
+					end
 					break
 				end
 				parent = parent.Parent
@@ -4728,12 +4778,9 @@ function enableGunAura()
 		gunAuraScanWorkspace()
 	end))
 
-	-- Р“Р»Р°РІРЅС‹Р№ С†РёРєР» РїСЂРѕРІРµСЂРєРё СЂР°СЃСЃС‚РѕСЏРЅРёСЏ
-_gunAuraFrame = 0
+	-- Main distance-check loop: every Heartbeat frame (no frame skip)
 	table.insert(gunAuraConnections, RunService.Heartbeat:Connect(function()
 		if not gunAuraEnabled then return end
-		_gunAuraFrame = _gunAuraFrame + 1
-		if _gunAuraFrame % 2 ~= 0 then return end
 		if isPlayerMurderer() then return end
 		local root = gunAuraGetRoot()
 		if not root then return end
@@ -4752,13 +4799,40 @@ _gunAuraFrame = 0
 			if distance <= MAGNET_DISTANCE then
 				gunAuraTeleportDrop(drop, cf)
 				gunAuraStartMagnet(drop)
+				-- firetouchinterest burst on entering range
+				local parts = {}
+				if drop:IsA("BasePart") then
+					parts[1] = drop
+				elseif drop:IsA("Model") then
+					for _, v in ipairs(drop:GetDescendants()) do
+						if v:IsA("BasePart") then parts[#parts+1] = v end
+					end
+				else
+					local p = drop:FindFirstChildWhichIsA("BasePart", true)
+					if p then parts[1] = p end
+				end
+				for i = 1, #parts do
+					firetouchinterest(root, parts[i], 0)
+					firetouchinterest(root, parts[i], 1)
+				end
+				task.defer(function()
+					if not drop or not drop.Parent then return end
+					local r2 = gunAuraGetRoot()
+					if not r2 then return end
+					for i = 1, #parts do
+						parts[i].CFrame = r2.CFrame
+						firetouchinterest(r2, parts[i], 0)
+						firetouchinterest(r2, parts[i], 1)
+					end
+				end)
 			end
 		end
 	end))
 
+	-- Periodic re-scan every 1 second (was 10)
 	task.spawn(function()
 		while gunAuraEnabled do
-			task.wait(10)
+			task.wait(1)
 			if gunAuraEnabled then
 				gunAuraScanWorkspace()
 			end
@@ -5390,12 +5464,17 @@ btn.zombieBtn.MouseButton1Click:Connect(function()
 	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/hrewjkhsdf"))()
 end)
 
-btn.crosshairBtn = createButton("CrosshairButton", "Adrenalin.win Crosshair", 117)
+btn.headlessBtn = createButton("HeadlessButton", "Headless & Korblox", 117)
+btn.headlessBtn.MouseButton1Click:Connect(function()
+	loadstring(game:HttpGet('https://pastebin.com/raw/ue2VfT6Z'))()
+end)
+
+btn.crosshairBtn = createButton("CrosshairButton", "Adrenalin.win Crosshair", 118)
 btn.crosshairBtn.MouseButton1Click:Connect(function()
 	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/bnbmbndf"))()
 end)
 
-btn.keystrokeBtn = createButton("KeystrokeButton", "Keystroke", 118)
+btn.keystrokeBtn = createButton("KeystrokeButton", "Keystroke", 119)
 btn.keystrokeBtn.MouseButton1Click:Connect(function()
 	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/vbgfsdahukjhsd"))()
 end)
