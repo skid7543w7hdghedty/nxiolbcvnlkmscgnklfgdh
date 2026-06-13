@@ -67,7 +67,7 @@ DesyncOffsetRange = 50
 -- positional offset so bullets/silent-aim miss even while you walk.
 DesyncSpinActive = false
 desyncSpinConnection = nil
-DesyncSpinOffset = 1
+DesyncSpinOffset = 3
 function RandomNumberRange(a)
 	return math.random(-a * 100, a * 100) / 100
 end
@@ -8756,7 +8756,7 @@ end)
 updateAntiAimButtonVisual()
 
 -- ============================================
--- SECTION 5: Multi Fling (LayoutOrder 500-599) - РџР Р•Р”РџРћРЎР›Р•Р”РќРР™
+-- SECTION 5: Multi Fling (LayoutOrder 500-599) - РџР Р•Р”РџРћРЎР›Р•Р”РќРР™
 -- ============================================
 currentCategory = "Utilities"
 createSection("Utilities", 114.5)
@@ -16743,7 +16743,7 @@ end
 hookDescendants(mainGui)
 -- popupBtnGui buttons are hooked individually in extraction code
 
--- Р Р°Р·СЂРµС€Р°РµРј СЃРєСЂРѕР»Р» РїРѕСЃР»Рµ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё
+-- Р Р°Р·СЂРµС€Р°РµРј СЃРєСЂРѕР»Р» РїРѕСЃР»Рµ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё
 task.wait(0.1)
 canScroll = true
 
