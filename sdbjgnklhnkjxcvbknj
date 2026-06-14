@@ -67,7 +67,7 @@ DesyncOffsetRange = 50
 -- positional offset so bullets/silent-aim miss even while you walk.
 DesyncSpinActive = false
 desyncSpinConnection = nil
-DesyncSpinOffset = 3
+DesyncSpinOffset = 1
 function RandomNumberRange(a)
 	return math.random(-a * 100, a * 100) / 100
 end
@@ -137,6 +137,9 @@ function saveConfig()
 	config.toggles.antiFlingEnabled = antiFlingEnabled
 	config.toggles.antiVoidEnabled = antiVoidEnabled
 	config.toggles.espEnabled = espEnabled
+	config.toggles.espLabelExploitersEnabled = espLabelExploitersEnabled
+	config.toggles.espLabelTeamersEnabled = espLabelTeamersEnabled
+	config.toggles.espLabelScammersEnabled = espLabelScammersEnabled
 	config.toggles.autoGrabGunEnabled = autoGrabGunEnabled
 	config.toggles.autoDodgeEnabled = autoDodgeEnabled
 	config.toggles.gunAuraEnabled = gunAuraEnabled
@@ -156,6 +159,8 @@ function saveConfig()
 	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled
 	config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
 
+	config.toggles.fakeDuckEnabled = fakeDuckEnabled
+	config.toggles.loopSpeedEnabled = loopSpeedEnabled
 	config.toggles.antiAimMode = currentMode
 	config.toggles.gameNotifEnabled = gameNotifEnabled
 	config.toggles.notifyOnExploiters = notifyOnExploiters
@@ -174,6 +179,17 @@ function saveConfig()
 	config.values.MAGNET_DISTANCE = MAGNET_DISTANCE
 	config.values.DesyncOffsetRange = DesyncOffsetRange
 	config.values.antiAimSpeed = antiAimSpeed
+	config.values.loopSpeedValue = loopSpeedValue
+	config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
+	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed
+	config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
+	config.pickerCollapsed = {}
+	if trollPicker then config.pickerCollapsed.Troll = trollPicker.collapsed end
+	if resetPicker then config.pickerCollapsed.Reset = resetPicker.collapsed end
+	if shootPicker then config.pickerCollapsed.Shoot = shootPicker.collapsed end
+	if killPicker then config.pickerCollapsed.Kill = killPicker.collapsed end
+	if watchMurdererPicker then config.pickerCollapsed.WatchMurderer = watchMurdererPicker.collapsed end
+	if watchSheriffPicker then config.pickerCollapsed.WatchSheriff = watchSheriffPicker.collapsed end
 	config.values.toggleBgTransparency = toggleBgTransparency
 	config.values.mainBgTransparency = mainBgTransparency
 	config.values.popupBgTransparency = popupBgTransparency
@@ -504,6 +520,34 @@ antiAimAnimObject = Instance.new("Animation")
 antiAimAnimTrack = nil
 antiAimSpeedInput = nil
 
+-- Fake Duck variables (independent anti-aim + speed glitch combo)
+fakeDuckEnabled = false
+fakeDuckAntiAimSpeed = 20
+fakeDuckSpeedValue = 110
+fakeDuckAntiAimConn = nil
+fakeDuckSpeedConn = nil
+fakeDuckSpeedDiedConn = nil
+fakeDuckYaw = nil
+fakeDuckRandTimer = 0
+fakeDuckButton = nil
+fakeDuckAimInput = nil
+fakeDuckSpdInput = nil
+
+-- LoopSpeed variables
+loopSpeedEnabled = false
+loopSpeedValue = 16
+loopSpeedConn = nil
+loopSpeedDiedConn = nil
+loopSpeedButton = nil
+loopSpeedInput = nil
+loopSpeedPreFakeDuck = nil
+
+-- Anti-Aim Speed Glitch variables (speed glitch that auto-activates with Anti-Aim)
+antiAimSpeedGlitchValue = 110
+antiAimSpeedGlitchConn = nil
+antiAimSpeedGlitchDiedConn = nil
+antiAimSpeedGlitchSpdInput = nil
+
 function antiAimIsActive()
 	return currentMode ~= 0
 end
@@ -532,6 +576,9 @@ function antiAimStep(dt)
 	local hrp = char:FindFirstChild("HumanoidRootPart")
 	local hum = char:FindFirstChild("Humanoid")
 	if not (hrp and hum and hum.Health > 0) then antiAimRealCF = nil return end
+
+	-- Disable AutoRotate so shift lock / first person can't override our rotation
+	hum.AutoRotate = false
 
 	local pos = hrp.Position
 
@@ -584,6 +631,15 @@ function stopAntiAim()
 		antiAimConnection:Disconnect()
 		antiAimConnection = nil
 	end
+	stopAntiAimSpeedGlitch()
+	-- Restore AutoRotate only if Fake Duck isn't also spinning
+	if not fakeDuckEnabled then
+		local c = player.Character
+		if c then
+			local h = c:FindFirstChildOfClass("Humanoid")
+			if h then h.AutoRotate = true end
+		end
+	end
 end
 
 function updateAntiAimButtonVisual()
@@ -607,12 +663,245 @@ function cycleMode()
 		antiAimYaw = nil
 		antiAimRandTimer = 0
 		antiAimEnsureConnection()
+		-- Auto-start speed glitch with Anti-Aim
+		setupAntiAimSpeedGlitch()
+		-- LoopSpeed integration: save current value, set to 10
+		if loopSpeedEnabled and loopSpeedPreFakeDuck == nil then
+			loopSpeedPreFakeDuck = loopSpeedValue
+			loopSpeedValue = 23
+			if loopSpeedInput then loopSpeedInput.Text = "23" end
+			setupLoopSpeed()
+		end
 	else
 		currentMode = 0
 		running = false
 		antiAimStopAnim()
+		if antiAimConnection then
+			antiAimConnection:Disconnect()
+			antiAimConnection = nil
+		end
+		antiAimRealCF = nil
+		-- Restore AutoRotate only if Fake Duck isn't also spinning
+		if not fakeDuckEnabled then
+			local c = player.Character
+			if c then
+				local h = c:FindFirstChildOfClass("Humanoid")
+				if h then h.AutoRotate = true end
+			end
+		end
+		-- Stop speed glitch
+		stopAntiAimSpeedGlitch()
+		-- LoopSpeed integration: restore previous value
+		if loopSpeedPreFakeDuck ~= nil and not fakeDuckEnabled then
+			loopSpeedValue = loopSpeedPreFakeDuck
+			loopSpeedPreFakeDuck = nil
+			if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end
+			if loopSpeedEnabled then setupLoopSpeed() end
+		end
 	end
 	updateAntiAimButtonVisual()
+end
+
+-- Fake Duck functions
+function fakeDuckAntiAimStep(dt)
+	local char = player.Character
+	if not char then return end
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	local hum = char:FindFirstChild("Humanoid")
+	if not (hrp and hum and hum.Health > 0) then return end
+
+	-- Disable AutoRotate so shift lock / first person can't override our rotation
+	hum.AutoRotate = false
+
+	local pos = hrp.Position
+	local cam = workspace.CurrentCamera
+	if cam then
+		local lv = cam.CFrame.LookVector
+		local flat = Vector3.new(lv.X, 0, lv.Z)
+		if flat.Magnitude > 0.01 then
+			antiAimRealCF = CFrame.lookAt(pos, pos + flat.Unit)
+		else
+			antiAimRealCF = CFrame.new(pos) * (hrp.CFrame - hrp.CFrame.Position)
+		end
+	else
+		antiAimRealCF = hrp.CFrame
+	end
+	fakeDuckRandTimer = fakeDuckRandTimer + (dt or 0)
+	local interval = 1 / math.max(1, fakeDuckAntiAimSpeed)
+	if (not fakeDuckYaw) or fakeDuckRandTimer >= interval then
+		fakeDuckRandTimer = 0
+		fakeDuckYaw = math.random() * math.pi * 2
+	end
+	hrp.CFrame = CFrame.new(pos) * CFrame.Angles(0, fakeDuckYaw, 0)
+	antiAimEnsureAnim(hum)
+end
+
+function setupFakeDuckSpeed()
+	if fakeDuckSpeedConn then fakeDuckSpeedConn:Disconnect(); fakeDuckSpeedConn = nil end
+	if fakeDuckSpeedDiedConn then fakeDuckSpeedDiedConn:Disconnect(); fakeDuckSpeedDiedConn = nil end
+	if not fakeDuckEnabled then return end
+	local char = player.Character
+	if not char then return end
+	local hum = char:FindFirstChild("Humanoid")
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not (hum and hrp) then return end
+	fakeDuckSpeedConn = RunService.Heartbeat:Connect(function(dt)
+		local c = player.Character
+		if not c then return end
+		local h = c:FindFirstChild("Humanoid")
+		local r = c:FindFirstChild("HumanoidRootPart")
+		if not (h and r) then return end
+		local state = h:GetState()
+		if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+			local moveDir = h.MoveDirection
+			if moveDir.Magnitude > 0 then
+				local extraSpeed = fakeDuckSpeedValue - h.WalkSpeed
+				if extraSpeed > 0 then
+					r.CFrame = r.CFrame + moveDir * extraSpeed * dt
+				end
+			end
+		end
+	end)
+	fakeDuckSpeedDiedConn = hum.Died:Connect(function()
+		if fakeDuckSpeedConn then fakeDuckSpeedConn:Disconnect(); fakeDuckSpeedConn = nil end
+		if fakeDuckSpeedDiedConn then fakeDuckSpeedDiedConn:Disconnect(); fakeDuckSpeedDiedConn = nil end
+	end)
+end
+
+function stopFakeDuck()
+	fakeDuckEnabled = false
+	antiAimStopAnim()
+	if fakeDuckAntiAimConn then fakeDuckAntiAimConn:Disconnect(); fakeDuckAntiAimConn = nil end
+	if fakeDuckSpeedConn then fakeDuckSpeedConn:Disconnect(); fakeDuckSpeedConn = nil end
+	if fakeDuckSpeedDiedConn then fakeDuckSpeedDiedConn:Disconnect(); fakeDuckSpeedDiedConn = nil end
+	-- Restore AutoRotate only if Anti-Aim isn't also spinning
+	if not antiAimIsActive() then
+		local c = player.Character
+		if c then
+			local h = c:FindFirstChildOfClass("Humanoid")
+			if h then h.AutoRotate = true end
+		end
+	end
+end
+
+function startFakeDuck()
+	fakeDuckEnabled = true
+	fakeDuckYaw = nil
+	fakeDuckRandTimer = 0
+	fakeDuckAntiAimConn = RunService.Heartbeat:Connect(function(dt)
+		if not fakeDuckEnabled then return end
+		pcall(fakeDuckAntiAimStep, dt)
+	end)
+	setupFakeDuckSpeed()
+end
+
+function toggleFakeDuck()
+	if fakeDuckEnabled then
+		stopFakeDuck()
+		-- Restore previous LoopSpeed value
+		if loopSpeedPreFakeDuck ~= nil then
+			loopSpeedValue = loopSpeedPreFakeDuck
+			loopSpeedPreFakeDuck = nil
+			if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end
+			if loopSpeedEnabled then setupLoopSpeed() end
+		end
+	else
+		-- Save current LoopSpeed and set to 10
+		if loopSpeedEnabled then
+			loopSpeedPreFakeDuck = loopSpeedValue
+			loopSpeedValue = 10
+			if loopSpeedInput then loopSpeedInput.Text = "10" end
+			setupLoopSpeed()
+		end
+		startFakeDuck()
+	end
+	setToggleState(fakeDuckButton, fakeDuckEnabled, "Fake Duck: ON", "Fake Duck: OFF")
+	setExtractedBtnState("Fake Duck", fakeDuckEnabled)
+end
+
+-- LoopSpeed functions
+function setupLoopSpeed()
+	if loopSpeedConn then loopSpeedConn:Disconnect(); loopSpeedConn = nil end
+	if loopSpeedDiedConn then loopSpeedDiedConn:Disconnect(); loopSpeedDiedConn = nil end
+	if not loopSpeedEnabled then return end
+	local function applySpeed()
+		local c = player.Character
+		if not c then return end
+		local h = c:FindFirstChild("Humanoid")
+		if h and h.Health > 0 then
+			h.WalkSpeed = loopSpeedValue
+		end
+	end
+	loopSpeedConn = RunService.Heartbeat:Connect(applySpeed)
+	local char = player.Character
+	if char then
+		local hum = char:FindFirstChild("Humanoid")
+		if hum then
+			loopSpeedDiedConn = hum.Died:Connect(function()
+				-- keep running, will reapply on respawn
+			end)
+		end
+	end
+	applySpeed()
+end
+
+function stopLoopSpeed()
+	loopSpeedEnabled = false
+	if loopSpeedConn then loopSpeedConn:Disconnect(); loopSpeedConn = nil end
+	if loopSpeedDiedConn then loopSpeedDiedConn:Disconnect(); loopSpeedDiedConn = nil end
+end
+
+function startLoopSpeed()
+	loopSpeedEnabled = true
+	setupLoopSpeed()
+end
+
+function toggleLoopSpeed()
+	if loopSpeedEnabled then
+		stopLoopSpeed()
+	else
+		startLoopSpeed()
+	end
+	setToggleState(loopSpeedButton, loopSpeedEnabled, "LoopSpeed: ON", "LoopSpeed: OFF")
+	setExtractedBtnState("LoopSpeed", loopSpeedEnabled)
+end
+
+-- Anti-Aim Speed Glitch functions (mirrors Fake Duck speed glitch)
+function setupAntiAimSpeedGlitch()
+	if antiAimSpeedGlitchConn then antiAimSpeedGlitchConn:Disconnect(); antiAimSpeedGlitchConn = nil end
+	if antiAimSpeedGlitchDiedConn then antiAimSpeedGlitchDiedConn:Disconnect(); antiAimSpeedGlitchDiedConn = nil end
+	if not antiAimIsActive() then return end
+	local char = player.Character
+	if not char then return end
+	local hum = char:FindFirstChild("Humanoid")
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not (hum and hrp) then return end
+	antiAimSpeedGlitchConn = RunService.Heartbeat:Connect(function(dt)
+		local c = player.Character
+		if not c then return end
+		local h = c:FindFirstChild("Humanoid")
+		local r = c:FindFirstChild("HumanoidRootPart")
+		if not (h and r) then return end
+		local state = h:GetState()
+		if state == Enum.HumanoidStateType.Freefall or state == Enum.HumanoidStateType.Jumping then
+			local moveDir = h.MoveDirection
+			if moveDir.Magnitude > 0 then
+				local extraSpeed = antiAimSpeedGlitchValue - h.WalkSpeed
+				if extraSpeed > 0 then
+					r.CFrame = r.CFrame + moveDir * extraSpeed * dt
+				end
+			end
+		end
+	end)
+	antiAimSpeedGlitchDiedConn = hum.Died:Connect(function()
+		if antiAimSpeedGlitchConn then antiAimSpeedGlitchConn:Disconnect(); antiAimSpeedGlitchConn = nil end
+		if antiAimSpeedGlitchDiedConn then antiAimSpeedGlitchDiedConn:Disconnect(); antiAimSpeedGlitchDiedConn = nil end
+	end)
+end
+
+function stopAntiAimSpeedGlitch()
+	if antiAimSpeedGlitchConn then antiAimSpeedGlitchConn:Disconnect(); antiAimSpeedGlitchConn = nil end
+	if antiAimSpeedGlitchDiedConn then antiAimSpeedGlitchDiedConn:Disconnect(); antiAimSpeedGlitchDiedConn = nil end
 end
 
 -- Noclip variables
@@ -998,6 +1287,8 @@ function loadScammers()
 end
 
 loadScammers()
+
+if not gameNotifActiveNotifs then gameNotifActiveNotifs = {} end
 
 function exploiterNotifSend(title, plr, message)
 	if not gameNotifActiveNotifs then return end
@@ -1470,10 +1761,11 @@ end
 
 setupScammerTracking()
 
+_antiFlingLastSafePos = nil
+
 function antiFlingCollide(plr)
-	if plr and plr.Character and plr ~= game.Players.LocalPlayer then
-		local char = plr.Character
-		for i,v in pairs(char:GetChildren()) do
+	if plr and plr.Character and plr ~= player then
+		for _, v in pairs(plr.Character:GetChildren()) do
 			if v:IsA("BasePart") then
 				v.CanCollide = false
 				v.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
@@ -1484,12 +1776,42 @@ function antiFlingCollide(plr)
 	end
 end
 
-_antiFlingFrame = 0
 function antiFlingEnable()
-	_antiFlingFrame = _antiFlingFrame + 1
-	if _antiFlingFrame % 5 ~= 0 then return end
-	for i,v in pairs(reachCachePlayers) do
-		antiFlingCollide(v)
+	-- Skip Anti-Fling when our own features intentionally use high velocity / CFrame changes.
+	-- Without this bypass, Anti-Fling fights against Fling, Anti-Shoot, Desync, Touch Fling, etc.
+	if flingActive or hiddenfling or PastedSources or DesyncSpinActive or (nanFlingConnection ~= nil) then
+		_antiFlingLastSafePos = nil -- reset safe position so we don't snap back after feature ends
+		return
+	end
+
+	-- Self-protection: detect abnormal velocity and snap back
+	local char = player.Character
+	if char then
+		local hrp = char:FindFirstChild("HumanoidRootPart")
+		local hum = char:FindFirstChild("Humanoid")
+		if hrp and hum and hum.Health > 0 then
+			local vel = hrp.AssemblyLinearVelocity
+			local hSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+			hrp.AssemblyAngularVelocity = Vector3.new(0, hrp.AssemblyAngularVelocity.Y, 0)
+			if _antiFlingLastSafePos and hSpeed > 140 then
+				local delta = hrp.Position - _antiFlingLastSafePos.Position
+				local hDelta = Vector3.new(delta.X, 0, delta.Z).Magnitude
+				if hDelta > 8 then
+					hrp.CFrame = _antiFlingLastSafePos
+					hrp.AssemblyLinearVelocity = Vector3.new(0, math.min(vel.Y, 0), 0)
+					hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+				end
+			end
+			if hSpeed < 100 then
+				_antiFlingLastSafePos = hrp.CFrame
+			end
+		end
+	end
+	-- Other players: no collision, zero velocity (every frame)
+	for _, v in pairs(game.Players:GetPlayers()) do
+		if v ~= player then
+			antiFlingCollide(v)
+		end
 	end
 end
 
@@ -1525,6 +1847,14 @@ ESP_SHERIFF_COLOR  = Color3.fromRGB(0, 0, 255)
 ESP_HERO_COLOR     = Color3.fromRGB(255, 255, 0)
 ESP_GUN_COLOR      = Color3.fromRGB(170, 0, 255)
 ESP_DEAD_COLOR     = Color3.fromRGB(255, 255, 255)
+
+-- ESP label overlays for Exploiters/Teamers/Scammers
+espLabelExploitersEnabled = false
+espLabelTeamersEnabled = false
+espLabelScammersEnabled = false
+espLabelExploitersButton = nil
+espLabelTeamersButton = nil
+espLabelScammersButton = nil
 ESP_FILL_ALPHA     = 1
 ESP_OUTLINE_ALPHA  = 0
 
@@ -1844,7 +2174,18 @@ function espUpdatePlayer(plr)
 	local nameLabel, distLabel = espGetOrMakeBillboard(character)
 	if nameLabel then
 		nameLabel.TextColor3 = color
-		nameLabel.Text = plr.Name .. roleSuffix
+		-- Build extra tags for Exploiter/Teamer/Scammer ESP labels
+		local extraTags = ""
+		if espLabelExploitersEnabled and markedExploiters and markedExploiters[plr.Name] then
+			extraTags = extraTags .. " [EXPLOITER]"
+		end
+		if espLabelTeamersEnabled and markedTeamers and markedTeamers[plr.Name] then
+			extraTags = extraTags .. " [TEAMER]"
+		end
+		if espLabelScammersEnabled and markedScammers and markedScammers[plr.Name] then
+			extraTags = extraTags .. " [SCAMMER]"
+		end
+		nameLabel.Text = plr.Name .. roleSuffix .. extraTags
 	end
 	if distLabel then
 		distLabel.TextColor3 = color
@@ -2481,10 +2822,14 @@ function SkidFling(targetPlayer)
 	end
 
 	local function flingPos(basePart, offsetCFrame, angleCFrame)
-		rootPartLocal.CFrame = CFrame.new(basePart.Position) * offsetCFrame * angleCFrame
-		characterLocal:SetPrimaryPartCFrame(CFrame.new(basePart.Position) * offsetCFrame * angleCFrame)
+		local cf = CFrame.new(basePart.Position) * offsetCFrame * angleCFrame
+		rootPartLocal.CFrame = cf
+		characterLocal:SetPrimaryPartCFrame(cf)
 		rootPartLocal.Velocity = Vector3.new(9e7, 9e8, 9e7)
 		rootPartLocal.RotVelocity = Vector3.new(9e8, 9e8, 9e8)
+		rootPartLocal.AssemblyLinearVelocity = Vector3.new(9e7, 9e8, 9e7)
+		rootPartLocal.AssemblyAngularVelocity = Vector3.new(9e8, 9e8, 9e8)
+		pcall(sethiddenproperty, rootPartLocal, "PhysicsRepRootPart", basePart)
 	end
 
 	local function flingBasePart(basePart)
@@ -2535,12 +2880,14 @@ function SkidFling(targetPlayer)
 		bodyVelocity:Destroy()
 		humanoidLocal:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
 		Workspace.CurrentCamera.CameraSubject = humanoidLocal
+		pcall(sethiddenproperty, rootPartLocal, "PhysicsRepRootPart", rootPartLocal)
 		return notify("Error", targetPlayer.Name .. " has no valid parts", 2)
 	end
 
 	bodyVelocity:Destroy()
 	humanoidLocal:SetStateEnabled(Enum.HumanoidStateType.Seated, true)
 	Workspace.CurrentCamera.CameraSubject = humanoidLocal
+	pcall(sethiddenproperty, rootPartLocal, "PhysicsRepRootPart", rootPartLocal)
 
 	if getgenv().OldPos then
 		repeat
@@ -2551,6 +2898,8 @@ function SkidFling(targetPlayer)
 				if part:IsA("BasePart") then
 					part.Velocity = Vector3.zero
 					part.RotVelocity = Vector3.zero
+					part.AssemblyLinearVelocity = Vector3.zero
+					part.AssemblyAngularVelocity = Vector3.zero
 				end
 			end
 			task.wait()
@@ -2735,6 +3084,17 @@ function onCharacterAdded(char)
 			antiFlingConnection = nil
 		end
 		antiFlingConnection = RunService.Heartbeat:Connect(antiFlingEnable)
+	end
+	if fakeDuckEnabled then
+		antiAimAnimTrack = nil   -- force reload animation for new character
+		antiAimRealCF = nil
+		setupFakeDuckSpeed()
+	end
+	if antiAimIsActive() then
+		setupAntiAimSpeedGlitch()
+	end
+	if loopSpeedEnabled then
+		setupLoopSpeed()
 	end
 
 	-- РџРµСЂРµРїРѕРґРєР»СЋС‡РёС‚СЊ ESP РµСЃР»Рё РѕРЅ Р±С‹Р» РІРєР»СЋС‡РµРЅ (ESP СЃР°Рј РѕР±СЂР°Р±Р°С‚С‹РІР°РµС‚ CharacterAdded С‡РµСЂРµР· espHookPlayer)
@@ -3567,6 +3927,20 @@ local function resolveImageAsset(filePath)
 			return result
 		end
 	end
+	-- GIF fallback: copy bytes to .png and retry (some executors reject .gif extension)
+	if string.lower(filePath):match("%.gif$") then
+		local readOk, bytes = pcall(function() return readfile(filePath) end)
+		if readOk and bytes then
+			local pngPath = filePath:gsub("%.[gG][iI][fF]$", "_adrenalin_bg.png")
+			pcall(function() writefile(pngPath, bytes) end)
+			for _, fn in ipairs(funcs) do
+				local ok2, result2 = pcall(fn, pngPath)
+				if ok2 and result2 then
+					return result2
+				end
+			end
+		end
+	end
 	return nil
 end
 
@@ -4071,6 +4445,7 @@ function createPlayerPicker(opts)
 		searchBox.Visible = not state.collapsed
 		pickerFrame.Visible = not state.collapsed
 		collapseBtn.Text = state.collapsed and "+" or "-"
+		saveConfig()
 	end)
 
 	searchBox:GetPropertyChangedSignal("Text"):Connect(applyFilter)
@@ -5782,6 +6157,120 @@ autoResetMurdererBtn.MouseButton1Click:Connect(function()
 	toggleAutoResetMurderer()
 	setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF")
 	setExtractedBtnState("Auto Reset Murderer", autoResetMurdererEnabled)
+end)
+
+-- ============================================
+-- Role-based Auto-Reset — watch a player, auto-reset when they get a role
+-- ============================================
+-- Picker 1: when selected player becomes Murderer → Reset Sheriff/Hero
+watchMurdererPicker = createPlayerPicker({
+	parent = categoryFrames["Utilities"],
+	order = 115.85,
+	prefix = "WatchMurderer",
+	statusText = "Watch → Murderer ⇒ Reset Sheriff",
+	onSelect = function(name)
+		if name then
+			notify("Watch Role", "Watching " .. name .. " — will Reset Sheriff if they become Murderer", 3)
+		else
+			notify("Watch Role", "Cleared Murderer watch", 2)
+		end
+	end,
+})
+
+-- Picker 2: when selected player becomes Sheriff → Reset Murderer
+watchSheriffPicker = createPlayerPicker({
+	parent = categoryFrames["Utilities"],
+	order = 115.95,
+	prefix = "WatchSheriff",
+	statusText = "Watch → Sheriff ⇒ Reset Murderer",
+	onSelect = function(name)
+		if name then
+			notify("Watch Role", "Watching " .. name .. " — will Reset Murderer if they become Sheriff", 3)
+		else
+			notify("Watch Role", "Cleared Sheriff watch", 2)
+		end
+	end,
+})
+
+-- Monitoring loop: every 0.5s check roles and trigger auto-reset
+watchRoleLastMurderer = nil
+watchRoleLastSheriff = nil
+watchRoleLoopingSheriff = false  -- true while loop-resetting Sheriff
+watchRoleLoopingMurderer = false -- true while loop-resetting Murderer
+
+local function watchRoleIsTargetAlive(roleName)
+	local ok2, res2 = pcall(function()
+		return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+	end)
+	if not (ok2 and res2) then return false end
+	for name, data in pairs(res2) do
+		if data.Role == roleName then
+			local plr = Players:FindFirstChild(name)
+			if plr and plr.Character then
+				local hum = plr.Character:FindFirstChild("Humanoid")
+				return hum and hum.Health > 0
+			end
+			return false
+		end
+	end
+	return false
+end
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		local watchM = watchMurdererPicker and watchMurdererPicker.selectedName
+		local watchS = watchSheriffPicker and watchSheriffPicker.selectedName
+		if not watchM and not watchS then
+			watchRoleLastMurderer = nil
+			watchRoleLastSheriff = nil
+			continue
+		end
+		local ok, result = pcall(function()
+			return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+		end)
+		if not (ok and result) then continue end
+		local curMurderer = nil
+		local curSheriff = nil
+		for name, data in pairs(result) do
+			if data.Role == "Murderer" then curMurderer = name end
+			if data.Role == "Sheriff" then curSheriff = name end
+		end
+		-- Watch for Murderer: if selected player just became Murderer → loop Reset Sheriff until dead
+		if watchM and curMurderer == watchM and watchRoleLastMurderer ~= watchM and not watchRoleLoopingSheriff then
+			notify("Watch Role", watchM .. " became Murderer — loop resetting Sheriff!", 3)
+			watchRoleLoopingSheriff = true
+			task.spawn(function()
+				while watchRoleLoopingSheriff do
+					executeNanFlingByRole("Sheriff")
+					task.wait(2)
+					if not watchRoleIsTargetAlive("Sheriff") then
+						watchRoleLoopingSheriff = false
+						notify("Watch Role", "Sheriff/Hero is dead — stopped", 2)
+						break
+					end
+				end
+			end)
+		end
+		watchRoleLastMurderer = curMurderer
+		-- Watch for Sheriff: if selected player just became Sheriff → loop Reset Murderer until dead
+		if watchS and curSheriff == watchS and watchRoleLastSheriff ~= watchS and not watchRoleLoopingMurderer then
+			notify("Watch Role", watchS .. " became Sheriff — loop resetting Murderer!", 3)
+			watchRoleLoopingMurderer = true
+			task.spawn(function()
+				while watchRoleLoopingMurderer do
+					executeNanFlingByRole("Murderer")
+					task.wait(2)
+					if not watchRoleIsTargetAlive("Murderer") then
+						watchRoleLoopingMurderer = false
+						notify("Watch Role", "Murderer is dead — stopped", 2)
+						break
+					end
+				end
+			end)
+		end
+		watchRoleLastSheriff = curSheriff
+	end
 end)
 
 -- ============================================
@@ -7760,16 +8249,19 @@ aimTargetDot = nil
 
 AIM_CONFIG = {
 	pingScale          = 1.0,
-	extraLeadSec       = 0.0,
+	extraLeadSec       = 0.02,
 	renderDelta        = 1/60,
-	maxLeadSec         = 0.45,
-	aimPart            = "HumanoidRootPart",
+	maxLeadSec         = 0.55,
+	aimPart            = "Torso",          -- center mass for bigger hitbox
 	rolePollRate       = 0.25,
 	gravityComp        = true,
-	shotsPerClick      = 2,
+	shotsPerClick      = 4,                -- 4 shots per click for maximum hit chance
 	shotSpacing        = 0.0,
-	wallbangOriginDist = 3,
-	autoShotCooldown   = 0.40,
+	wallbangOriginDist = 1.5,              -- closer origin = more reliable piercer
+	autoShotCooldown   = 0.25,             -- faster auto shoot cycle
+	scatterRadius      = 1.0,             -- wider scatter = catch jumpy targets
+	scatterShots       = 3,               -- more scattered shots per main shot
+	jumpAimYBoost      = 1.2,             -- extra Y offset for jumping targets (studs)
 }
 
 -- Our own role cache (used only when the ESP cache espRoles is not available)
@@ -7829,8 +8321,10 @@ end
 local function aimPredictTorso(character)
 	if not character then return nil end
 	local root = character:FindFirstChild("HumanoidRootPart")
-	local aimPart = character:FindFirstChild(AIM_CONFIG.aimPart) or root
-		or character:FindFirstChild("UpperTorso") or character:FindFirstChild("Torso")
+	local aimPart = character:FindFirstChild(AIM_CONFIG.aimPart)
+		or character:FindFirstChild("Torso")
+		or character:FindFirstChild("UpperTorso")
+		or root
 	if not aimPart then return nil end
 	local velPart = root or aimPart
 	local v = velPart.AssemblyLinearVelocity
@@ -7839,13 +8333,40 @@ local function aimPredictTorso(character)
 	local px = p.X + v.X * t
 	local pz = p.Z + v.Z * t
 	local py
-	if AIM_CONFIG.gravityComp and aimIsAirborne(character) then
+	local airborne = AIM_CONFIG.gravityComp and aimIsAirborne(character)
+	if airborne then
 		local g = workspace.Gravity
 		py = p.Y + v.Y * t - 0.5 * g * t * t
+		-- Boost Y aim for jumping players: aim slightly higher to catch the arc
+		local boost = AIM_CONFIG.jumpAimYBoost or 0
+		if v.Y > 5 then
+			-- Jumping up: aim higher
+			py = py + boost
+		elseif v.Y < -5 then
+			-- Falling down: aim lower
+			py = py - boost * 0.5
+		end
 	else
 		py = p.Y + v.Y * t
 	end
 	return Vector3.new(px, py, pz)
+end
+
+-- Generate scatter positions around a predicted point for multi-hit
+local function aimScatterPositions(center)
+	local positions = {center}
+	local r = AIM_CONFIG.scatterRadius or 0
+	local n = AIM_CONFIG.scatterShots or 0
+	if r > 0 and n > 0 then
+		for i = 1, n do
+			local angle = math.random() * math.pi * 2
+			local dist = math.random() * r
+			local ox = math.cos(angle) * dist
+			local oz = math.sin(angle) * dist
+			table.insert(positions, center + Vector3.new(ox, 0, oz))
+		end
+	end
+	return positions
 end
 
 local function aimFindMurderer()
@@ -7935,10 +8456,14 @@ function aimFireGunAt(murderer)
 	local hitAny = false
 	for i = 1, shots do
 		if not aimMurdererAlive(murderer) then break end
-		local target = aimPredictTorso(murderer.Character)
-		if target then
-			local ok = aimFireOnce(shoot, target)
-			hitAny = hitAny or ok
+		local center = aimPredictTorso(murderer.Character)
+		if center then
+			-- Fire main shot + scatter shots for maximum hit probability
+			local targets = aimScatterPositions(center)
+			for _, tgt in ipairs(targets) do
+				local ok = aimFireOnce(shoot, tgt)
+				hitAny = hitAny or ok
+			end
 		end
 		if i < shots then
 			if AIM_CONFIG.shotSpacing and AIM_CONFIG.shotSpacing > 0 then
@@ -8156,7 +8681,11 @@ shootPlayerButton.MouseButton1Click:Connect(function()
 		game.StarterGui:SetCore("SendNotification", {Title = "Error", Text = "Target not available.", Duration = 2})
 		return
 	end
+	-- Temporarily force wallbang for Shoot Player (always through walls)
+	local wasWallbang = aimWallbangEnabled
+	aimWallbangEnabled = true
 	local ok = aimFireGunAt(target)
+	aimWallbangEnabled = wasWallbang
 	game.StarterGui:SetCore("SendNotification", {
 		Title = ok and "Shot Fired" or "Shot Failed",
 		Text = "Predicted shot on " .. target.Name,
@@ -8320,11 +8849,14 @@ function doKillEveryone(exceptFriends)
 	if not knife then return nil end
 	local targets = {}
 	for _, plr in ipairs(Players:GetPlayers()) do
-		if plr ~= player and not isPlayerWhitelisted(plr.Name) then
+		if plr ~= player then
 			local skip = false
 			if exceptFriends then
-				local okF, isF = pcall(function() return player:IsFriendsWith(plr.UserId) end)
-				if okF and isF then skip = true end
+				if isPlayerWhitelisted(plr.Name) then skip = true end
+				if not skip then
+					local okF, isF = pcall(function() return player:IsFriendsWith(plr.UserId) end)
+					if okF and isF then skip = true end
+				end
 			end
 			if not skip and plr.Character and killIsAlive(plr.Character) then
 				table.insert(targets, plr)
@@ -8411,10 +8943,33 @@ autoKillEveryoneEnabled = false
 autoKillEveryoneNoFriendsEnabled = false
 autoKillSheriffEnabled = false
 
+local function autoKillIsMurderer()
+	local ok, result = pcall(function()
+		return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+	end)
+	if ok and result then
+		local me = result[player.Name]
+		if me and me.Role == "Murderer" then return true end
+	end
+	return false
+end
+
+local function autoKillHasKnife()
+	local char = player.Character
+	if not char then return false end
+	if char:FindFirstChild("Knife") then return true end
+	local bp = player:FindFirstChild("Backpack")
+	if bp and bp:FindFirstChild("Knife") then return true end
+	return false
+end
+
 function startAutoKillEveryone()
 	task.spawn(function()
 		while autoKillEveryoneEnabled do
-			pcall(doKillEveryone, false)
+			-- Wait until we are Murderer AND have the knife (round started)
+			if autoKillIsMurderer() and autoKillHasKnife() then
+				pcall(doKillEveryone, false)
+			end
 			task.wait(0.1)
 		end
 	end)
@@ -8423,7 +8978,10 @@ end
 function startAutoKillEveryoneNoFriends()
 	task.spawn(function()
 		while autoKillEveryoneNoFriendsEnabled do
-			pcall(doKillEveryone, true)
+			-- Wait until we are Murderer AND have the knife (round started)
+			if autoKillIsMurderer() and autoKillHasKnife() then
+				pcall(doKillEveryone, true)
+			end
 			task.wait(0.1)
 		end
 	end)
@@ -8741,22 +9299,206 @@ antiVoidButton.MouseButton1Click:Connect(function()
 	setExtractedBtnState("Anti-Void", antiVoidEnabled)
 end)
 
-antiAimButton, antiAimSpeedInput = createDualRow("AntiAimButton", "Anti-Aim: OFF", "Speed", antiAimSpeed, 214)
-antiAimButton.MouseButton1Click:Connect(cycleMode)
-antiAimSpeedInput.FocusLost:Connect(function()
-	local v = tonumber(antiAimSpeedInput.Text)
-	if v and v > 0 then
-		antiAimSpeed = v
-		saveConfig()
-	else
-		antiAimSpeedInput.Text = tostring(antiAimSpeed)
-	end
-end)
+-- Anti-Aim UI (triple row: button + Speed input + Spd glitch input)
+do
+	local aaRow = Instance.new("Frame")
+	aaRow.Name = "AntiAimRow"
+	aaRow.Size = UDim2.new(1, 0, 0, 42)
+	aaRow.BackgroundTransparency = 1
+	aaRow.LayoutOrder = 214
+	if categoryFrames[currentCategory] then aaRow.Parent = categoryFrames[currentCategory] end
+
+	antiAimButton = Instance.new("TextButton")
+	antiAimButton.Name = "AntiAimButton"
+	antiAimButton.Size = UDim2.new(1, -136, 1, 0)
+	antiAimButton.BackgroundColor3 = btnBgColor
+	antiAimButton.TextColor3 = btnTextColor
+	antiAimButton.Text = "Anti-Aim: OFF"
+	antiAimButton.Font = Enum.Font.SourceSansBold
+	antiAimButton.TextSize = 15
+	antiAimButton.Parent = aaRow
+	Instance.new("UICorner", antiAimButton).CornerRadius = UDim.new(0, 6)
+
+	antiAimSpeedInput = Instance.new("TextBox")
+	antiAimSpeedInput.Name = "AntiAimSpeedInput"
+	antiAimSpeedInput.Size = UDim2.new(0, 62, 1, 0)
+	antiAimSpeedInput.Position = UDim2.new(1, -130, 0, 0)
+	antiAimSpeedInput.BackgroundColor3 = inputBgColor
+	antiAimSpeedInput.TextColor3 = inputTextColor
+	antiAimSpeedInput.PlaceholderText = "Aim"
+	antiAimSpeedInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	antiAimSpeedInput.Text = tostring(antiAimSpeed)
+	antiAimSpeedInput.Font = Enum.Font.SourceSansBold
+	antiAimSpeedInput.TextSize = 15
+	antiAimSpeedInput.ClearTextOnFocus = false
+	antiAimSpeedInput.Parent = aaRow
+	Instance.new("UICorner", antiAimSpeedInput).CornerRadius = UDim.new(0, 6)
+
+	antiAimSpeedGlitchSpdInput = Instance.new("TextBox")
+	antiAimSpeedGlitchSpdInput.Name = "AntiAimSpdInput"
+	antiAimSpeedGlitchSpdInput.Size = UDim2.new(0, 62, 1, 0)
+	antiAimSpeedGlitchSpdInput.Position = UDim2.new(1, -64, 0, 0)
+	antiAimSpeedGlitchSpdInput.BackgroundColor3 = inputBgColor
+	antiAimSpeedGlitchSpdInput.TextColor3 = inputTextColor
+	antiAimSpeedGlitchSpdInput.PlaceholderText = "Spd"
+	antiAimSpeedGlitchSpdInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	antiAimSpeedGlitchSpdInput.Text = tostring(antiAimSpeedGlitchValue)
+	antiAimSpeedGlitchSpdInput.Font = Enum.Font.SourceSansBold
+	antiAimSpeedGlitchSpdInput.TextSize = 15
+	antiAimSpeedGlitchSpdInput.ClearTextOnFocus = false
+	antiAimSpeedGlitchSpdInput.Parent = aaRow
+	Instance.new("UICorner", antiAimSpeedGlitchSpdInput).CornerRadius = UDim.new(0, 6)
+
+	antiAimButton.MouseButton1Click:Connect(cycleMode)
+	antiAimSpeedInput.FocusLost:Connect(function()
+		local v = tonumber(antiAimSpeedInput.Text)
+		if v and v > 0 then
+			antiAimSpeed = v
+			saveConfig()
+		else
+			antiAimSpeedInput.Text = tostring(antiAimSpeed)
+		end
+	end)
+	antiAimSpeedGlitchSpdInput.FocusLost:Connect(function()
+		local v = tonumber(antiAimSpeedGlitchSpdInput.Text)
+		if v and v > 0 then
+			antiAimSpeedGlitchValue = v
+			if antiAimIsActive() then setupAntiAimSpeedGlitch() end
+			saveConfig()
+		else
+			antiAimSpeedGlitchSpdInput.Text = tostring(antiAimSpeedGlitchValue)
+		end
+	end)
+end
 
 updateAntiAimButtonVisual()
 
+-- Fake Duck UI (triple row: button + 2 inputs)
+do
+	local fdRow = Instance.new("Frame")
+	fdRow.Name = "FakeDuckRow"
+	fdRow.Size = UDim2.new(1, 0, 0, 42)
+	fdRow.BackgroundTransparency = 1
+	fdRow.LayoutOrder = 215
+	if categoryFrames[currentCategory] then fdRow.Parent = categoryFrames[currentCategory] end
+
+	fakeDuckButton = Instance.new("TextButton")
+	fakeDuckButton.Name = "FakeDuckButton"
+	fakeDuckButton.Size = UDim2.new(1, -136, 1, 0)
+	fakeDuckButton.BackgroundColor3 = btnBgColor
+	fakeDuckButton.TextColor3 = btnTextColor
+	fakeDuckButton.Text = "Fake Duck: OFF"
+	fakeDuckButton.Font = Enum.Font.SourceSansBold
+	fakeDuckButton.TextSize = 15
+	fakeDuckButton.Parent = fdRow
+	Instance.new("UICorner", fakeDuckButton).CornerRadius = UDim.new(0, 6)
+
+	fakeDuckAimInput = Instance.new("TextBox")
+	fakeDuckAimInput.Name = "FakeDuckAimInput"
+	fakeDuckAimInput.Size = UDim2.new(0, 62, 1, 0)
+	fakeDuckAimInput.Position = UDim2.new(1, -130, 0, 0)
+	fakeDuckAimInput.BackgroundColor3 = inputBgColor
+	fakeDuckAimInput.TextColor3 = inputTextColor
+	fakeDuckAimInput.PlaceholderText = "Aim"
+	fakeDuckAimInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	fakeDuckAimInput.Text = tostring(fakeDuckAntiAimSpeed)
+	fakeDuckAimInput.Font = Enum.Font.SourceSansBold
+	fakeDuckAimInput.TextSize = 15
+	fakeDuckAimInput.ClearTextOnFocus = false
+	fakeDuckAimInput.Parent = fdRow
+	Instance.new("UICorner", fakeDuckAimInput).CornerRadius = UDim.new(0, 6)
+
+	fakeDuckSpdInput = Instance.new("TextBox")
+	fakeDuckSpdInput.Name = "FakeDuckSpdInput"
+	fakeDuckSpdInput.Size = UDim2.new(0, 62, 1, 0)
+	fakeDuckSpdInput.Position = UDim2.new(1, -64, 0, 0)
+	fakeDuckSpdInput.BackgroundColor3 = inputBgColor
+	fakeDuckSpdInput.TextColor3 = inputTextColor
+	fakeDuckSpdInput.PlaceholderText = "Spd"
+	fakeDuckSpdInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	fakeDuckSpdInput.Text = tostring(fakeDuckSpeedValue)
+	fakeDuckSpdInput.Font = Enum.Font.SourceSansBold
+	fakeDuckSpdInput.TextSize = 15
+	fakeDuckSpdInput.ClearTextOnFocus = false
+	fakeDuckSpdInput.Parent = fdRow
+	Instance.new("UICorner", fakeDuckSpdInput).CornerRadius = UDim.new(0, 6)
+
+	fakeDuckButton.MouseButton1Click:Connect(function()
+		toggleFakeDuck()
+	end)
+	fakeDuckAimInput.FocusLost:Connect(function()
+		local v = tonumber(fakeDuckAimInput.Text)
+		if v and v > 0 then
+			fakeDuckAntiAimSpeed = v
+			saveConfig()
+		else
+			fakeDuckAimInput.Text = tostring(fakeDuckAntiAimSpeed)
+		end
+	end)
+	fakeDuckSpdInput.FocusLost:Connect(function()
+		local v = tonumber(fakeDuckSpdInput.Text)
+		if v and v > 0 then
+			fakeDuckSpeedValue = v
+			if fakeDuckEnabled then setupFakeDuckSpeed() end
+			saveConfig()
+		else
+			fakeDuckSpdInput.Text = tostring(fakeDuckSpeedValue)
+		end
+	end)
+end
+
+-- LoopSpeed UI (button + input)
+do
+	local lsRow = Instance.new("Frame")
+	lsRow.Name = "LoopSpeedRow"
+	lsRow.Size = UDim2.new(1, 0, 0, 42)
+	lsRow.BackgroundTransparency = 1
+	lsRow.LayoutOrder = 216
+	if categoryFrames["Combat"] then lsRow.Parent = categoryFrames["Combat"] end
+
+	loopSpeedButton = Instance.new("TextButton")
+	loopSpeedButton.Name = "LoopSpeedButton"
+	loopSpeedButton.Size = UDim2.new(1, -70, 1, 0)
+	loopSpeedButton.BackgroundColor3 = btnBgColor
+	loopSpeedButton.TextColor3 = btnTextColor
+	loopSpeedButton.Text = "LoopSpeed: OFF"
+	loopSpeedButton.Font = Enum.Font.SourceSansBold
+	loopSpeedButton.TextSize = 15
+	loopSpeedButton.Parent = lsRow
+	Instance.new("UICorner", loopSpeedButton).CornerRadius = UDim.new(0, 6)
+
+	loopSpeedInput = Instance.new("TextBox")
+	loopSpeedInput.Name = "LoopSpeedInput"
+	loopSpeedInput.Size = UDim2.new(0, 62, 1, 0)
+	loopSpeedInput.Position = UDim2.new(1, -64, 0, 0)
+	loopSpeedInput.BackgroundColor3 = inputBgColor
+	loopSpeedInput.TextColor3 = inputTextColor
+	loopSpeedInput.PlaceholderText = "Spd"
+	loopSpeedInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	loopSpeedInput.Text = tostring(loopSpeedValue)
+	loopSpeedInput.Font = Enum.Font.SourceSansBold
+	loopSpeedInput.TextSize = 15
+	loopSpeedInput.ClearTextOnFocus = false
+	loopSpeedInput.Parent = lsRow
+	Instance.new("UICorner", loopSpeedInput).CornerRadius = UDim.new(0, 6)
+
+	loopSpeedButton.MouseButton1Click:Connect(function()
+		toggleLoopSpeed()
+	end)
+	loopSpeedInput.FocusLost:Connect(function()
+		local v = tonumber(loopSpeedInput.Text)
+		if v and v > 0 then
+			loopSpeedValue = v
+			if loopSpeedEnabled then setupLoopSpeed() end
+			saveConfig()
+		else
+			loopSpeedInput.Text = tostring(loopSpeedValue)
+		end
+	end)
+end
+
 -- ============================================
--- SECTION 5: Multi Fling (LayoutOrder 500-599) - РџР Р•Р”РџРћРЎР›Р•Р”РќРР™
+-- SECTION 5: Multi Fling (LayoutOrder 500-599) - РџР Р•Р”РџРћРЎР›Р•Р”РќРР™
 -- ============================================
 currentCategory = "Utilities"
 createSection("Utilities", 114.5)
@@ -9322,6 +10064,24 @@ notifyExploitersButton.Parent = categoryFrames["Exploiters"]
 notifyExploitersCorner = Instance.new("UICorner")
 notifyExploitersCorner.CornerRadius = UDim.new(0, 6)
 notifyExploitersCorner.Parent = notifyExploitersButton
+
+-- ESP Label for Exploiters
+espLabelExploitersButton = Instance.new("TextButton")
+espLabelExploitersButton.Name = "EspLabelExploitersButton"
+espLabelExploitersButton.Size = UDim2.new(1, 0, 0, 42)
+espLabelExploitersButton.BackgroundColor3 = btnBgColor
+espLabelExploitersButton.TextColor3 = btnTextColor
+espLabelExploitersButton.Text = "ESP Label: OFF"
+espLabelExploitersButton.Font = Enum.Font.SourceSansBold
+espLabelExploitersButton.TextSize = 16
+espLabelExploitersButton.LayoutOrder = 107
+espLabelExploitersButton.Parent = categoryFrames["Exploiters"]
+Instance.new("UICorner", espLabelExploitersButton).CornerRadius = UDim.new(0, 6)
+
+espLabelExploitersButton.MouseButton1Click:Connect(function()
+	espLabelExploitersEnabled = not espLabelExploitersEnabled
+	setToggleState(espLabelExploitersButton, espLabelExploitersEnabled, "ESP Label: ON", "ESP Label: OFF")
+end)
 
 -- Exploiter player list logic
 exploiterCheckboxes = {}
@@ -10376,6 +11136,24 @@ notifyScammersButton.Parent = categoryFrames["Scammers"]
 notifyScammersCorner = Instance.new("UICorner")
 notifyScammersCorner.CornerRadius = UDim.new(0, 6)
 notifyScammersCorner.Parent = notifyScammersButton
+
+-- ESP Label for Scammers
+espLabelScammersButton = Instance.new("TextButton")
+espLabelScammersButton.Name = "EspLabelScammersButton"
+espLabelScammersButton.Size = UDim2.new(1, 0, 0, 42)
+espLabelScammersButton.BackgroundColor3 = btnBgColor
+espLabelScammersButton.TextColor3 = btnTextColor
+espLabelScammersButton.Text = "ESP Label: OFF"
+espLabelScammersButton.Font = Enum.Font.SourceSansBold
+espLabelScammersButton.TextSize = 16
+espLabelScammersButton.LayoutOrder = 106
+espLabelScammersButton.Parent = categoryFrames["Scammers"]
+Instance.new("UICorner", espLabelScammersButton).CornerRadius = UDim.new(0, 6)
+
+espLabelScammersButton.MouseButton1Click:Connect(function()
+	espLabelScammersEnabled = not espLabelScammersEnabled
+	setToggleState(espLabelScammersButton, espLabelScammersEnabled, "ESP Label: ON", "ESP Label: OFF")
+end)
 
 -- Scammer player list logic
 scammerCheckboxes = {}
@@ -12087,6 +12865,12 @@ bindableFeatures = {
 		toggleAirStrafe()
 		setToggleState(airStrafeButton, airStrafeEnabled, "Air Strafe: ON", "Air Strafe: OFF")
 	end},
+	{name = "Fake Duck", defaultKey = nil, callback = function()
+		toggleFakeDuck()
+	end},
+	{name = "LoopSpeed", defaultKey = nil, callback = function()
+		toggleLoopSpeed()
+	end},
 	{name = "Anti-Aim", defaultKey = nil, callback = function()
 		cycleMode()
 	end},
@@ -13334,6 +14118,24 @@ notifyTeamersButton.Parent = categoryFrames["Teamers"]
 notifyTeamersCorner = Instance.new("UICorner")
 notifyTeamersCorner.CornerRadius = UDim.new(0, 6)
 notifyTeamersCorner.Parent = notifyTeamersButton
+
+-- ESP Label for Teamers
+espLabelTeamersButton = Instance.new("TextButton")
+espLabelTeamersButton.Name = "EspLabelTeamersButton"
+espLabelTeamersButton.Size = UDim2.new(1, 0, 0, 42)
+espLabelTeamersButton.BackgroundColor3 = btnBgColor
+espLabelTeamersButton.TextColor3 = btnTextColor
+espLabelTeamersButton.Text = "ESP Label: OFF"
+espLabelTeamersButton.Font = Enum.Font.SourceSansBold
+espLabelTeamersButton.TextSize = 16
+espLabelTeamersButton.LayoutOrder = 618
+espLabelTeamersButton.Parent = categoryFrames["Teamers"]
+Instance.new("UICorner", espLabelTeamersButton).CornerRadius = UDim.new(0, 6)
+
+espLabelTeamersButton.MouseButton1Click:Connect(function()
+	espLabelTeamersEnabled = not espLabelTeamersEnabled
+	setToggleState(espLabelTeamersButton, espLabelTeamersEnabled, "ESP Label: ON", "ESP Label: OFF")
+end)
 
 -- Teamer list functions
 function refreshTeamerList()
@@ -16108,6 +16910,12 @@ btnFeatures = {
 	 toggle = function() cycleMode(); local modeText = currentMode == 0 and "Anti-Aim: OFF" or "Anti-Aim: ON"; setExtractedBtnState("Anti-Aim", currentMode ~= 0, modeText) end,
 	 getState = function() return currentMode ~= 0 end,
 	 getStatusText = function() return currentMode == 0 and "Anti-Aim: OFF" or "Anti-Aim: ON" end},
+	{name = "Fake Duck",
+	 toggle = function() toggleFakeDuck() end,
+	 getState = function() return fakeDuckEnabled end},
+	{name = "LoopSpeed",
+	 toggle = function() toggleLoopSpeed() end,
+	 getState = function() return loopSpeedEnabled end},
 	{name = "TP to Lobby",
 	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(23, 505, -34); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end end},
 	{name = "TP to VoteMap",
@@ -16647,7 +17455,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		local POPUP_DRAG_THRESHOLD = 5
 
 		popupBtn.InputBegan:Connect(function(input)
-			if popupDragLocked or popupLocked then return end
+			if popupDragLocked or (popupLockBtn and popupLockBtn.Text == "L") then return end
 			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 				popupDragging = true
 				popupDidMove = false
@@ -16664,7 +17472,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		end)
 
 		local popupDragConn = UserInputService.InputChanged:Connect(function(input)
-			if popupDragLocked or popupLocked then return end
+			if popupDragLocked or (popupLockBtn and popupLockBtn.Text == "L") then return end
 			if input == popupDragInput and popupDragging then
 				local delta = input.Position - popupDragStart
 				if delta.Magnitude >= POPUP_DRAG_THRESHOLD then
@@ -16743,7 +17551,7 @@ end
 hookDescendants(mainGui)
 -- popupBtnGui buttons are hooked individually in extraction code
 
--- Р Р°Р·СЂРµС€Р°РµРј СЃРєСЂРѕР»Р» РїРѕСЃР»Рµ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё
+-- Р Р°Р·СЂРµС€Р°РµРј СЃРєСЂРѕР»Р» РїРѕСЃР»Рµ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё
 task.wait(0.1)
 canScroll = true
 
@@ -16783,6 +17591,10 @@ closeButton.MouseButton1Click:Connect(function()
 	autoResetEveryoneEnabled = false
 	autoResetSheriffEnabled = false
 	autoResetMurdererEnabled = false
+	watchRoleLastMurderer = nil
+	watchRoleLastSheriff = nil
+	watchRoleLoopingSheriff = false
+	watchRoleLoopingMurderer = false
 	if voidReturnConn then voidReturnConn:Disconnect() voidReturnConn = nil end
 	getgenv().AdrenalinWinLoaded = nil
 end)
@@ -17086,6 +17898,9 @@ function restoreFullConfig()
 	antiFlingEnabled = T.antiFlingEnabled or false
 	antiVoidEnabled = T.antiVoidEnabled or false
 	espEnabled = T.espEnabled or false
+	espLabelExploitersEnabled = T.espLabelExploitersEnabled or false
+	espLabelTeamersEnabled = T.espLabelTeamersEnabled or false
+	espLabelScammersEnabled = T.espLabelScammersEnabled or false
 	autoGrabGunEnabled = T.autoGrabGunEnabled or false
 	gunAuraEnabled = T.gunAuraEnabled or false
 	autoDeleteCoinsEnabled = T.autoDeleteCoinsEnabled or false
@@ -17093,6 +17908,8 @@ function restoreFullConfig()
 	autoDeleteCorpsesEnabled = T.autoDeleteCorpsesEnabled or false
 	hiddenfling = T.hiddenfling or false
 	currentMode = 0
+	fakeDuckEnabled = T.fakeDuckEnabled or false
+	loopSpeedEnabled = T.loopSpeedEnabled or false
 	gameNotifEnabled = T.gameNotifEnabled or false
 	notifyOnExploiters = T.notifyOnExploiters or false
 	notifyOnTeamers = T.notifyOnTeamers or false
@@ -17117,6 +17934,10 @@ function restoreFullConfig()
 		if c.values.MAGNET_DISTANCE then MAGNET_DISTANCE = c.values.MAGNET_DISTANCE end
 		if c.values.DesyncOffsetRange then DesyncOffsetRange = c.values.DesyncOffsetRange; if desyncOffsetInput then desyncOffsetInput.Text = tostring(DesyncOffsetRange) end end
 		if c.values.antiAimSpeed then antiAimSpeed = c.values.antiAimSpeed; if antiAimSpeedInput then antiAimSpeedInput.Text = tostring(antiAimSpeed) end end
+		if c.values.antiAimSpeedGlitchValue then antiAimSpeedGlitchValue = c.values.antiAimSpeedGlitchValue; if antiAimSpeedGlitchSpdInput then antiAimSpeedGlitchSpdInput.Text = tostring(antiAimSpeedGlitchValue) end end
+		if c.values.loopSpeedValue then loopSpeedValue = c.values.loopSpeedValue; if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end end
+		if c.values.fakeDuckAntiAimSpeed then fakeDuckAntiAimSpeed = c.values.fakeDuckAntiAimSpeed; if fakeDuckAimInput then fakeDuckAimInput.Text = tostring(fakeDuckAntiAimSpeed) end end
+		if c.values.fakeDuckSpeedValue then fakeDuckSpeedValue = c.values.fakeDuckSpeedValue; if fakeDuckSpdInput then fakeDuckSpdInput.Text = tostring(fakeDuckSpeedValue) end end
 		if c.values.toggleBgTransparency ~= nil then toggleBgTransparency = c.values.toggleBgTransparency end
 		if c.values.mainBgTransparency ~= nil then mainBgTransparency = c.values.mainBgTransparency end
 		if c.values.popupBgTransparency ~= nil then popupBgTransparency = c.values.popupBgTransparency end
@@ -17518,6 +18339,15 @@ function restoreFullConfig()
 		if antiFlingButton then setToggleState(antiFlingButton, true, "Anti-Fling: ON", "Anti-Fling: OFF") end
 		setExtractedBtnState("Anti-Fling", true)
 	end
+	if T.espLabelExploitersEnabled then
+		if espLabelExploitersButton then setToggleState(espLabelExploitersButton, true, "ESP Label: ON", "ESP Label: OFF") end
+	end
+	if T.espLabelTeamersEnabled then
+		if espLabelTeamersButton then setToggleState(espLabelTeamersButton, true, "ESP Label: ON", "ESP Label: OFF") end
+	end
+	if T.espLabelScammersEnabled then
+		if espLabelScammersButton then setToggleState(espLabelScammersButton, true, "ESP Label: ON", "ESP Label: OFF") end
+	end
 	if T.espEnabled then
 		espEnabled = false; toggleEsp()
 		if espButton then setToggleState(espButton, true, "Esp: ON", "Esp: OFF") end
@@ -17555,6 +18385,14 @@ function restoreFullConfig()
 	if T.antiAimMode and T.antiAimMode ~= 0 then
 		currentMode = 0
 		cycleMode()
+	end
+	if T.fakeDuckEnabled then
+		fakeDuckEnabled = false
+		toggleFakeDuck()
+	end
+	if T.loopSpeedEnabled then
+		loopSpeedEnabled = false
+		toggleLoopSpeed()
 	end
 	if T.gameNotifEnabled then
 		if btn.gameNotif then setToggleState(btn.gameNotif, true, "Notifications: ON", "Notifications: OFF") end
@@ -17646,6 +18484,25 @@ function restoreFullConfig()
 		startAutoKillSheriff()
 	end
 	updateAntiAimButtonVisual()
+
+	-- Restore picker collapse states
+	if c and c.pickerCollapsed then
+		local pickers = { Troll = trollPicker, Reset = resetPicker, Shoot = shootPicker, Kill = killPicker, WatchMurderer = watchMurdererPicker, WatchSheriff = watchSheriffPicker }
+		for key, picker in pairs(pickers) do
+			if picker and c.pickerCollapsed[key] ~= nil and c.pickerCollapsed[key] ~= picker.collapsed then
+				picker.collapsed = c.pickerCollapsed[key]
+				local titleBar = picker.statusLabel and picker.statusLabel.Parent
+				if titleBar then
+					local cb = titleBar:FindFirstChild(key .. "PickerCollapse")
+					local sb = titleBar.Parent:FindFirstChild(key .. "PickerSearch")
+					local pf = titleBar.Parent:FindFirstChild(key .. "PickerFrame")
+					if cb then cb.Text = picker.collapsed and "+" or "-" end
+					if sb then sb.Visible = not picker.collapsed end
+					if pf then pf.Visible = not picker.collapsed end
+				end
+			end
+		end
+	end
 end
 
 -- Config restore Р±РµР· Р·Р°РґРµСЂР¶РєРё - UI СѓР¶Рµ РіРѕС‚РѕРІ Рє СЌС‚РѕРјСѓ РјРѕРјРµРЅС‚Сѓ
