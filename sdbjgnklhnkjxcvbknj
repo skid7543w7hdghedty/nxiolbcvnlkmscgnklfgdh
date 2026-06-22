@@ -72,6 +72,23 @@ function RandomNumberRange(a)
 	return math.random(-a * 100, a * 100) / 100
 end
 
+-- Keeps the character's physics assembly AWAKE so per-frame position spoofs keep
+-- replicating to the server even while standing still (the post-update "idle sleep"
+-- stopped Desync/Anti-Shoot from working when not moving). To keep LOCAL movement
+-- 100% normal it only acts while you are IDLE (no movement input): when you actually
+-- walk, your real velocity already keeps the assembly awake, so we leave it untouched.
+-- While idle it applies a tiny linear velocity whose direction flips every frame
+-- (net displacement ~0, no drift) and zero angular velocity (no camera spin).
+_wakeFlip = false
+function keepAssemblyAwake(hrp, hum)
+	if not hrp then return end
+	if hum and hum.MoveDirection.Magnitude > 0.05 then return end -- you're moving -> stay fully normal
+	_wakeFlip = not _wakeFlip
+	local s = _wakeFlip and 1 or -1
+	hrp.AssemblyLinearVelocity = Vector3.new(s, 0, s)
+	hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+end
+
 -- ============================================
 -- Config system
 -- ============================================
@@ -168,6 +185,11 @@ function saveConfig()
 	config.toggles.notifyOnScammers = notifyOnScammers
 	config.toggles.hideButtonsEnabled = hideButtonsEnabled
 	config.toggles.notifyOnVoteStart = notifyOnVoteStart
+	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled
+	config.toggles.headlessKorbloxEnabled = headlessKorbloxEnabled
+	config.toggles.crosshairEnabled = crosshairEnabled
+	config.toggles.keystrokeEnabled = keystrokeEnabled
+	config.toggles.shadersEnabled = shadersEnabled
 
 	config.values.JUMP_BOOST_POWER = JUMP_BOOST_POWER
 	config.values.FAKE_SPEED_CFRAME_SPEED = FAKE_SPEED_CFRAME_SPEED
@@ -184,12 +206,27 @@ function saveConfig()
 	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed
 	config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
 	config.pickerCollapsed = {}
+	config.values.multiFlingCollapsed = multiFlingCollapsed or false
+	config.values.airStrafeMultiplier = airStrafeMultiplier
 	if trollPicker then config.pickerCollapsed.Troll = trollPicker.collapsed end
+
 	if resetPicker then config.pickerCollapsed.Reset = resetPicker.collapsed end
 	if shootPicker then config.pickerCollapsed.Shoot = shootPicker.collapsed end
-	if killPicker then config.pickerCollapsed.Kill = killPicker.collapsed end
-	if watchMurdererPicker then config.pickerCollapsed.WatchMurderer = watchMurdererPicker.collapsed end
-	if watchSheriffPicker then config.pickerCollapsed.WatchSheriff = watchSheriffPicker.collapsed end
+	if killPicker then
+		config.pickerCollapsed.Kill = killPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.Kill = killPicker.selectedNames
+	end
+	if watchMurdererPicker then
+		config.pickerCollapsed.WatchMurderer = watchMurdererPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.WatchMurderer = watchMurdererPicker.selectedNames
+	end
+	if watchSheriffPicker then
+		config.pickerCollapsed.WatchSheriff = watchSheriffPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.WatchSheriff = watchSheriffPicker.selectedNames
+	end
 	config.values.toggleBgTransparency = toggleBgTransparency
 	config.values.mainBgTransparency = mainBgTransparency
 	config.values.popupBgTransparency = popupBgTransparency
@@ -198,6 +235,8 @@ function saveConfig()
 	config.values.mainMenuHeight = mainMenuHeight
 	config.values.popupBtnWidth = popupBtnWidth
 	config.values.popupBtnHeight = popupBtnHeight
+	config.values.fpsPingBtnWidth = fpsPingBtnWidth
+	config.values.fpsPingBtnHeight = fpsPingBtnHeight
 	config.values.customFov = customFov
 	config.values.animationEnabled = animationEnabled
 	config.values.btnPressAnimationEnabled = btnPressAnimationEnabled
@@ -288,6 +327,10 @@ function saveConfig()
 		local p = toggleButton.Position
 		config.togglePos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}}
 	end
+	if keystrokeSavedPos then
+		local p = keystrokeSavedPos
+		config.keystrokePos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}}
+	end
 
 	if savedAvatars then
 		config.savedAvatars = savedAvatars
@@ -297,6 +340,12 @@ function saveConfig()
 	config.changerLastAvatarFields = changerLastAvatarFields
 	if savedSkyboxes then
 		config.savedSkyboxes = savedSkyboxes
+	end
+	config.bindToggleStates = {}
+	if bindToggleStates then
+		for name, state in pairs(bindToggleStates) do
+			config.bindToggleStates[name] = state
+		end
 	end
 	local encoded = game:GetService("HttpService"):JSONEncode(config)
 	task.defer(function()
@@ -1777,14 +1826,27 @@ function antiFlingCollide(plr)
 end
 
 function antiFlingEnable()
-	-- Skip Anti-Fling when our own features intentionally use high velocity / CFrame changes.
+	-- Skip Anti-Fling when OUR OWN features intentionally use high velocity / CFrame changes.
 	-- Without this bypass, Anti-Fling fights against Fling, Anti-Shoot, Desync, Touch Fling, etc.
-	if flingActive or hiddenfling or PastedSources or DesyncSpinActive or (nanFlingConnection ~= nil) then
+	if flingActive or loopFlingActive or hiddenfling or PastedSources or DesyncSpinActive or (nanFlingConnection ~= nil) then
 		_antiFlingLastSafePos = nil -- reset safe position so we don't snap back after feature ends
+		-- IMPORTANT: while our own Fling is running, give other players their physics back
+		-- so we can actually throw them. The per-frame loop below normally makes everyone
+		-- non-collidable + massless, which silently breaks the Utilities Fling.
+		for _, v in pairs(game.Players:GetPlayers()) do
+			if v ~= player and v.Character then
+				for _, b in pairs(v.Character:GetChildren()) do
+					if b:IsA("BasePart") then
+						b.CanCollide = true
+						b.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.3, 0.5, 1, 1)
+					end
+				end
+			end
+		end
 		return
 	end
 
-	-- Self-protection: detect abnormal velocity and snap back
+	-- Self-protection: make it impossible for another exploiter to move us at all.
 	local char = player.Character
 	if char then
 		local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -1792,22 +1854,23 @@ function antiFlingEnable()
 		if hrp and hum and hum.Health > 0 then
 			local vel = hrp.AssemblyLinearVelocity
 			local hSpeed = Vector3.new(vel.X, 0, vel.Z).Magnitude
+			-- Kill any tumbling spin (keep yaw so normal turning still works). This stops
+			-- spin-flings and avoids the broken Touch-Fling-style rotation entirely.
 			hrp.AssemblyAngularVelocity = Vector3.new(0, hrp.AssemblyAngularVelocity.Y, 0)
 			if _antiFlingLastSafePos and hSpeed > 140 then
-				local delta = hrp.Position - _antiFlingLastSafePos.Position
-				local hDelta = Vector3.new(delta.X, 0, delta.Z).Magnitude
-				if hDelta > 8 then
-					hrp.CFrame = _antiFlingLastSafePos
-					hrp.AssemblyLinearVelocity = Vector3.new(0, math.min(vel.Y, 0), 0)
-					hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-				end
-			end
-			if hSpeed < 100 then
+				-- External fling detected. Snap back INSTANTLY with no displacement tolerance,
+				-- so even an extremely aggressive fling cannot move us a single stud.
+				hrp.CFrame = _antiFlingLastSafePos
+				hrp.AssemblyLinearVelocity = Vector3.new(0, math.min(vel.Y, 0), 0)
+				hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+			elseif hSpeed < 100 then
+				-- Normal, self-controlled movement: remember this as the last safe position.
 				_antiFlingLastSafePos = hrp.CFrame
 			end
 		end
 	end
-	-- Other players: no collision, zero velocity (every frame)
+	-- Other players: no collision, zero velocity, massless (every frame). With no collision
+	-- and no mass a hostile fling part cannot transfer momentum to us, so we can't be pushed.
 	for _, v in pairs(game.Players:GetPlayers()) do
 		if v ~= player then
 			antiFlingCollide(v)
@@ -2634,11 +2697,82 @@ playingAnimationId = 0
 animationUiById = {}
 
 function notify(title, text, duration)
-	game:GetService("StarterGui"):SetCore("SendNotification", {
-		Title = title,
-		Text = text,
-		Duration = duration or 5
-	})
+	if not gameNotifActiveNotifs then gameNotifActiveNotifs = {} end
+	local notifGui = player:FindFirstChild("PlayerGui") and player.PlayerGui:FindFirstChild("GameNotifGui")
+	if not notifGui then
+		notifGui = Instance.new("ScreenGui")
+		notifGui.Name = "GameNotifGui"
+		notifGui.ResetOnSpawn = false
+		notifGui.DisplayOrder = 999999
+		notifGui.IgnoreGuiInset = true
+		notifGui.Parent = player.PlayerGui
+	end
+	local slotIndex = #gameNotifActiveNotifs
+	local notifFrame = Instance.new("Frame")
+	notifFrame.Size = UDim2.new(0, 340, 0, 0)
+	notifFrame.Position = UDim2.new(1, -350, 1, -10 - (slotIndex * 90))
+	notifFrame.AnchorPoint = Vector2.new(0, 1)
+	notifFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+	notifFrame.BackgroundTransparency = 0.25
+	notifFrame.BorderSizePixel = 0
+	notifFrame.ClipsDescendants = true
+	notifFrame.Parent = notifGui
+	Instance.new("UICorner", notifFrame).CornerRadius = UDim.new(0, 8)
+	local uistroke = Instance.new("UIStroke", notifFrame)
+	uistroke.Thickness = 1
+	uistroke.Color = Color3.fromRGB(80, 80, 80)
+	local titleLbl = Instance.new("TextLabel")
+	titleLbl.Size = UDim2.new(1, -10, 0, 22)
+	titleLbl.Position = UDim2.new(0, 5, 0, 4)
+	titleLbl.BackgroundTransparency = 1
+	titleLbl.Text = title
+	titleLbl.TextColor3 = Color3.fromRGB(0, 200, 255)
+	titleLbl.Font = Enum.Font.GothamBold
+	titleLbl.TextSize = 14
+	titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+	titleLbl.Parent = notifFrame
+	local textLbl = Instance.new("TextLabel")
+	textLbl.Size = UDim2.new(1, -10, 0, 28)
+	textLbl.Position = UDim2.new(0, 5, 0, 26)
+	textLbl.BackgroundTransparency = 1
+	textLbl.Text = text
+	textLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+	textLbl.Font = Enum.Font.Gotham
+	textLbl.TextSize = 13
+	textLbl.TextXAlignment = Enum.TextXAlignment.Left
+	textLbl.TextWrapped = true
+	textLbl.Parent = notifFrame
+	table.insert(gameNotifActiveNotifs, notifFrame)
+	TweenService:Create(notifFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+		Size = UDim2.new(0, 340, 0, 60)
+	}):Play()
+	task.delay(duration or 5, function()
+		local fadeOut = TweenService:Create(notifFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+			Size = UDim2.new(0, 340, 0, 0)
+		})
+		fadeOut:Play()
+		fadeOut.Completed:Wait()
+		for i, f in ipairs(gameNotifActiveNotifs) do
+			if f == notifFrame then
+				table.remove(gameNotifActiveNotifs, i)
+				break
+			end
+		end
+		notifFrame:Destroy()
+		gameNotifRepositionAll()
+	end)
+	notifFrame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			for i, f in ipairs(gameNotifActiveNotifs) do
+				if f == notifFrame then
+					table.remove(gameNotifActiveNotifs, i)
+					break
+				end
+			end
+			notifFrame:Destroy()
+			gameNotifRepositionAll()
+		end
+	end)
 end
 
 function countSelectedTargets()
@@ -3398,6 +3532,11 @@ function toggleDesync()
 				RunService.RenderStepped:Wait()
 				hrp.CFrame = DesyncTypes[1]
 				hrp.AssemblyLinearVelocity = DesyncTypes[2]
+				-- POST-UPDATE FIX: an idle character assembly now sleeps, so the per-frame
+				-- spoof stopped replicating while standing (bullets only missed while
+				-- running). keepAssemblyAwake keeps it streaming WITHOUT spinning the camera
+				-- (zero angular velocity) and WITHOUT drifting the body (flip-sign velocity).
+				keepAssemblyAwake(hrp, char:FindFirstChildOfClass("Humanoid"))
 			end
 		end)
 	else
@@ -3442,6 +3581,9 @@ function toggleDesyncSpin()
 				RunService.RenderStepped:Wait()
 				hrp.CFrame = DesyncTypes[1]
 				hrp.AssemblyLinearVelocity = DesyncTypes[2]
+				-- POST-UPDATE FIX (see Anti-Shoot): keep the assembly awake while idle,
+				-- without spinning the camera, so the desync replicates standing still too.
+				keepAssemblyAwake(hrp, char:FindFirstChildOfClass("Humanoid"))
 			end
 		end)
 	else
@@ -3718,7 +3860,7 @@ local function findBgFiles()
 	if ok then
 		for _, path in ipairs(files) do
 			local lower = string.lower(path)
-			if lower:match("%.png$") or lower:match("%.jpg$") or lower:match("%.jpeg$") or lower:match("%.gif$") then
+			if lower:match("%.png$") or lower:match("%.jpg$") or lower:match("%.jpeg$") then
 				table.insert(images, path)
 			end
 		end
@@ -3927,20 +4069,6 @@ local function resolveImageAsset(filePath)
 			return result
 		end
 	end
-	-- GIF fallback: copy bytes to .png and retry (some executors reject .gif extension)
-	if string.lower(filePath):match("%.gif$") then
-		local readOk, bytes = pcall(function() return readfile(filePath) end)
-		if readOk and bytes then
-			local pngPath = filePath:gsub("%.[gG][iI][fF]$", "_adrenalin_bg.png")
-			pcall(function() writefile(pngPath, bytes) end)
-			for _, fn in ipairs(funcs) do
-				local ok2, result2 = pcall(fn, pngPath)
-				if ok2 and result2 then
-					return result2
-				end
-			end
-		end
-	end
 	return nil
 end
 
@@ -4076,6 +4204,9 @@ end
 createCategoryScrollFrame("Main")
 createCategoryScrollFrame("Movement")
 createCategoryScrollFrame("Combat")
+createCategoryScrollFrame("Sheriff")
+createCategoryScrollFrame("Murderer")
+createCategoryScrollFrame("Reset")
 createCategoryScrollFrame("Trolling")
 createCategoryScrollFrame("Teleports")
 createCategoryScrollFrame("Utilities")
@@ -4117,6 +4248,9 @@ function createCategoryButton(shortName, layoutOrder)
 	fullNames = {
 		["Mvmt"] = "Movement",
 		["Cmbt"] = "Combat",
+		["Sher"] = "Sheriff",
+		["Murd"] = "Murderer",
+		["Rst"] = "Reset",
 		["Trl"] = "Trolling",
 		["Tele"] = "Teleports",
 		["Util"] = "Utilities",
@@ -4191,7 +4325,10 @@ end
 createCategoryButton("Main", 1)
 createCategoryButton("Mvmt", 2)
 createCategoryButton("Cmbt", 3)
-createCategoryButton("Trl", 3.5)
+createCategoryButton("Sher", 3.2)
+createCategoryButton("Murd", 3.4)
+createCategoryButton("Rst", 3.6)
+createCategoryButton("Trl", 3.8)
 createCategoryButton("Tele", 4)
 createCategoryButton("Util", 5)
 createCategoryButton("Team", 5.5)
@@ -4457,6 +4594,211 @@ function createPlayerPicker(opts)
 	return state
 end
 
+function createMultiPlayerPicker(opts)
+	local parent = opts.parent
+	local order = opts.order
+	local prefix = opts.prefix
+	local state = { selectedNames = {}, checkboxes = {}, collapsed = false }
+
+	local titleBar = Instance.new("Frame")
+	titleBar.Name = prefix .. "MultiPickerTitleBar"
+	titleBar.Size = UDim2.new(1, 0, 0, 24)
+	titleBar.BackgroundTransparency = 1
+	titleBar.LayoutOrder = order
+	titleBar.Parent = parent
+
+	local statusLabel = Instance.new("TextLabel")
+	statusLabel.Name = prefix .. "MultiPickerStatus"
+	statusLabel.Size = UDim2.new(1, -28, 0, 24)
+	statusLabel.BackgroundTransparency = 1
+	statusLabel.Text = opts.statusText or "Select players"
+	statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+	statusLabel.TextXAlignment = Enum.TextXAlignment.Left
+	statusLabel.Font = Enum.Font.SourceSansBold
+	statusLabel.TextSize = 15
+	statusLabel.Parent = titleBar
+	state.statusLabel = statusLabel
+
+	local collapseBtn = Instance.new("TextButton")
+	collapseBtn.Name = prefix .. "MultiPickerCollapse"
+	collapseBtn.Size = UDim2.new(0, 24, 0, 24)
+	collapseBtn.Position = UDim2.new(1, -24, 0, 0)
+	collapseBtn.BackgroundTransparency = 1
+	collapseBtn.Text = "-"
+	collapseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	collapseBtn.Font = Enum.Font.SourceSansBold
+	collapseBtn.TextSize = 18
+	collapseBtn.Parent = titleBar
+
+	local searchBox = Instance.new("TextBox")
+	searchBox.Name = prefix .. "MultiPickerSearch"
+	searchBox.Size = UDim2.new(1, 0, 0, 32)
+	searchBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	searchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+	searchBox.PlaceholderText = "Search players..."
+	searchBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	searchBox.Text = ""
+	searchBox.Font = Enum.Font.SourceSansBold
+	searchBox.TextSize = 15
+	searchBox.ClearTextOnFocus = false
+	searchBox.LayoutOrder = order + 0.005
+	searchBox.Parent = parent
+	Instance.new("UICorner", searchBox).CornerRadius = UDim.new(0, 6)
+	state.searchBox = searchBox
+
+	local pickerFrame = Instance.new("Frame")
+	pickerFrame.Name = prefix .. "MultiPickerFrame"
+	pickerFrame.Size = UDim2.new(1, 0, 0, 160)
+	pickerFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	pickerFrame.BorderSizePixel = 0
+	pickerFrame.LayoutOrder = order + 0.006
+	pickerFrame.Parent = parent
+	Instance.new("UICorner", pickerFrame).CornerRadius = UDim.new(0, 6)
+
+	local scrollFrame = Instance.new("ScrollingFrame")
+	scrollFrame.Name = prefix .. "MultiPickerScroll"
+	scrollFrame.Position = UDim2.new(0, 8, 0, 8)
+	scrollFrame.Size = UDim2.new(1, -16, 1, -16)
+	scrollFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+	scrollFrame.BorderSizePixel = 0
+	scrollFrame.ScrollBarThickness = 4
+	scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scrollFrame.Parent = pickerFrame
+	Instance.new("UICorner", scrollFrame).CornerRadius = UDim.new(0, 6)
+	local scrollPadding = Instance.new("UIPadding")
+	scrollPadding.PaddingLeft = UDim.new(0, 4)
+	scrollPadding.PaddingRight = UDim.new(0, 4)
+	scrollPadding.PaddingTop = UDim.new(0, 4)
+	scrollPadding.PaddingBottom = UDim.new(0, 4)
+	scrollPadding.Parent = scrollFrame
+	state.scrollFrame = scrollFrame
+
+	local function applyFilter()
+		local searchText = string.lower(searchBox.Text)
+		for _, data in pairs(state.checkboxes) do
+			if data.Entry and data.NameLabel then
+				data.Entry.Visible = searchText == "" or string.find(string.lower(data.NameLabel.Text), searchText, 1, true) ~= nil
+			end
+		end
+	end
+
+	local function updateStatus()
+		local count = #state.selectedNames
+		if count > 0 then
+			statusLabel.Text = "Selected: " .. count .. " player(s)"
+			statusLabel.TextColor3 = Color3.fromRGB(255, 80, 80)
+		else
+			statusLabel.Text = opts.statusText or "Select players"
+			statusLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+		end
+	end
+
+	local function refresh()
+		if not scrollFrame then return end
+		for _, child in ipairs(scrollFrame:GetChildren()) do
+			if not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
+				child:Destroy()
+			end
+		end
+		state.checkboxes = {}
+		local playerList = Players:GetPlayers()
+		table.sort(playerList, function(a, b) return a.Name:lower() < b.Name:lower() end)
+		local yPosition = 0
+		for _, plr in ipairs(playerList) do
+			if plr ~= player then
+				local isSel = false
+				for _, n in ipairs(state.selectedNames) do
+					if n == plr.Name then isSel = true break end
+				end
+
+				local entry = Instance.new("Frame")
+				entry.Name = plr.Name .. prefix .. "MultiEntry"
+				entry.Size = UDim2.new(1, 0, 0, 30)
+				entry.Position = UDim2.new(0, 0, 0, yPosition)
+				entry.BackgroundColor3 = isSel and Color3.fromRGB(40, 10, 10) or Color3.fromRGB(0, 0, 0)
+				entry.BorderSizePixel = 0
+				entry.Parent = scrollFrame
+				Instance.new("UICorner", entry).CornerRadius = UDim.new(0, 6)
+
+				local checkbox = Instance.new("TextButton")
+				checkbox.Size = UDim2.new(0, 24, 0, 24)
+				checkbox.Position = UDim2.new(0, 3, 0.5, -12)
+				checkbox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+				checkbox.BorderSizePixel = 0
+				checkbox.Text = ""
+				checkbox.Parent = entry
+				Instance.new("UICorner", checkbox).CornerRadius = UDim.new(0, 6)
+
+				local checkmark = Instance.new("TextLabel")
+				checkmark.Size = UDim2.new(1, 0, 1, 0)
+				checkmark.BackgroundTransparency = 1
+				checkmark.Text = "✓"
+				checkmark.TextColor3 = Color3.fromRGB(255, 80, 80)
+				checkmark.Font = Enum.Font.GothamBold
+				checkmark.TextSize = 20
+				checkmark.Visible = isSel
+				checkmark.Parent = checkbox
+
+				local nameLabel = Instance.new("TextLabel")
+				nameLabel.Size = UDim2.new(1, -35, 1, 0)
+				nameLabel.Position = UDim2.new(0, 32, 0, 0)
+				nameLabel.BackgroundTransparency = 1
+				nameLabel.Text = plr.Name
+				nameLabel.TextColor3 = isSel and Color3.fromRGB(255, 100, 100) or Color3.fromRGB(255, 255, 255)
+				nameLabel.TextSize = 16
+				nameLabel.Font = Enum.Font.SourceSansBold
+				nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+				nameLabel.Parent = entry
+
+				local clickArea = Instance.new("TextButton")
+				clickArea.Size = UDim2.new(1, 0, 1, 0)
+				clickArea.BackgroundTransparency = 1
+				clickArea.Text = ""
+				clickArea.Parent = entry
+				local pname = plr.Name
+				clickArea.MouseButton1Click:Connect(function()
+					local found = false
+					for i, n in ipairs(state.selectedNames) do
+						if n == pname then
+							table.remove(state.selectedNames, i)
+							found = true
+							break
+						end
+					end
+					if not found then
+						table.insert(state.selectedNames, pname)
+					end
+					if opts.onSelect then opts.onSelect(state.selectedNames) end
+					refresh()
+				end)
+
+				state.checkboxes[plr.Name] = { Entry = entry, NameLabel = nameLabel }
+				yPosition = yPosition + 36
+			end
+		end
+		scrollFrame.CanvasSize = UDim2.new(0, 0, 0, yPosition)
+		updateStatus()
+		applyFilter()
+	end
+	state.refresh = refresh
+
+	collapseBtn.MouseButton1Click:Connect(function()
+		state.collapsed = not state.collapsed
+		searchBox.Visible = not state.collapsed
+		pickerFrame.Visible = not state.collapsed
+		collapseBtn.Text = state.collapsed and "+" or "-"
+		saveConfig()
+	end)
+
+	searchBox:GetPropertyChangedSignal("Text"):Connect(applyFilter)
+
+	task.defer(refresh)
+	Players.PlayerAdded:Connect(function() task.defer(refresh) end)
+	Players.PlayerRemoving:Connect(function() task.defer(refresh) end)
+
+	return state
+end
+
 function createDualRow(buttonName, buttonText, placeholder, startValue, layoutOrder)
 	local row = Instance.new("Frame")
 	row.Name = buttonName .. "Row"
@@ -4604,6 +4946,58 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 end)
 
 -- ============================================
+
+
+-- Bang (adapted from Yield.lua)
+bangEnabled = false
+bangAnim = nil
+bangAnimTrack = nil
+bangDiedConn = nil
+bangLoopConn = nil
+
+function startBang(targetPlayer, speed)
+	local char = player.Character
+	if not char then return end
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return end
+	stopBang()
+	task.wait()
+	bangEnabled = true
+	bangAnim = Instance.new("Animation")
+	-- R15 check: if Humanoid.RigType is R15, use R15 anim; else R6
+	if humanoid.RigType == Enum.HumanoidRigType.R15 then
+		bangAnim.AnimationId = "rbxassetid://5918726674"
+	else
+		bangAnim.AnimationId = "rbxassetid://148840371"
+	end
+	bangAnimTrack = humanoid:FindFirstChildOfClass("Animator") and humanoid:FindFirstChildOfClass("Animator"):LoadAnimation(bangAnim) or humanoid:LoadAnimation(bangAnim)
+	bangAnimTrack:Play(0.1, 1, 1)
+	bangAnimTrack:AdjustSpeed(speed or 3)
+	bangDiedConn = humanoid.Died:Connect(function()
+		stopBang()
+	end)
+	if targetPlayer and targetPlayer.Character then
+		local bangOffset = CFrame.new(0, 0, 1.1)
+		bangLoopConn = RunService.Stepped:Connect(function()
+			pcall(function()
+				local otherRoot = targetPlayer.Character:FindFirstChild("HumanoidRootPart") or targetPlayer.Character:FindFirstChild("Torso")
+				local myRoot = player.Character:FindFirstChild("HumanoidRootPart")
+				if otherRoot and myRoot then
+					myRoot.CFrame = otherRoot.CFrame * bangOffset
+				end
+			end)
+		end)
+	end
+end
+
+function stopBang()
+	bangEnabled = false
+	if bangDiedConn then pcall(function() bangDiedConn:Disconnect() end); bangDiedConn = nil end
+	if bangAnimTrack then pcall(function() bangAnimTrack:Stop() end); bangAnimTrack = nil end
+	if bangAnim then pcall(function() bangAnim:Destroy() end); bangAnim = nil end
+	if bangLoopConn then pcall(function() bangLoopConn:Disconnect() end); bangLoopConn = nil end
+end
+
 -- SECTION 1: Movement (LayoutOrder 100-199)
 -- ============================================
 currentCategory = "Movement"
@@ -4783,6 +5177,7 @@ end)
 
 button5 = createButton("InvisButton", "Invisibility: OFF", 205)
 	invis_on = false
+	invisHoldConnection = nil
 	autoInvisEnabled = false
 	autoInvisActivateDist = 30
 	autoInvisDeactivateDist = 50
@@ -4797,29 +5192,44 @@ button5 = createButton("InvisButton", "Invisibility: OFF", 205)
 button5.MouseButton1Click:Connect(function()
 	invis_on = not invis_on
 	if invis_on then
-		local savedpos = game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame
-		task.wait()
-		game.Players.LocalPlayer.Character:MoveTo(Vector3.new(-25.95, 84, 3537.55))
-		task.wait(0.15)
-		local Seat = Instance.new("Seat", game.Workspace)
-		Seat.Anchored = false
-		Seat.CanCollide = false
-		Seat.Name = "invischair"
-		Seat.Transparency = 1
-		Seat.Position = Vector3.new(-25.95, 84, 3537.55)
-		local Weld = Instance.new("Weld", Seat)
-		Weld.Part0 = Seat
-		Weld.Part1 = game.Players.LocalPlayer.Character:FindFirstChild("Torso") or game.Players.LocalPlayer.Character.UpperTorso
-		task.wait()
-		Seat.CFrame = savedpos
+		local char = game.Players.LocalPlayer.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not (char and hrp) then
+			invis_on = false
+			return
+		end
+		local voidPos = Vector3.new(-25.95, 84, 3537.55)
+		-- Invisibility = keep your REAL root parked out in the void. The previous version
+		-- snapped you back to your real spot every frame, so the real position is what
+		-- dominated replication and others saw you normally. Now we hard-pin the root to
+		-- the void every frame (no snap-back, no seat, no weld to fight it), so the server
+		-- and everyone else see you stuck in the void = invisible/unreachable. You are
+		-- genuinely in the void locally too (that's the intended "in the emptiness" state).
+		-- keepAssemblyAwake stops the parked assembly from sleeping so the void position
+		-- keeps replicating instead of getting reconciled back.
+		if invisHoldConnection then invisHoldConnection:Disconnect() invisHoldConnection = nil end
+		invisHoldConnection = RunService.Heartbeat:Connect(function()
+			if not invis_on then
+				if invisHoldConnection then invisHoldConnection:Disconnect() invisHoldConnection = nil end
+				return
+			end
+			local c = game.Players.LocalPlayer.Character
+			local h = c and c:FindFirstChild("HumanoidRootPart")
+			local hm = c and c:FindFirstChildOfClass("Humanoid")
+			if h and hm and hm.Health > 0 then
+				h.CFrame = CFrame.new(voidPos)
+				keepAssemblyAwake(h, hm)
+			end
+		end)
 		game.StarterGui:SetCore("SendNotification", {Title = "Invisibility On"; Duration = 1; Text = "";})
 		setToggleState(button5, true, "Invisibility: ON", "Invisibility: OFF")
 		setExtractedBtnState("Invisibility", true)
 	else
+		if invisHoldConnection then invisHoldConnection:Disconnect() invisHoldConnection = nil end
+		invisRealCF = nil
+		-- Legacy cleanup: remove any leftover seat from the old invisibility method.
 		local chair = workspace:FindFirstChild("invischair")
-		if chair then
-			chair:Destroy()
-		end
+		if chair then chair:Destroy() end
 		game.StarterGui:SetCore("SendNotification", {Title = "Invisibility Off"; Duration = 1; Text = "";})
 		setToggleState(button5, false, "Invisibility: ON", "Invisibility: OFF")
 		setExtractedBtnState("Invisibility", false)
@@ -4932,19 +5342,23 @@ function toggleAutoInvis()
 			if inZone and not autoInvisActive then
 				if not invis_on then
 					invis_on = true
-					local savedpos = hrp.CFrame
-					player.Character:MoveTo(Vector3.new(-25.95, 84, 3537.55))
-					task.wait(0.15)
-					local Seat = Instance.new("Seat", workspace)
-					Seat.Anchored = false
-					Seat.CanCollide = false
-					Seat.Name = "invischair"
-					Seat.Transparency = 1
-					Seat.Position = Vector3.new(-25.95, 84, 3537.55)
-					local Weld = Instance.new("Weld", Seat)
-					Weld.Part0 = Seat
-					Weld.Part1 = player.Character:FindFirstChild("Torso") or player.Character.UpperTorso
-					Seat.CFrame = savedpos
+					local voidPos = Vector3.new(-25.95, 84, 3537.55)
+					-- Same as the manual toggle: hard-pin the root in the void every frame
+					-- (no snap-back) so the server/others keep seeing you in the void.
+					if invisHoldConnection then invisHoldConnection:Disconnect() invisHoldConnection = nil end
+					invisHoldConnection = RunService.Heartbeat:Connect(function()
+						if not invis_on then
+							if invisHoldConnection then invisHoldConnection:Disconnect() invisHoldConnection = nil end
+							return
+						end
+						local c = player.Character
+						local h = c and c:FindFirstChild("HumanoidRootPart")
+						local hm = c and c:FindFirstChildOfClass("Humanoid")
+						if h and hm and hm.Health > 0 then
+							h.CFrame = CFrame.new(voidPos)
+							keepAssemblyAwake(h, hm)
+						end
+					end)
 					setToggleState(button5, true, "Invisibility: ON", "Invisibility: OFF")
 					setExtractedBtnState("Invisibility", true)
 				end
@@ -4952,6 +5366,8 @@ function toggleAutoInvis()
 			elseif not inZone and autoInvisActive then
 				if invis_on then
 					invis_on = false
+					if invisHoldConnection then invisHoldConnection:Disconnect() invisHoldConnection = nil end
+					invisRealCF = nil
 					local chair = workspace:FindFirstChild("invischair")
 					if chair then chair:Destroy() end
 					setToggleState(button5, false, "Invisibility: ON", "Invisibility: OFF")
@@ -5756,6 +6172,20 @@ elevBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
+
+-- Bang button (uses shared Trolling player picker)
+bangBtn = createButton("BangButton", "Bang: OFF", 293.5)
+bangBtn.MouseButton1Click:Connect(function()
+	if bangEnabled then
+		stopBang()
+		setToggleState(bangBtn, false, "Bang: ON", "Bang: OFF")
+	else
+		local target = getTrollingTarget()
+		startBang(target, 3)
+		setToggleState(bangBtn, true, "Bang: ON", "Bang: OFF")
+	end
+end)
+
 -- Speed Boost (slow)
 sbSlowBtn = createButton("SpeedBoostSlowButton", "Speed Boost (slow): OFF", 294)
 sbSlowBtn.MouseButton1Click:Connect(function()
@@ -6163,40 +6593,26 @@ end)
 -- Role-based Auto-Reset — watch a player, auto-reset when they get a role
 -- ============================================
 -- Picker 1: when selected player becomes Murderer → Reset Sheriff/Hero
-watchMurdererPicker = createPlayerPicker({
+watchMurdererPicker = createMultiPlayerPicker({
 	parent = categoryFrames["Utilities"],
 	order = 115.85,
 	prefix = "WatchMurderer",
-	statusText = "Watch → Murderer ⇒ Reset Sheriff",
-	onSelect = function(name)
-		if name then
-			notify("Watch Role", "Watching " .. name .. " — will Reset Sheriff if they become Murderer", 3)
-		else
-			notify("Watch Role", "Cleared Murderer watch", 2)
-		end
-	end,
+	statusText = "Watch players → Murderer ⇒ Reset Sheriff",
 })
 
 -- Picker 2: when selected player becomes Sheriff → Reset Murderer
-watchSheriffPicker = createPlayerPicker({
+watchSheriffPicker = createMultiPlayerPicker({
 	parent = categoryFrames["Utilities"],
 	order = 115.95,
 	prefix = "WatchSheriff",
-	statusText = "Watch → Sheriff ⇒ Reset Murderer",
-	onSelect = function(name)
-		if name then
-			notify("Watch Role", "Watching " .. name .. " — will Reset Murderer if they become Sheriff", 3)
-		else
-			notify("Watch Role", "Cleared Sheriff watch", 2)
-		end
-	end,
+	statusText = "Watch players → Sheriff ⇒ Reset Murderer",
 })
 
--- Monitoring loop: every 0.5s check roles and trigger auto-reset
-watchRoleLastMurderer = nil
-watchRoleLastSheriff = nil
-watchRoleLoopingSheriff = false  -- true while loop-resetting Sheriff
-watchRoleLoopingMurderer = false -- true while loop-resetting Murderer
+-- Tracking per watched player
+watchRoleTrackedMurderers = {}
+watchRoleTrackedSheriffs = {}
+watchRoleLoopingSheriff = false
+watchRoleLoopingMurderer = false
 
 local function watchRoleIsTargetAlive(roleName)
 	local ok2, res2 = pcall(function()
@@ -6216,60 +6632,82 @@ local function watchRoleIsTargetAlive(roleName)
 	return false
 end
 
+local function watchRoleGetCurrentRoles()
+	local ok, result = pcall(function()
+		return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
+	end)
+	if not (ok and result) then return {}, {} end
+	local curMurderer, curSheriff = "", ""
+	for name, data in pairs(result) do
+		if data.Role == "Murderer" then curMurderer = name end
+		if data.Role == "Sheriff" then curSheriff = name end
+	end
+	return curMurderer, curSheriff
+end
+
 task.spawn(function()
 	while true do
 		task.wait(0.5)
-		local watchM = watchMurdererPicker and watchMurdererPicker.selectedName
-		local watchS = watchSheriffPicker and watchSheriffPicker.selectedName
-		if not watchM and not watchS then
-			watchRoleLastMurderer = nil
-			watchRoleLastSheriff = nil
+		local watchNamesM = watchMurdererPicker and watchMurdererPicker.selectedNames or {}
+		local watchNamesS = watchSheriffPicker and watchSheriffPicker.selectedNames or {}
+		if #watchNamesM == 0 and #watchNamesS == 0 then
+			watchRoleTrackedMurderers = {}
+			watchRoleTrackedSheriffs = {}
 			continue
 		end
-		local ok, result = pcall(function()
-			return ReplicatedStorage:FindFirstChild("GetPlayerData", true):InvokeServer()
-		end)
-		if not (ok and result) then continue end
-		local curMurderer = nil
-		local curSheriff = nil
-		for name, data in pairs(result) do
-			if data.Role == "Murderer" then curMurderer = name end
-			if data.Role == "Sheriff" then curSheriff = name end
-		end
-		-- Watch for Murderer: if selected player just became Murderer → loop Reset Sheriff until dead
-		if watchM and curMurderer == watchM and watchRoleLastMurderer ~= watchM and not watchRoleLoopingSheriff then
-			notify("Watch Role", watchM .. " became Murderer — loop resetting Sheriff!", 3)
-			watchRoleLoopingSheriff = true
-			task.spawn(function()
-				while watchRoleLoopingSheriff do
-					executeNanFlingByRole("Sheriff")
-					task.wait(2)
-					if not watchRoleIsTargetAlive("Sheriff") then
-						watchRoleLoopingSheriff = false
-						notify("Watch Role", "Sheriff/Hero is dead — stopped", 2)
-						break
+		local curMurderer, curSheriff = watchRoleGetCurrentRoles()
+
+		-- Watch for Murderer: if any watched player just became Murderer
+		for _, watchName in ipairs(watchNamesM) do
+			if curMurderer == watchName and not watchRoleTrackedMurderers[watchName] and not watchRoleLoopingSheriff then
+				watchRoleTrackedMurderers[watchName] = true
+				notify("Watch Role", watchName .. " became Murderer — loop resetting Sheriff!", 3)
+				watchRoleLoopingSheriff = true
+				task.spawn(function()
+					while watchRoleLoopingSheriff do
+						executeNanFlingByRole("Sheriff")
+						for _waitI = 1, 5 do
+							task.wait(0.5)
+							if not watchRoleIsTargetAlive("Sheriff") and not watchRoleIsTargetAlive("Hero") then
+								watchRoleLoopingSheriff = false
+								notify("Watch Role", "Sheriff/Hero is dead — stopped", 2)
+								break
+							end
+						end
+						if not watchRoleLoopingSheriff then break end
 					end
-				end
-			end)
+				end)
+			end
 		end
-		watchRoleLastMurderer = curMurderer
-		-- Watch for Sheriff: if selected player just became Sheriff → loop Reset Murderer until dead
-		if watchS and curSheriff == watchS and watchRoleLastSheriff ~= watchS and not watchRoleLoopingMurderer then
-			notify("Watch Role", watchS .. " became Sheriff — loop resetting Murderer!", 3)
-			watchRoleLoopingMurderer = true
-			task.spawn(function()
-				while watchRoleLoopingMurderer do
-					executeNanFlingByRole("Murderer")
-					task.wait(2)
-					if not watchRoleIsTargetAlive("Murderer") then
-						watchRoleLoopingMurderer = false
-						notify("Watch Role", "Murderer is dead — stopped", 2)
-						break
+		for name, _ in pairs(watchRoleTrackedMurderers) do
+			if curMurderer ~= name then watchRoleTrackedMurderers[name] = nil end
+		end
+
+		-- Watch for Sheriff: if any watched player just became Sheriff
+		for _, watchName in ipairs(watchNamesS) do
+			if curSheriff == watchName and not watchRoleTrackedSheriffs[watchName] and not watchRoleLoopingMurderer then
+				watchRoleTrackedSheriffs[watchName] = true
+				notify("Watch Role", watchName .. " became Sheriff — loop resetting Murderer!", 3)
+				watchRoleLoopingMurderer = true
+				task.spawn(function()
+					while watchRoleLoopingMurderer do
+						executeNanFlingByRole("Murderer")
+						for _waitI = 1, 5 do
+							task.wait(0.5)
+							if not watchRoleIsTargetAlive("Murderer") then
+								watchRoleLoopingMurderer = false
+								notify("Watch Role", "Murderer is dead — stopped", 2)
+								break
+							end
+						end
+						if not watchRoleLoopingMurderer then break end
 					end
-				end
-			end)
+				end)
+			end
 		end
-		watchRoleLastSheriff = curSheriff
+		for name, _ in pairs(watchRoleTrackedSheriffs) do
+			if curSheriff ~= name then watchRoleTrackedSheriffs[name] = nil end
+		end
 	end
 end)
 
@@ -7391,24 +7829,388 @@ function executeAntiBang()
 	workspace.FallenPartsDestroyHeight = -500
 end
 
-btn.zombieBtn = createButton("ZombieButton", "Zombie Tryhard", 116.5)
+-- Zombie Tryhard (toggleable)
+zombieTryhardEnabled = false
+local zombieTryhardConn = nil
+
+function applyZombieAnimations(char)
+	local animate = char:WaitForChild("Animate")
+	local humanoid = char:WaitForChild("Humanoid")
+	local animator = humanoid:WaitForChild("Animator")
+	for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end
+	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then return end
+	animate.idle.Animation1.AnimationId = "rbxassetid://891621366"
+	animate.idle.Animation2.AnimationId = "rbxassetid://891633237"
+	if animate.idle:FindFirstChild("Animation3") then
+		animate.idle.Animation3.AnimationId = "rbxassetid://1047759695"
+	else
+		local pose = Instance.new("Animation"); pose.Name = "Animation3"
+		pose.AnimationId = "rbxassetid://1047759695"; pose.Parent = animate.idle
+	end
+	animate.walk.WalkAnim.AnimationId = "rbxassetid://707897309"
+	animate.run.RunAnim.AnimationId = "rbxassetid://616163682"
+	animate.jump.JumpAnim.AnimationId = "rbxassetid://656117878"
+	animate.climb.ClimbAnim.AnimationId = "rbxassetid://10921229866"
+	animate.fall.FallAnim.AnimationId = "rbxassetid://656115606"
+	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+	animate.Disabled = false
+end
+
+function enableZombieTryhard()
+	zombieTryhardEnabled = true
+	if player.Character then applyZombieAnimations(player.Character) end
+	zombieTryhardConn = player.CharacterAdded:Connect(applyZombieAnimations)
+end
+
+function disableZombieTryhard()
+	zombieTryhardEnabled = false
+	if zombieTryhardConn then zombieTryhardConn:Disconnect() zombieTryhardConn = nil end
+end
+
+btn.zombieBtn = createButton("ZombieButton", "Zombie Tryhard: OFF", 116.5)
 btn.zombieBtn.MouseButton1Click:Connect(function()
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/hrewjkhsdf"))()
+	if zombieTryhardEnabled then disableZombieTryhard() else enableZombieTryhard() end
+	setToggleState(btn.zombieBtn, zombieTryhardEnabled, "Zombie Tryhard: ON", "Zombie Tryhard: OFF")
 end)
 
-btn.headlessBtn = createButton("HeadlessButton", "Headless & Korblox", 117)
+-- Headless & Korblox (toggleable)
+headlessKorbloxEnabled = false
+local headlessConn = nil
+
+function applyHeadlessKorblox(char)
+	task.wait(1)
+	local head = char:FindFirstChild("Head")
+	if head then head.MeshId = "http://www.roblox.com/asset/?id=6686307858"; head.TextureID = "http://www.roblox.com/asset/?id=6686307858"; head.Transparency = 1 end
+	local rll = char:FindFirstChild("RightLowerLeg")
+	if rll then rll.MeshId = "http://www.roblox.com/asset/?id=902942093"; rll.Transparency = 1 end
+	local rul = char:FindFirstChild("RightUpperLeg")
+	if rul then rul.MeshId = "http://www.roblox.com/asset/?id=902942096"; rul.TextureID = "http://www.roblox.com/asset/?id=902843398" end
+	local rf = char:FindFirstChild("RightFoot")
+	if rf then rf.MeshId = "http://www.roblox.com/asset/?id=902942089"; rf.Transparency = 1 end
+end
+
+function enableHeadlessKorblox()
+	headlessKorbloxEnabled = true
+	if player.Character then applyHeadlessKorblox(player.Character) end
+	headlessConn = player.CharacterAdded:Connect(applyHeadlessKorblox)
+end
+
+function disableHeadlessKorblox()
+	headlessKorbloxEnabled = false
+	if headlessConn then headlessConn:Disconnect() headlessConn = nil end
+end
+
+btn.headlessBtn = createButton("HeadlessButton", "Headless & Korblox: OFF", 117)
 btn.headlessBtn.MouseButton1Click:Connect(function()
-	loadstring(game:HttpGet('https://pastebin.com/raw/ue2VfT6Z'))()
+	if headlessKorbloxEnabled then disableHeadlessKorblox() else enableHeadlessKorblox() end
+	setToggleState(btn.headlessBtn, headlessKorbloxEnabled, "Headless & Korblox: ON", "Headless & Korblox: OFF")
 end)
 
-btn.crosshairBtn = createButton("CrosshairButton", "Adrenalin.win Crosshair", 118)
+-- Crosshair (toggleable)
+crosshairEnabled = false
+crosshairGui = nil
+
+function createCrosshair()
+	if crosshairGui then crosshairGui:Destroy() end
+	local player = game.Players.LocalPlayer
+	local mouse = player:GetMouse()
+	local RunService = game:GetService("RunService")
+	crosshairGui = Instance.new("ScreenGui")
+	crosshairGui.Name = "AdrenalinCrosshair"; crosshairGui.ResetOnSpawn = false; crosshairGui.Parent = player:WaitForChild("PlayerGui")
+	local container = Instance.new("Frame")
+	container.BackgroundTransparency = 1; container.Size = UDim2.new(0, 25, 0, 25); container.AnchorPoint = Vector2.new(0.5, 0.5); container.Parent = crosshairGui
+	local function makeLine(size, pos)
+		local f = Instance.new("Frame"); f.Size = size; f.Position = pos; f.BackgroundColor3 = Color3.new(1,1,1); f.BorderSizePixel = 0; f.ZIndex = 5; f.Parent = container
+		local s = Instance.new("UIStroke"); s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border; s.Color = Color3.new(0,0,0); s.Thickness = 1; s.Parent = f
+		return f
+	end
+	local top = makeLine(UDim2.new(0, 3, 0, 25), UDim2.new(0.5, -1.5, 0, 0))
+	local bottom = makeLine(UDim2.new(0, 3, 0, 25), UDim2.new(0.5, -1.5, 1, -25))
+	local left = makeLine(UDim2.new(0, 25, 0, 3), UDim2.new(0, 0, 0.5, -1.5))
+	local right = makeLine(UDim2.new(0, 25, 0, 3), UDim2.new(1, -25, 0.5, -1.5))
+	local textLabel = Instance.new("TextLabel"); textLabel.Text = "Adrenalin.win"; textLabel.Position = UDim2.new(0, 0, 0, 0); textLabel.TextColor3 = Color3.new(1,1,1); textLabel.Font = Enum.Font.Arcade; textLabel.TextScaled = true; textLabel.BackgroundTransparency = 1; textLabel.Size = UDim2.new(0, 150, 0, 23); textLabel.ZIndex = 10; textLabel.Parent = crosshairGui
+	local s2 = Instance.new("UIStroke"); s2.ApplyStrokeMode = Enum.ApplyStrokeMode.Contextual; s2.Color = Color3.new(0,0,0); s2.Thickness = 1; s2.Parent = textLabel
+	local time = 0; local rotProg = 0; local rotSpeed = 0.8; local smoothRot = 5
+	local conn = RunService.RenderStepped:Connect(function(dt)
+		if not (container and top and bottom and left and right and textLabel) then return end
+		time = time + dt; container.Position = UDim2.new(0, mouse.X, 0, mouse.Y); textLabel.Position = UDim2.new(0, mouse.X - 70, 0, mouse.Y + 50)
+		rotProg = (rotProg + rotSpeed * dt) % 1; smoothRot = smoothRot + ((rotProg * 360) - smoothRot) * 1; container.Rotation = smoothRot
+		local pulse = math.sin(time * 2.5) * 0.5 + 0.5; local len = -10 + (-30 - -10) * pulse * pulse
+		top.Size = UDim2.new(0, 3, 0, len); bottom.Size = UDim2.new(0, 3, 0, len); left.Size = UDim2.new(0, len, 0, 3); right.Size = UDim2.new(0, len, 0, 3)
+		top.Position = UDim2.new(0.5, -1.5, 0, 0); bottom.Position = UDim2.new(0.5, -1.5, 1, -len); left.Position = UDim2.new(0, 0, 0.5, -1.5); right.Position = UDim2.new(1, -len, 0.5, -1.5)
+		local r = math.sin(time * 0.6) * 0.5 + 0.5; local g = math.sin(time * 0.6 + 2) * 0.5 + 0.5; local b = math.sin(time * 0.6 + 4) * 0.5 + 0.5
+		local c = Color3.new(r, g, b); top.BackgroundColor3 = c; bottom.BackgroundColor3 = c; left.BackgroundColor3 = c; right.BackgroundColor3 = c; textLabel.TextColor3 = c
+	end)
+	return conn
+end
+
+local crosshairConn = nil
+
+function enableCrosshair()
+	if crosshairEnabled then return end
+	crosshairEnabled = true
+	crosshairConn = createCrosshair()
+end
+
+function disableCrosshair()
+	crosshairEnabled = false
+	if crosshairConn then crosshairConn:Disconnect() crosshairConn = nil end
+	if crosshairGui then crosshairGui:Destroy() crosshairGui = nil end
+end
+
+btn.crosshairBtn = createButton("CrosshairButton", "Adrenalin.win Crosshair: OFF", 118)
 btn.crosshairBtn.MouseButton1Click:Connect(function()
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/bnbmbndf"))()
+	if crosshairEnabled then disableCrosshair() else enableCrosshair() end
+	setToggleState(btn.crosshairBtn, crosshairEnabled, "Adrenalin.win Crosshair: ON", "Adrenalin.win Crosshair: OFF")
 end)
 
-btn.keystrokeBtn = createButton("KeystrokeButton", "Keystroke", 119)
+-- Keystroke (toggleable with position saving)
+keystrokeEnabled = false
+keystrokeGui = nil
+keystrokeSavedPos = nil
+keystrokeConnections = nil
+
+function createKeystrokeUI()
+	if keystrokeGui then keystrokeGui:Destroy() end
+	local UserInputService = game:GetService("UserInputService")
+	local TweenService = game:GetService("TweenService")
+	local CoreGui = game:GetService("CoreGui")
+	keystrokeGui = Instance.new("ScreenGui"); keystrokeGui.Name = "AdrenalinKeystroke"; keystrokeGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling; keystrokeGui.Parent = CoreGui
+	local Frame = Instance.new("Frame"); Frame.Parent = keystrokeGui; Frame.BackgroundColor3 = Color3.fromRGB(0,0,0); Frame.BackgroundTransparency = 0.4; Frame.BorderSizePixel = 0; Frame.Active = true
+	if keystrokeSavedPos then Frame.Position = keystrokeSavedPos else Frame.Position = UDim2.new(0.05,0,0.33,0) end
+	Instance.new("UICorner", Frame)
+	local UIStroke = Instance.new("UIStroke"); UIStroke.Parent = Frame; UIStroke.Thickness = 2; UIStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	task.spawn(function() while keystrokeGui and keystrokeGui.Parent do UIStroke.Color = Color3.fromHSV((tick()*0.05)%1,1,1); task.wait(0.05) end end)
+	local base_u = 26; local gap = 2; local main_y_offset = 9; local keys = {}; local max_x = 0; local nav_gap = 42
+	local row0 = {{"Esc",Enum.KeyCode.Escape},{"F1",Enum.KeyCode.F1},{"F2",Enum.KeyCode.F2},{"F3",Enum.KeyCode.F3},{"F4",Enum.KeyCode.F4},{"F5",Enum.KeyCode.F5},{"F6",Enum.KeyCode.F6},{"F7",Enum.KeyCode.F7},{"F8",Enum.KeyCode.F8},{"F9",Enum.KeyCode.F9},{"F10",Enum.KeyCode.F10},{"F11",Enum.KeyCode.F11},{"F12",Enum.KeyCode.F12}}
+	local cx = 0; local y = 0
+	for i, kd in ipairs(row0) do
+		if i > 1 then local ag = gap; local pn = row0[i-1][1]; if pn == "Esc" or pn == "F4" or pn == "F8" then ag = ag + 9 end; cx = cx + ag end
+		local kw = base_u; table.insert(keys,{Name=kd[1],KeyCode=kd[2],Position=UDim2.new(0,cx,0,y),Size=UDim2.new(0,kw,0,base_u),AllowGameProcessed=true}); cx = cx + kw; max_x = math.max(max_x,cx)
+	end
+	local main_kb_right = max_x
+	local nav_cluster_x = main_kb_right + nav_gap; cx = nav_cluster_x
+	for i,kd in ipairs({{"PS",Enum.KeyCode.Print},{"SL",Enum.KeyCode.ScrollLock},{"PB",Enum.KeyCode.Pause}}) do
+		if i > 1 then cx = cx + gap end; table.insert(keys,{Name=kd[1],KeyCode=kd[2],Position=UDim2.new(0,cx,0,0),Size=UDim2.new(0,base_u,0,base_u),AllowGameProcessed=true}); cx = cx + base_u
+	end
+	local rows = {
+		{{"`",Enum.KeyCode.Backquote},{"1",Enum.KeyCode.One},{"2",Enum.KeyCode.Two},{"3",Enum.KeyCode.Three},{"4",Enum.KeyCode.Four},{"5",Enum.KeyCode.Five},{"6",Enum.KeyCode.Six},{"7",Enum.KeyCode.Seven},{"8",Enum.KeyCode.Eight},{"9",Enum.KeyCode.Nine},{"0",Enum.KeyCode.Zero},{"-",Enum.KeyCode.Minus},{"=",Enum.KeyCode.Equals},{"Back",Enum.KeyCode.Backspace,2}},
+		{{"Tab",Enum.KeyCode.Tab,1.5},{"Q",Enum.KeyCode.Q},{"W",Enum.KeyCode.W},{"E",Enum.KeyCode.E},{"R",Enum.KeyCode.R},{"T",Enum.KeyCode.T},{"Y",Enum.KeyCode.Y},{"U",Enum.KeyCode.U},{"I",Enum.KeyCode.I},{"O",Enum.KeyCode.O},{"P",Enum.KeyCode.P},{"[",Enum.KeyCode.LeftBracket},{"]",Enum.KeyCode.RightBracket},{"\\",Enum.KeyCode.BackSlash,1.5}},
+		{{"Caps",Enum.KeyCode.CapsLock,1.75},{"A",Enum.KeyCode.A},{"S",Enum.KeyCode.S},{"D",Enum.KeyCode.D},{"F",Enum.KeyCode.F},{"G",Enum.KeyCode.G},{"H",Enum.KeyCode.H},{"J",Enum.KeyCode.J},{"K",Enum.KeyCode.K},{"L",Enum.KeyCode.L},{";",Enum.KeyCode.Semicolon},{"'",Enum.KeyCode.Quote},{"Enter",Enum.KeyCode.Return,2.25}},
+		{{"LShift",Enum.KeyCode.LeftShift,2.25},{"Z",Enum.KeyCode.Z},{"X",Enum.KeyCode.X},{"C",Enum.KeyCode.C},{"V",Enum.KeyCode.V},{"B",Enum.KeyCode.B},{"N",Enum.KeyCode.N},{"M",Enum.KeyCode.M},{",",Enum.KeyCode.Comma},{".",Enum.KeyCode.Period},{"/",Enum.KeyCode.Slash},{"RShift",Enum.KeyCode.RightShift,2.75}},
+		{{"LCtrl",Enum.KeyCode.LeftControl,1.25},{"Win",Enum.KeyCode.LeftSuper,1.25},{"LAlt",Enum.KeyCode.LeftAlt,1.25},{"Spacebar",Enum.KeyCode.Space,6.25},{"RAlt",Enum.KeyCode.RightAlt,1.25},{"Fn",nil,1.25},{"Menu",Enum.KeyCode.Menu,1.25},{"RCtrl",Enum.KeyCode.RightControl,1.25}},
+	}
+	local row_y_offset = main_y_offset + base_u + gap + 7
+	for ri, row in ipairs(rows) do
+		cx = 0; y = row_y_offset + (ri-1)*(base_u+gap)
+		for i,kd in ipairs(row) do
+			if i > 1 then cx = cx + gap end
+			local w = (kd[3] or 1) * base_u; table.insert(keys,{Name=kd[1],KeyCode=kd[2],Position=UDim2.new(0,cx,0,y),Size=UDim2.new(0,w,0,base_u),AllowGameProcessed=true}); cx = cx + w; max_x = math.max(max_x,cx)
+		end
+	end
+	local nav_row1_y = row_y_offset
+	cx = nav_cluster_x
+	for i,kd in ipairs({{"INS",Enum.KeyCode.Insert},{"HM",Enum.KeyCode.Home},{"PU",Enum.KeyCode.PageUp}}) do
+		if i > 1 then cx = cx + gap end; table.insert(keys,{Name=kd[1],KeyCode=kd[2],Position=UDim2.new(0,cx,0,nav_row1_y),Size=UDim2.new(0,base_u,0,base_u),AllowGameProcessed=true}); cx = cx + base_u
+	end
+	local nav_row2_y = row_y_offset + base_u + gap; cx = nav_cluster_x
+	for i,kd in ipairs({{"DEL",Enum.KeyCode.Delete},{"END",Enum.KeyCode.End},{"PD",Enum.KeyCode.PageDown}}) do
+		if i > 1 then cx = cx + gap end; table.insert(keys,{Name=kd[1],KeyCode=kd[2],Position=UDim2.new(0,cx,0,nav_row2_y),Size=UDim2.new(0,base_u,0,base_u),AllowGameProcessed=true}); cx = cx + base_u
+	end
+	local arrow_row1_y = row_y_offset + 3*(base_u+gap); local arrow_row2_y = row_y_offset + 4*(base_u+gap)
+	table.insert(keys,{Name="↑",KeyCode=Enum.KeyCode.Up,Position=UDim2.new(0,nav_cluster_x+base_u+gap,0,arrow_row1_y),Size=UDim2.new(0,base_u,0,base_u),AllowGameProcessed=true})
+	cx = nav_cluster_x
+	for i,kd in ipairs({{"←",Enum.KeyCode.Left},{"↓",Enum.KeyCode.Down},{"→",Enum.KeyCode.Right}}) do
+		if i > 1 then cx = cx + gap end; table.insert(keys,{Name=kd[1],KeyCode=kd[2],Position=UDim2.new(0,cx,0,arrow_row2_y),Size=UDim2.new(0,base_u,0,base_u),AllowGameProcessed=true}); cx = cx + base_u
+	end
+	max_x = math.max(nav_cluster_x + 3*base_u + 2*gap, max_x)
+	local keyboard_height = row_y_offset + 5*(base_u+gap)
+	local mouseWidth = 88; local mouseHeight = 132; local sideBW = 13; local sideBH = 26; local sideBG = 4; local mouseGap = 32
+	local mouse_x = max_x + mouseGap; local mouse_y = row_y_offset + math.floor((keyboard_height - row_y_offset - mouseHeight) / 2)
+	local mb4 = Instance.new("Frame"); mb4.Name = "MB4"; mb4.Parent = Frame; mb4.BackgroundColor3 = Color3.fromRGB(50,50,50); mb4.BackgroundTransparency = 0.3; mb4.BorderSizePixel = 0; mb4.Position = UDim2.new(0,mouse_x-sideBW-2,0,mouse_y+26); mb4.Size = UDim2.new(0,sideBW,0,sideBH)
+	Instance.new("UICorner",mb4); local mb4s=Instance.new("UIStroke",mb4); mb4s.Thickness=1; mb4s.Color=Color3.fromRGB(90,90,90)
+	local mb5 = Instance.new("Frame"); mb5.Name = "MB5"; mb5.Parent = Frame; mb5.BackgroundColor3 = Color3.fromRGB(50,50,50); mb5.BackgroundTransparency = 0.3; mb5.BorderSizePixel = 0; mb5.Position = UDim2.new(0,mouse_x-sideBW-2,0,mouse_y+26+sideBH+sideBG); mb5.Size = UDim2.new(0,sideBW,0,sideBH)
+	Instance.new("UICorner",mb5); local mb5s=Instance.new("UIStroke",mb5); mb5s.Thickness=1; mb5s.Color=Color3.fromRGB(90,90,90)
+	do local l=Instance.new("TextLabel",mb4); l.BackgroundTransparency=1; l.Size=UDim2.new(1,0,1,0); l.Font=Enum.Font.GothamBold; l.Text="▲"; l.TextColor3=Color3.fromRGB(100,100,100); l.TextSize=8 end
+	do local l=Instance.new("TextLabel",mb5); l.BackgroundTransparency=1; l.Size=UDim2.new(1,0,1,0); l.Font=Enum.Font.GothamBold; l.Text="▼"; l.TextColor3=Color3.fromRGB(100,100,100); l.TextSize=8 end
+	local mouseFrame = Instance.new("Frame"); mouseFrame.Name = "MouseBody"; mouseFrame.Parent = Frame; mouseFrame.BackgroundColor3 = Color3.fromRGB(35,35,35); mouseFrame.BackgroundTransparency = 0.3; mouseFrame.BorderSizePixel = 0; mouseFrame.Position = UDim2.new(0,mouse_x,0,mouse_y); mouseFrame.Size = UDim2.new(0,mouseWidth,0,mouseHeight)
+	Instance.new("UICorner",mouseFrame).CornerRadius = UDim.new(0,22)
+	local mbs=Instance.new("UIStroke",mouseFrame); mbs.Thickness=2; mbs.Color=Color3.fromRGB(100,100,100); mbs.ApplyStrokeMode=Enum.ApplyStrokeMode.Border
+	local buttonAreaHeight = 46; local dividerWidth = 2; local scrollWW = 12; local scrollWH = 18
+	local lmbW = math.floor((mouseWidth - dividerWidth) / 2)
+	local lmbB = Instance.new("TextButton"); lmbB.Name = "LMB"; lmbB.Parent = mouseFrame; lmbB.BackgroundColor3 = Color3.fromRGB(50,50,50); lmbB.BackgroundTransparency = 0.3; lmbB.BorderSizePixel = 0; lmbB.Position = UDim2.new(0,0,0,0); lmbB.Size = UDim2.new(0,lmbW,0,buttonAreaHeight); lmbB.Font = Enum.Font.GothamBold; lmbB.Text = "L"; lmbB.TextColor3 = Color3.fromRGB(180,180,180); lmbB.TextSize = 10; lmbB.AutoButtonColor = false
+	Instance.new("UICorner",lmbB).CornerRadius = UDim.new(0,16)
+	local lmbClipB = Instance.new("Frame",lmbB); lmbClipB.BackgroundColor3 = lmbB.BackgroundColor3; lmbClipB.BackgroundTransparency = lmbB.BackgroundTransparency; lmbClipB.BorderSizePixel = 0; lmbClipB.Position = UDim2.new(0,0,1,-9); lmbClipB.Size = UDim2.new(1,0,0,9)
+	local lmbClipR = Instance.new("Frame",lmbB); lmbClipR.BackgroundColor3 = lmbB.BackgroundColor3; lmbClipR.BackgroundTransparency = lmbB.BackgroundTransparency; lmbClipR.BorderSizePixel = 0; lmbClipR.Position = UDim2.new(1,-9,0,0); lmbClipR.Size = UDim2.new(0,9,1,0)
+	local rmbW = mouseWidth - lmbW - dividerWidth
+	local rmbB = Instance.new("TextButton"); rmbB.Name = "RMB"; rmbB.Parent = mouseFrame; rmbB.BackgroundColor3 = Color3.fromRGB(50,50,50); rmbB.BackgroundTransparency = 0.3; rmbB.BorderSizePixel = 0; rmbB.Position = UDim2.new(0,lmbW+dividerWidth,0,0); rmbB.Size = UDim2.new(0,rmbW,0,buttonAreaHeight); rmbB.Font = Enum.Font.GothamBold; rmbB.Text = "R"; rmbB.TextColor3 = Color3.fromRGB(180,180,180); rmbB.TextSize = 10; rmbB.AutoButtonColor = false
+	Instance.new("UICorner",rmbB).CornerRadius = UDim.new(0,16)
+	local rmbClipB = Instance.new("Frame",rmbB); rmbClipB.BackgroundColor3 = rmbB.BackgroundColor3; rmbClipB.BackgroundTransparency = rmbB.BackgroundTransparency; rmbClipB.BorderSizePixel = 0; rmbClipB.Position = UDim2.new(0,0,1,-9); rmbClipB.Size = UDim2.new(1,0,0,9)
+	local rmbClipL = Instance.new("Frame",rmbB); rmbClipL.BackgroundColor3 = rmbB.BackgroundColor3; rmbClipL.BackgroundTransparency = rmbB.BackgroundTransparency; rmbClipL.BorderSizePixel = 0; rmbClipL.Position = UDim2.new(0,0,0,0); rmbClipL.Size = UDim2.new(0,9,1,0)
+	local div = Instance.new("Frame",mouseFrame); div.BackgroundColor3 = Color3.fromRGB(80,80,80); div.BorderSizePixel = 0; div.Position = UDim2.new(0,lmbW,0,0); div.Size = UDim2.new(0,dividerWidth,0,buttonAreaHeight)
+	local hDiv = Instance.new("Frame",mouseFrame); hDiv.BackgroundColor3 = Color3.fromRGB(80,80,80); hDiv.BorderSizePixel = 0; hDiv.Position = UDim2.new(0,7,0,buttonAreaHeight); hDiv.Size = UDim2.new(0,mouseWidth-14,0,1)
+	local scX = math.floor((mouseWidth-scrollWW)/2); local scY = math.floor((buttonAreaHeight-scrollWH)/2)+3
+	local scrollW = Instance.new("TextButton"); scrollW.Name = "MMB"; scrollW.Parent = mouseFrame; scrollW.BackgroundColor3 = Color3.fromRGB(70,70,70); scrollW.BackgroundTransparency = 0.2; scrollW.BorderSizePixel = 0; scrollW.Position = UDim2.new(0,scX,0,scY); scrollW.Size = UDim2.new(0,scrollWW,0,scrollWH); scrollW.Text = ""; scrollW.AutoButtonColor = false; scrollW.ZIndex = 3
+	Instance.new("UICorner",scrollW).CornerRadius = UDim.new(0,6); local scS=Instance.new("UIStroke",scrollW); scS.Thickness=1; scS.Color=Color3.fromRGB(120,120,120)
+	for i=1,3 do local l=Instance.new("Frame",scrollW); l.BackgroundColor3=Color3.fromRGB(100,100,100); l.BackgroundTransparency=0.3; l.BorderSizePixel=0; l.Size=UDim2.new(0.5,0,0,1); l.Position=UDim2.new(0.25,0,0,4+(i-1)*5); l.ZIndex=4 end
+	local palm = Instance.new("Frame",mouseFrame); palm.BackgroundColor3 = Color3.fromRGB(40,40,40); palm.BackgroundTransparency = 0.5; palm.BorderSizePixel = 0; palm.Position = UDim2.new(0,10,0,buttonAreaHeight+10); palm.Size = UDim2.new(0,mouseWidth-20,0,mouseHeight-buttonAreaHeight-24)
+	Instance.new("UICorner",palm).CornerRadius = UDim.new(0,15)
+	local dpi = Instance.new("Frame",mouseFrame); dpi.BackgroundColor3 = Color3.fromRGB(80,80,80); dpi.BorderSizePixel = 0; dpi.Position = UDim2.new(0.5,-3,0,buttonAreaHeight+4); dpi.Size = UDim2.new(0,6,0,6); Instance.new("UICorner",dpi).CornerRadius = UDim.new(1,0)
+	local scUp = Instance.new("TextLabel",mouseFrame); scUp.BackgroundTransparency=1; scUp.Position=UDim2.new(0,scX-2,0,scY-12); scUp.Size=UDim2.new(0,scrollWW+4,0,10); scUp.Font=Enum.Font.GothamBold; scUp.Text="▲"; scUp.TextColor3=Color3.fromRGB(80,80,80); scUp.TextSize=8; scUp.TextTransparency=1; scUp.ZIndex=4
+	local scDn = Instance.new("TextLabel",mouseFrame); scDn.BackgroundTransparency=1; scDn.Position=UDim2.new(0,scX-2,0,scY+scrollWH+1); scDn.Size=UDim2.new(0,scrollWW+4,0,10); scDn.Font=Enum.Font.GothamBold; scDn.Text="▼"; scDn.TextColor3=Color3.fromRGB(80,80,80); scDn.TextSize=8; scDn.TextTransparency=1; scDn.ZIndex=4
+	local total_width = mouse_x + mouseWidth + 9; local frame_height = keyboard_height + 9; Frame.Size = UDim2.new(0,total_width,0,frame_height)
+	local buttons = {}
+	for _, kd in ipairs(keys) do
+		local btn = Instance.new("TextButton"); btn.Name = kd.Name; btn.Parent = Frame; btn.BackgroundColor3 = Color3.fromRGB(50,50,50); btn.BackgroundTransparency = 0.5; btn.BorderSizePixel = 0; btn.Position = kd.Position; btn.Size = kd.Size or UDim2.new(0,base_u,0,base_u); btn.Font = Enum.Font.GothamBold; btn.Text = kd.Name; btn.TextColor3 = Color3.fromRGB(255,255,255); btn.TextScaled = true; btn.TextWrapped = false; btn.ClipsDescendants = true; btn.AutoButtonColor = false
+		Instance.new("UICorner", btn)
+		-- Auto-shrink each label so the FULL key name always fits inside its key and
+		-- never overflows / gets cut off. MaxTextSize keeps single-letter keys from
+		-- ballooning, MinTextSize keeps long names readable, and the small side padding
+		-- keeps text off the borders. TextScaled + no-wrap = complete names on one line.
+		local tsc = Instance.new("UITextSizeConstraint", btn); tsc.MaxTextSize = 12; tsc.MinTextSize = 5
+		local pad = Instance.new("UIPadding", btn); pad.PaddingLeft = UDim.new(0,2); pad.PaddingRight = UDim.new(0,2)
+		buttons[kd.Name] = btn
+	end
+	buttons["LMB"] = lmbB; buttons["RMB"] = rmbB; buttons["MMB"] = scrollW
+	local function updateLMBClips(c,t) lmbClipB.BackgroundColor3=c; lmbClipB.BackgroundTransparency=t; lmbClipR.BackgroundColor3=c; lmbClipR.BackgroundTransparency=t end
+	local function updateRMBClips(c,t) rmbClipB.BackgroundColor3=c; rmbClipB.BackgroundTransparency=t; rmbClipL.BackgroundColor3=c; rmbClipL.BackgroundTransparency=t end
+	updateLMBClips(Color3.fromRGB(50,50,50),0.3); updateRMBClips(Color3.fromRGB(50,50,50),0.3)
+	local keyCodeToKeys = {}
+	for _, kd in ipairs(keys) do if kd.KeyCode then if not keyCodeToKeys[kd.KeyCode] then keyCodeToKeys[kd.KeyCode]={} end; table.insert(keyCodeToKeys[kd.KeyCode],kd) end end
+	local longPressThreshold = 0.01; local keyPressTimes = {}
+	local defaultMouseBtnColor = Color3.fromRGB(50,50,50); local defaultMouseBtnTransparency = 0.3; local activeColor = Color3.fromRGB(0,255,255); local flashColor = Color3.fromRGB(255,255,255); local defaultKeyColor = Color3.fromRGB(50,50,50)
+	local function activateKey(name)
+		local button = buttons[name]; if not button then return end; keyPressTimes[name] = tick()
+		task.spawn(function() task.wait(longPressThreshold); if keyPressTimes[name] then TweenService:Create(button, TweenInfo.new(0.1), {BackgroundColor3 = activeColor}):Play() end end)
+	end
+	local function deactivateKey(name)
+		local button = buttons[name]; if not button or not keyPressTimes[name] then return end; local d = tick() - keyPressTimes[name]; keyPressTimes[name] = nil
+		if d < longPressThreshold then
+			TweenService:Create(button, TweenInfo.new(0.1), {BackgroundColor3 = flashColor}):Play()
+			task.spawn(function() task.wait(0.1); if not keyPressTimes[name] then TweenService:Create(button, TweenInfo.new(0.1), {BackgroundColor3 = defaultKeyColor}):Play() end end)
+		else TweenService:Create(button, TweenInfo.new(0.1), {BackgroundColor3 = defaultKeyColor}):Play() end
+	end
+	local keystrokeConns = {}
+	table.insert(keystrokeConns, UserInputService.InputBegan:Connect(function(input, gp)
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			local kdl = keyCodeToKeys[input.KeyCode]; if kdl then for _, kd in ipairs(kdl) do activateKey(kd.Name) end end
+		elseif input.UserInputType == Enum.UserInputType.MouseButton1 then
+			keyPressTimes["LMB"] = tick()
+			task.spawn(function() task.wait(longPressThreshold); if keyPressTimes["LMB"] then TweenService:Create(lmbB, TweenInfo.new(0.1), {BackgroundColor3 = activeColor, BackgroundTransparency = 0.1}):Play(); updateLMBClips(activeColor, 0.1) end end)
+		elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
+			keyPressTimes["RMB"] = tick()
+			task.spawn(function() task.wait(longPressThreshold); if keyPressTimes["RMB"] then TweenService:Create(rmbB, TweenInfo.new(0.1), {BackgroundColor3 = activeColor, BackgroundTransparency = 0.1}):Play(); updateRMBClips(activeColor, 0.1) end end)
+		elseif input.UserInputType == Enum.UserInputType.MouseButton3 then
+			keyPressTimes["MMB"] = tick()
+			task.spawn(function() task.wait(longPressThreshold); if keyPressTimes["MMB"] then TweenService:Create(scrollW, TweenInfo.new(0.1), {BackgroundColor3 = activeColor, BackgroundTransparency = 0.1}):Play() end end)
+		elseif input.UserInputType == Enum.UserInputType.MouseWheel then
+			TweenService:Create(scrollW, TweenInfo.new(0.05), {BackgroundColor3 = flashColor, BackgroundTransparency = 0}):Play()
+			if input.Position.Z > 0 then
+				TweenService:Create(scUp, TweenInfo.new(0.05), {TextTransparency = 0, TextColor3 = Color3.fromRGB(0,255,255)}):Play()
+				task.delay(0.15, function() TweenService:Create(scUp, TweenInfo.new(0.2), {TextTransparency = 1}):Play() end)
+			else
+				TweenService:Create(scDn, TweenInfo.new(0.05), {TextTransparency = 0, TextColor3 = Color3.fromRGB(0,255,255)}):Play()
+				task.delay(0.15, function() TweenService:Create(scDn, TweenInfo.new(0.2), {TextTransparency = 1}):Play() end)
+			end
+			task.delay(0.1, function() TweenService:Create(scrollW, TweenInfo.new(0.15), {BackgroundColor3 = Color3.fromRGB(70,70,70), BackgroundTransparency = 0.2}):Play() end)
+		end
+	end))
+	table.insert(keystrokeConns, UserInputService.InputEnded:Connect(function(input, gp)
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			local kdl = keyCodeToKeys[input.KeyCode]; if kdl then for _, kd in ipairs(kdl) do deactivateKey(kd.Name) end end
+		elseif input.UserInputType == Enum.UserInputType.MouseButton1 and keyPressTimes["LMB"] then
+			local d = tick() - keyPressTimes["LMB"]; keyPressTimes["LMB"] = nil
+			if d < longPressThreshold then
+				TweenService:Create(lmbB, TweenInfo.new(0.1), {BackgroundColor3 = flashColor, BackgroundTransparency = 0}):Play(); updateLMBClips(flashColor, 0)
+				task.spawn(function() task.wait(0.1); TweenService:Create(lmbB, TweenInfo.new(0.1), {BackgroundColor3 = defaultMouseBtnColor, BackgroundTransparency = defaultMouseBtnTransparency}):Play(); updateLMBClips(defaultMouseBtnColor, defaultMouseBtnTransparency) end)
+			else TweenService:Create(lmbB, TweenInfo.new(0.1), {BackgroundColor3 = defaultMouseBtnColor, BackgroundTransparency = defaultMouseBtnTransparency}):Play(); updateLMBClips(defaultMouseBtnColor, defaultMouseBtnTransparency) end
+		elseif input.UserInputType == Enum.UserInputType.MouseButton2 and keyPressTimes["RMB"] then
+			local d = tick() - keyPressTimes["RMB"]; keyPressTimes["RMB"] = nil
+			if d < longPressThreshold then
+				TweenService:Create(rmbB, TweenInfo.new(0.1), {BackgroundColor3 = flashColor, BackgroundTransparency = 0}):Play(); updateRMBClips(flashColor, 0)
+				task.spawn(function() task.wait(0.1); TweenService:Create(rmbB, TweenInfo.new(0.1), {BackgroundColor3 = defaultMouseBtnColor, BackgroundTransparency = defaultMouseBtnTransparency}):Play(); updateRMBClips(defaultMouseBtnColor, defaultMouseBtnTransparency) end)
+			else TweenService:Create(rmbB, TweenInfo.new(0.1), {BackgroundColor3 = defaultMouseBtnColor, BackgroundTransparency = defaultMouseBtnTransparency}):Play(); updateRMBClips(defaultMouseBtnColor, defaultMouseBtnTransparency) end
+		elseif input.UserInputType == Enum.UserInputType.MouseButton3 and keyPressTimes["MMB"] then
+			local d = tick() - keyPressTimes["MMB"]; keyPressTimes["MMB"] = nil
+			if d < longPressThreshold then
+				TweenService:Create(scrollW, TweenInfo.new(0.1), {BackgroundColor3 = flashColor, BackgroundTransparency = 0}):Play()
+				task.spawn(function() task.wait(0.1); TweenService:Create(scrollW, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(70,70,70), BackgroundTransparency = 0.2}):Play() end)
+			else TweenService:Create(scrollW, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(70,70,70), BackgroundTransparency = 0.2}):Play() end
+		end
+	end))
+	local dragging, dragStart, startPos
+	table.insert(keystrokeConns, Frame.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+			dragging = true; dragStart = input.Position; startPos = Frame.Position
+			input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+		end
+	end))
+	table.insert(keystrokeConns, UserInputService.InputChanged:Connect(function(input)
+		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local delta = input.Position - dragStart
+			Frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+		end
+	end))
+	table.insert(keystrokeConns, UserInputService.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
+			dragging = false; keystrokeSavedPos = Frame.Position; saveConfig()
+		end
+	end))
+	keystrokeConnections = keystrokeConns
+end
+
+function enableKeystroke()
+	if keystrokeEnabled then return end
+	keystrokeEnabled = true; createKeystrokeUI()
+end
+
+function disableKeystroke()
+	keystrokeEnabled = false
+	if keystrokeConnections then
+		for _, conn in ipairs(keystrokeConnections) do conn:Disconnect() end
+		keystrokeConnections = nil
+	end
+	if keystrokeGui then keystrokeGui:Destroy() keystrokeGui = nil end
+end
+
+btn.keystrokeBtn = createButton("KeystrokeButton", "Keystroke: OFF", 119)
 btn.keystrokeBtn.MouseButton1Click:Connect(function()
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/uqwgeajsdvn/refs/heads/main/vbgfsdahukjhsd"))()
+	if keystrokeEnabled then disableKeystroke() else enableKeystroke() end
+	setToggleState(btn.keystrokeBtn, keystrokeEnabled, "Keystroke: ON", "Keystroke: OFF")
+end)
+
+-- Shaders (toggleable)
+shadersEnabled = false
+shadersInstances = {}
+
+function enableShaders()
+	if shadersEnabled then return end
+	shadersEnabled = true
+	local Lighting = game:GetService("Lighting")
+	local bloom = Instance.new("BloomEffect"); bloom.Intensity = 0.02; bloom.Threshold = 0; bloom.Size = 100; bloom.Parent = Lighting
+	table.insert(shadersInstances, bloom)
+	local sky = Instance.new("Sky"); sky.Name = "ShadersSky"; sky.SkyboxUp = "http://www.roblox.com/asset/?id=169210149"; sky.SkyboxLf = "http://www.roblox.com/asset/?id=169210133"; sky.SkyboxBk = "http://www.roblox.com/asset/?id=169210090"; sky.SkyboxFt = "http://www.roblox.com/asset/?id=169210121"; sky.StarCount = 100; sky.SkyboxDn = "http://www.roblox.com/asset/?id=169210108"; sky.SkyboxRt = "http://www.roblox.com/asset/?id=169210143"; sky.Parent = bloom
+	local cc1 = Instance.new("ColorCorrectionEffect"); cc1.Saturation = 0.05; cc1.TintColor = Color3.fromRGB(255, 224, 219); cc1.Parent = Lighting
+	table.insert(shadersInstances, cc1)
+	local cc2 = Instance.new("ColorCorrectionEffect"); cc2.Name = "ShadersNormal"; cc2.Enabled = false; cc2.Saturation = -0.2; cc2.TintColor = Color3.fromRGB(255, 232, 215); cc2.Parent = Lighting
+	table.insert(shadersInstances, cc2)
+	local sun = Instance.new("SunRaysEffect"); sun.Intensity = 0.01; sun.Parent = Lighting
+	table.insert(shadersInstances, sun)
+	local cc3 = Instance.new("ColorCorrectionEffect"); cc3.Name = "ShadersTakayama"; cc3.Enabled = false; cc3.Saturation = -0.3; cc3.Contrast = 0.1; cc3.TintColor = Color3.fromRGB(235, 214, 204); cc3.Parent = Lighting
+	table.insert(shadersInstances, cc3)
+	Lighting.Brightness = 2.14; Lighting.ColorShift_Bottom = Color3.fromRGB(11, 0, 20); Lighting.ColorShift_Top = Color3.fromRGB(240, 127, 14); Lighting.OutdoorAmbient = Color3.fromRGB(34, 0, 49); Lighting.ClockTime = 6.7; Lighting.FogColor = Color3.fromRGB(94, 76, 106); Lighting.FogEnd = 1000; Lighting.FogStart = 0; Lighting.ExposureCompensation = 0.24; Lighting.ShadowSoftness = 0; Lighting.Ambient = Color3.fromRGB(59, 33, 27)
+end
+
+function disableShaders()
+	shadersEnabled = false
+	for _, obj in ipairs(shadersInstances) do pcall(function() obj:Destroy() end) end
+	shadersInstances = {}
+end
+
+btn.shadersBtn = createButton("ShadersButton", "Shaders: OFF", 119.5)
+btn.shadersBtn.MouseButton1Click:Connect(function()
+	if shadersEnabled then disableShaders() else enableShaders() end
+	setToggleState(btn.shadersBtn, shadersEnabled, "Shaders: ON", "Shaders: OFF")
 end)
 
 -- Auto Delete Corpses
@@ -8249,19 +9051,20 @@ aimTargetDot = nil
 
 AIM_CONFIG = {
 	pingScale          = 1.0,
-	extraLeadSec       = 0.02,
+	extraLeadSec       = 0.01,
 	renderDelta        = 1/60,
-	maxLeadSec         = 0.55,
+	maxLeadSec         = 0.40,
 	aimPart            = "Torso",          -- center mass for bigger hitbox
-	rolePollRate       = 0.25,
+	rolePollRate       = 0.15,
 	gravityComp        = true,
-	shotsPerClick      = 4,                -- 4 shots per click for maximum hit chance
+	shotsPerClick      = 6,                -- 6 shots per click for maximum hit chance
 	shotSpacing        = 0.0,
-	wallbangOriginDist = 1.5,              -- closer origin = more reliable piercer
-	autoShotCooldown   = 0.25,             -- faster auto shoot cycle
-	scatterRadius      = 1.0,             -- wider scatter = catch jumpy targets
-	scatterShots       = 3,               -- more scattered shots per main shot
-	jumpAimYBoost      = 1.2,             -- extra Y offset for jumping targets (studs)
+	wallbangOriginDist = 0.8,              -- very close origin = almost guaranteed piercer hit
+	autoShotCooldown   = 0.0,              -- fire every heartbeat for instant response
+	scatterRadius      = 0.2,              -- tight scatter only on moving targets
+	scatterShots       = 2,                -- fewer scatter = more center shots
+	jumpAimYBoost      = 1.5,              -- higher Y offset for jumping targets
+	alwaysPierceOrigin = true,             -- always place origin next to target (bypass desync/invis)
 }
 
 -- Our own role cache (used only when the ESP cache espRoles is not available)
@@ -8328,8 +9131,25 @@ local function aimPredictTorso(character)
 	if not aimPart then return nil end
 	local velPart = root or aimPart
 	local v = velPart.AssemblyLinearVelocity
-	local t = aimGetLeadTime()
 	local p = aimPart.Position
+	-- Check horizontal speed — if target barely moves, aim directly (no prediction error)
+	local hSpeed = math.sqrt(v.X * v.X + v.Z * v.Z)
+	if hSpeed < 2 then
+		-- Standing or nearly standing: aim at exact current position
+		local airborne = AIM_CONFIG.gravityComp and aimIsAirborne(character)
+		if airborne then
+			local t = aimGetLeadTime()
+			local g = workspace.Gravity
+			local py = p.Y + v.Y * t - 0.5 * g * t * t
+			local boost = AIM_CONFIG.jumpAimYBoost or 0
+			if v.Y > 5 then py = py + boost
+			elseif v.Y < -5 then py = py - boost * 0.5 end
+			return Vector3.new(p.X, py, p.Z)
+		end
+		return p
+	end
+	-- Moving target: full velocity prediction
+	local t = aimGetLeadTime()
 	local px = p.X + v.X * t
 	local pz = p.Z + v.Z * t
 	local py
@@ -8337,13 +9157,10 @@ local function aimPredictTorso(character)
 	if airborne then
 		local g = workspace.Gravity
 		py = p.Y + v.Y * t - 0.5 * g * t * t
-		-- Boost Y aim for jumping players: aim slightly higher to catch the arc
 		local boost = AIM_CONFIG.jumpAimYBoost or 0
 		if v.Y > 5 then
-			-- Jumping up: aim higher
 			py = py + boost
 		elseif v.Y < -5 then
-			-- Falling down: aim lower
 			py = py - boost * 0.5
 		end
 	else
@@ -8438,10 +9255,16 @@ local function aimGetShootOrigin(target)
 	local char = player.Character
 	local originPart = char and (char:FindFirstChild("RightHand") or char:FindFirstChild("HumanoidRootPart"))
 	local myPos = originPart and originPart.Position or Vector3.new(0, 0, 0)
-	if not aimWallbangEnabled then return myPos end
-	local dir = myPos - target
-	local unit = dir.Magnitude > 1e-3 and dir.Unit or Vector3.new(0, 1, 0)
-	return target + unit * AIM_CONFIG.wallbangOriginDist
+	-- Always use piercer-style origin when enabled or when desync features are active
+	-- This ensures shots hit even when using Invisible, Desync, or Anti-Shoot
+	local forcePierce = AIM_CONFIG.alwaysPierceOrigin or aimWallbangEnabled
+		or PastedSources or DesyncSpinActive or hiddenfling
+	if forcePierce then
+		local dir = myPos - target
+		local unit = dir.Magnitude > 1e-3 and dir.Unit or Vector3.new(0, 1, 0)
+		return target + unit * AIM_CONFIG.wallbangOriginDist
+	end
+	return myPos
 end
 
 local function aimFireOnce(shoot, target)
@@ -8454,24 +9277,33 @@ function aimFireGunAt(murderer)
 	if not shoot then return false end
 	local shots = math.max(1, AIM_CONFIG.shotsPerClick)
 	local hitAny = false
+	-- Check if target is moving to decide scatter strategy
+	local useScatter = false
+	pcall(function()
+		local root = murderer.Character:FindFirstChild("HumanoidRootPart")
+		if root then
+			local v = root.AssemblyLinearVelocity
+			local hSpeed = math.sqrt(v.X * v.X + v.Z * v.Z)
+			useScatter = hSpeed > 4 -- only scatter for moving targets
+		end
+	end)
 	for i = 1, shots do
 		if not aimMurdererAlive(murderer) then break end
 		local center = aimPredictTorso(murderer.Character)
 		if center then
-			-- Fire main shot + scatter shots for maximum hit probability
-			local targets = aimScatterPositions(center)
-			for _, tgt in ipairs(targets) do
-				local ok = aimFireOnce(shoot, tgt)
-				hitAny = hitAny or ok
+			-- Direct center shot always fires first
+			local ok = aimFireOnce(shoot, center)
+			hitAny = hitAny or ok
+			-- Additional scatter only for moving targets
+			if useScatter then
+				local extras = aimScatterPositions(center)
+				for j = 2, #extras do
+					ok = aimFireOnce(shoot, extras[j])
+					hitAny = hitAny or ok
+				end
 			end
 		end
-		if i < shots then
-			if AIM_CONFIG.shotSpacing and AIM_CONFIG.shotSpacing > 0 then
-				task.wait(AIM_CONFIG.shotSpacing)
-			else
-				RunService.Heartbeat:Wait()
-			end
-		end
+		-- No spacing between shots for maximum speed
 	end
 	return hitAny
 end
@@ -8569,9 +9401,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end)
 end)
 
--- Auto Shot loop: instant first shot the moment the gun is handed to us;
--- never dies (full pcall guard, same hardening as the standalone fix).
-aimLastAutoShot = 0
+-- Auto Shot loop: fires every single heartbeat for instant response.
+-- On gun pickup: immediate burst of shots before the first frame.
 local aimHadGunLast = false
 local aimLastRoleRefresh = 0
 task.spawn(function()
@@ -8583,21 +9414,24 @@ task.spawn(function()
 			local bp = player:FindFirstChild("Backpack")
 			local hasGun = (char and (char:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")))) and true or false
 			if hasGun and not aimHadGunLast then
-				aimLastAutoShot = 0
+				-- Gun just appeared: instant burst fire (no waiting for next heartbeat)
 				aimRefreshRoleNow()
+				local m = aimFindMurderer()
+				if m and m ~= player and aimMurdererAlive(m) then
+					aimFireGunAt(m)
+				end
 			end
 			aimHadGunLast = hasGun
 			if not hasGun then return end
+			-- Every heartbeat: find and fire
 			local now = os.clock()
-			if (now - aimLastAutoShot) < AIM_CONFIG.autoShotCooldown then return end
 			local murderer = aimFindMurderer()
-			if not murderer and (now - aimLastRoleRefresh) > 0.1 then
+			if not murderer and (now - aimLastRoleRefresh) > 0.08 then
 				aimLastRoleRefresh = now
 				aimRefreshRoleNow()
 				murderer = aimFindMurderer()
 			end
 			if murderer and murderer ~= player and aimMurdererAlive(murderer) then
-				aimLastAutoShot = now
 				aimFireGunAt(murderer)
 			end
 		end)
@@ -8919,23 +9753,24 @@ killSheriffBtn.MouseButton1Click:Connect(function()
 	else notify("Kill Sheriff", "Hit " .. c .. " target(s).", 1.5) end
 end)
 
--- Kill Player picker (collapsible single-select) + Kill Player button
-killPicker = createPlayerPicker({
+-- Kill Player picker (collapsible multi-select) + Kill Player button
+killPicker = createMultiPlayerPicker({
 	parent = categoryFrames["Combat"],
 	order = 203.34,
 	prefix = "Kill",
-	statusText = "Select a player to kill",
+	statusText = "Select players to kill",
 })
 
-killPlayerBtn = createButton("KillPlayerButton", "Kill Player", 203.35)
+killPlayerBtn = createButton("KillPlayerButton", "Kill Player(s)", 203.35)
 killPlayerBtn.MouseButton1Click:Connect(function()
-	local sel = killPicker.selectedName
-	if not sel then notify("Kill Player", "No player selected.", 2) return end
-	local ok, why = doKillPlayer(sel)
-	if ok then notify("Kill Player", "Knifed " .. sel, 1.5)
-	elseif why == "noknife" then notify("Kill Player", "You need the knife (be the Murderer).", 2)
-	elseif why == "dead" then notify("Kill Player", sel .. " is already dead.", 2)
-	else notify("Kill Player", "Target not available.", 2) end
+	local sels = killPicker.selectedNames
+	if not sels or #sels == 0 then notify("Kill Player", "No players selected.", 2) return end
+	local killed = 0
+	for _, sel in ipairs(sels) do
+		local ok, why = doKillPlayer(sel)
+		if ok then killed = killed + 1 end
+	end
+	notify("Kill Player", "Knifed " .. killed .. "/" .. #sels .. " player(s)", 1.5)
 end)
 
 -- Auto kill loops
@@ -12766,16 +13601,20 @@ end
 currentCategory = "Binds"
 createSection("Binds", 500)
 
+bindToggleStates = {}
+
 bindableFeatures = {
-	{name = "Infinite Jump", defaultKey = nil, callback = function()
+	{name = "Infinite Jump", defaultKey = nil, getState = function() return isEnabled end, callback = function()
 		isEnabled = not isEnabled
 		setToggleState(button1, isEnabled, "Infinite Jump: ON", "Infinite Jump: OFF")
+		setExtractedBtnState("Infinite Jump", isEnabled)
 	end},
-	{name = "Wallhop", defaultKey = nil, callback = function()
+	{name = "Wallhop", defaultKey = nil, getState = function() return wallhopToggle end, callback = function()
 		wallhopToggle = not wallhopToggle
 		setToggleState(button2, wallhopToggle, "Wallhop: ON", "Wallhop: OFF")
+		setExtractedBtnState("Wallhop", wallhopToggle)
 	end},
-	{name = "Jump Boost", defaultKey = nil, callback = function()
+	{name = "Jump Boost", defaultKey = nil, getState = function() return false end, callback = function()
 		local char = player.Character
 		if char and char:FindFirstChild("Humanoid") then
 			char.Humanoid.JumpPower = JUMP_BOOST_POWER
@@ -12785,11 +13624,12 @@ bindableFeatures = {
 			end
 		end
 	end},
-	{name = "Speed Glitch", defaultKey = nil, callback = function()
+	{name = "Speed Glitch", defaultKey = nil, getState = function() return fakeSpeedEnabled end, callback = function()
 		toggleFakeSpeed()
 		setToggleState(button4, fakeSpeedEnabled, "Speed Glitch: ON", "Speed Glitch: OFF")
+		setExtractedBtnState("Speed Glitch", fakeSpeedEnabled)
 	end},
-	{name = "Invisibility", defaultKey = nil, callback = function()
+	{name = "Invisibility", defaultKey = nil, getState = function() return invis_on end, callback = function()
 		invis_on = not invis_on
 		if invis_on then
 			local savedpos = game.Players.LocalPlayer.Character.HumanoidRootPart.CFrame
@@ -12808,29 +13648,31 @@ bindableFeatures = {
 			task.wait()
 			Seat.CFrame = savedpos
 			setToggleState(button5, true, "Invisibility: ON", "Invisibility: OFF")
+			setExtractedBtnState("Invisibility", true)
 		else
 			local chair = workspace:FindFirstChild("invischair")
 			if chair then chair:Destroy() end
 			setToggleState(button5, false, "Invisibility: ON", "Invisibility: OFF")
+			setExtractedBtnState("Invisibility", false)
 		end
 	end},
-	{name = "Auto Invisibility", defaultKey = nil, callback = function()
+	{name = "Auto Invisibility", defaultKey = nil, getState = function() return autoInvisEnabled end, callback = function()
 		toggleAutoInvis()
 	end},
-	{name = "Auto TP", defaultKey = nil, callback = function()
+	{name = "Auto TP", defaultKey = nil, getState = function() return autoTpEnabled end, callback = function()
 		toggleAutoTp()
 	end},
-	{name = "Anti-Shoot", defaultKey = nil, callback = function()
+	{name = "Anti-Shoot", defaultKey = nil, getState = function() return PastedSources end, callback = function()
 		toggleDesync()
 		setToggleState(desyncButton, PastedSources, "Anti-Shoot: ON", "Anti-Shoot: OFF")
 		setExtractedBtnState("Anti-Shoot", PastedSources)
 	end},
-	{name = "Desync", defaultKey = nil, callback = function()
+	{name = "Desync", defaultKey = nil, getState = function() return DesyncSpinActive end, callback = function()
 		toggleDesyncSpin()
 		setToggleState(desyncSpinButton, DesyncSpinActive, "Desync: ON", "Desync: OFF")
 		setExtractedBtnState("Desync", DesyncSpinActive)
 	end},
-	{name = "Clumsy", defaultKey = nil, callback = function()
+	{name = "Clumsy", defaultKey = nil, getState = function() return clumsy_on end, callback = function()
 		clumsy_on = not clumsy_on
 		if clumsy_on then
 			local savedpos = player.Character.HumanoidRootPart.CFrame
@@ -12846,54 +13688,215 @@ bindableFeatures = {
 			task.wait(); Seat.CFrame = savedpos
 			createClumsyGhost(savedpos.Position)
 			setToggleState(clumsyButton, true, "Clumsy: ON", "Clumsy: OFF")
+			setExtractedBtnState("Clumsy", true)
 		else
 			local chair = workspace:FindFirstChild("clumsychair")
 			if chair then chair:Destroy() end
 			removeClumsyGhost()
 			setToggleState(clumsyButton, false, "Clumsy: ON", "Clumsy: OFF")
+			setExtractedBtnState("Clumsy", false)
 		end
 	end},
-	{name = "Noclip", defaultKey = nil, callback = function()
+	{name = "Noclip", defaultKey = nil, getState = function() return noclipEnabled end, callback = function()
 		toggleNoclip()
 		setToggleState(noclipButton, noclipEnabled, "Noclip: ON", "Noclip: OFF")
+		setExtractedBtnState("Noclip", noclipEnabled)
 	end},
-	{name = "KillAura", defaultKey = nil, callback = function()
+	{name = "KillAura", defaultKey = nil, getState = function() return reachEnabled end, callback = function()
 		toggleReach()
 		setToggleState(reachButton, reachEnabled, "KillAura: ON", "KillAura: OFF")
+		setExtractedBtnState("KillAura", reachEnabled)
 	end},
-	{name = "Air Strafe", defaultKey = nil, callback = function()
+	{name = "Air Strafe", defaultKey = nil, getState = function() return airStrafeEnabled end, callback = function()
 		toggleAirStrafe()
 		setToggleState(airStrafeButton, airStrafeEnabled, "Air Strafe: ON", "Air Strafe: OFF")
+		setExtractedBtnState("Air Strafe", airStrafeEnabled)
 	end},
-	{name = "Fake Duck", defaultKey = nil, callback = function()
+	{name = "Fake Duck", defaultKey = nil, getState = function() return fakeDuckEnabled end, callback = function()
 		toggleFakeDuck()
+		bindToggleStates["Fake Duck"] = fakeDuckEnabled
 	end},
-	{name = "LoopSpeed", defaultKey = nil, callback = function()
+	{name = "LoopSpeed", defaultKey = nil, getState = function() return loopSpeedEnabled end, callback = function()
 		toggleLoopSpeed()
+		bindToggleStates["LoopSpeed"] = loopSpeedEnabled
 	end},
-	{name = "Anti-Aim", defaultKey = nil, callback = function()
+	{name = "Anti-Aim", defaultKey = nil, getState = function() return currentMode ~= 0 end, callback = function()
 		cycleMode()
+		bindToggleStates["Anti-Aim"] = (currentMode ~= 0)
+		setExtractedBtnState("Anti-Aim", currentMode ~= 0)
 	end},
-	{name = "Auto Dodge Knife", defaultKey = nil, callback = function()
+	{name = "Auto Dodge Knife", defaultKey = nil, getState = function() return autoDodgeEnabled end, callback = function()
 		toggleAutoDodge()
 		setToggleState(autoDodgeButton, autoDodgeEnabled, "Auto Dodge Knife: ON", "Auto Dodge Knife: OFF")
+		setExtractedBtnState("Auto Dodge Knife", autoDodgeEnabled)
 	end},
-	{name = "Reset Sheriff/Hero", defaultKey = nil, callback = function()
+	{name = "Reset Sheriff/Hero", defaultKey = nil, getState = function() return false end, callback = function()
 		executeNanFlingByRole("Sheriff")
 	end},
-	{name = "Reset Murderer", defaultKey = nil, callback = function()
+	{name = "Reset Murderer", defaultKey = nil, getState = function() return false end, callback = function()
 		executeNanFlingByRole("Murderer")
 	end},
-	{name = "Auto Reset Sheriff/Hero", defaultKey = nil, callback = function()
+	{name = "Auto Reset Sheriff/Hero", defaultKey = nil, getState = function() return autoResetSheriffEnabled end, callback = function()
 		toggleAutoResetSheriff()
 		setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF")
+		setExtractedBtnState("Auto Reset Sheriff/Hero", autoResetSheriffEnabled)
 	end},
-	{name = "Auto Reset Murderer", defaultKey = nil, callback = function()
+	{name = "Auto Reset Murderer", defaultKey = nil, getState = function() return autoResetMurdererEnabled end, callback = function()
 		toggleAutoResetMurderer()
 		setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF")
+		setExtractedBtnState("Auto Reset Murderer", autoResetMurdererEnabled)
 	end},
-	{name = "Anti-Bang", defaultKey = nil, callback = function()
+	{name = "Anti-Bang", defaultKey = nil, getState = function() return false end, callback = function()
 		executeAntiBang()
+	end},
+	{name = "Second Life", defaultKey = nil, getState = function() return secondLifeEnabled end, callback = function()
+		toggleSecondLife()
+		setToggleState(secondLifeButton, secondLifeEnabled, "Second Life: ON", "Second Life: OFF")
+		setExtractedBtnState("Second Life", secondLifeEnabled)
+	end},
+	{name = "AutoGrab Gun", defaultKey = nil, getState = function() return autoGrabGunEnabled end, callback = function()
+		toggleAutoGrabGun()
+		setToggleState(btn.autoGrabGun, autoGrabGunEnabled, "AutoGrab Gun: ON", "AutoGrab Gun: OFF")
+		setExtractedBtnState("AutoGrab Gun", autoGrabGunEnabled)
+	end},
+	{name = "Gun Aura", defaultKey = nil, getState = function() return gunAuraEnabled end, callback = function()
+		toggleGunAura()
+		setToggleState(btn.gunAura, gunAuraEnabled, "Gun Aura: ON", "Gun Aura: OFF")
+		setExtractedBtnState("Gun Aura", gunAuraEnabled)
+	end},
+	{name = "Auto Remove Coins", defaultKey = nil, getState = function() return autoDeleteCoinsEnabled end, callback = function()
+		toggleAutoDeleteCoins()
+		setToggleState(btn.autoDeleteCoins, autoDeleteCoinsEnabled, "Auto Remove Coins: ON", "Auto Remove Coins: OFF")
+		setExtractedBtnState("Auto Remove Coins", autoDeleteCoinsEnabled)
+	end},
+	{name = "Auto Delete Corpses", defaultKey = nil, getState = function() return autoDeleteCorpsesEnabled end, callback = function()
+		toggleAutoDeleteCorpses()
+		setToggleState(btn.autoDeleteCorpses, autoDeleteCorpsesEnabled, "Auto Delete Corpses: ON", "Auto Delete Corpses: OFF")
+		setExtractedBtnState("Auto Delete Corpses", autoDeleteCorpsesEnabled)
+	end},
+	{name = "Touch Fling", defaultKey = nil, getState = function() return hiddenfling end, callback = function()
+		hiddenfling = not hiddenfling
+		setToggleState(touchFlingButton, hiddenfling, "Touch Fling: ON", "Touch Fling: OFF")
+		setExtractedBtnState("Touch Fling", hiddenfling)
+		if hiddenfling then flingThread = coroutine.create(fling); coroutine.resume(flingThread) end
+	end},
+	{name = "ESP", defaultKey = nil, getState = function() return espEnabled end, callback = function()
+		toggleEsp()
+		setToggleState(espButton, espEnabled, "Esp: ON", "Esp: OFF")
+		setExtractedBtnState("ESP", espEnabled)
+	end},
+	{name = "Anti-Fling", defaultKey = nil, getState = function() return antiFlingEnabled end, callback = function()
+		toggleAntiFling()
+		setToggleState(antiFlingButton, antiFlingEnabled, "Anti-Fling: ON", "Anti-Fling: OFF")
+		setExtractedBtnState("Anti-Fling", antiFlingEnabled)
+	end},
+	{name = "Anti-Void", defaultKey = nil, getState = function() return antiVoidEnabled end, callback = function()
+		toggleAntiVoid()
+		setToggleState(antiVoidButton, antiVoidEnabled, "Anti-Void: ON", "Anti-Void: OFF")
+		setExtractedBtnState("Anti-Void", antiVoidEnabled)
+	end},
+	{name = "Auto Reset Player", defaultKey = nil, getState = function() return autoResetPlayerEnabled end, callback = function()
+		toggleAutoResetPlayer()
+		setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF")
+		setExtractedBtnState("Auto Reset Player", autoResetPlayerEnabled)
+	end},
+	{name = "Auto Reset Everyone", defaultKey = nil, getState = function() return autoResetEveryoneEnabled end, callback = function()
+		toggleAutoResetEveryone()
+		setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF")
+		setExtractedBtnState("Auto Reset Everyone", autoResetEveryoneEnabled)
+	end},
+	{name = "Auto Kill Everyone", defaultKey = nil, getState = function() return autoKillEveryoneEnabled end, callback = function()
+		autoKillEveryoneEnabled = not autoKillEveryoneEnabled
+		setToggleState(autoKillEveryoneBtn, autoKillEveryoneEnabled, "Auto Kill Everyone: ON", "Auto Kill Everyone: OFF")
+		setExtractedBtnState("Auto Kill Everyone", autoKillEveryoneEnabled)
+		if autoKillEveryoneEnabled then startAutoKillEveryone() end
+	end},
+	{name = "Auto Kill Everyone (No Friends)", defaultKey = nil, getState = function() return autoKillEveryoneNoFriendsEnabled end, callback = function()
+		autoKillEveryoneNoFriendsEnabled = not autoKillEveryoneNoFriendsEnabled
+		setToggleState(autoKillEveryoneNoFriendsBtn, autoKillEveryoneNoFriendsEnabled, "Auto Kill Everyone (except friends): ON", "Auto Kill Everyone (except friends): OFF")
+		setExtractedBtnState("Auto Kill Everyone (No Friends)", autoKillEveryoneNoFriendsEnabled)
+		if autoKillEveryoneNoFriendsEnabled then startAutoKillEveryoneNoFriends() end
+	end},
+	{name = "Auto Kill Sheriff", defaultKey = nil, getState = function() return autoKillSheriffEnabled end, callback = function()
+		autoKillSheriffEnabled = not autoKillSheriffEnabled
+		setToggleState(autoKillSheriffBtn, autoKillSheriffEnabled, "Auto Kill Sheriff: ON", "Auto Kill Sheriff: OFF")
+		setExtractedBtnState("Auto Kill Sheriff", autoKillSheriffEnabled)
+		if autoKillSheriffEnabled then startAutoKillSheriff() end
+	end},
+	{name = "LMB Shoot", defaultKey = nil, getState = function() return aimLmbShootEnabled end, callback = function()
+		aimLmbShootEnabled = not aimLmbShootEnabled
+		setToggleState(lmbShootButton, aimLmbShootEnabled, "LMB Shoot: ON", "LMB Shoot: OFF")
+		setExtractedBtnState("LMB Shoot", aimLmbShootEnabled)
+	end},
+	{name = "Piercer Bullet", defaultKey = nil, getState = function() return aimWallbangEnabled end, callback = function()
+		aimWallbangEnabled = not aimWallbangEnabled
+		setToggleState(wallBangButton, aimWallbangEnabled, "Piercer Bullet: ON", "Piercer Bullet: OFF")
+		setExtractedBtnState("Piercer Bullet", aimWallbangEnabled)
+	end},
+	{name = "Auto Shoot Murderer", defaultKey = nil, getState = function() return aimAutoShotEnabled end, callback = function()
+		aimAutoShotEnabled = not aimAutoShotEnabled
+		setToggleState(autoShotButton, aimAutoShotEnabled, "Auto Shoot Murderer: ON", "Auto Shoot Murderer: OFF")
+		setExtractedBtnState("Auto Shoot Murderer", aimAutoShotEnabled)
+	end},
+	{name = "TP to Lobby", defaultKey = nil, getState = function() return false end, callback = function()
+		local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
+		if h then h.CFrame = CFrame.new(23, 505, -34); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end
+	end},
+	{name = "TP to VoteMap", defaultKey = nil, getState = function() return false end, callback = function()
+		local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
+		if h then h.CFrame = CFrame.new(14, 507, 35); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end
+	end},
+	{name = "TP to Map", defaultKey = nil, getState = function() return false end, callback = function()
+		tpToMap()
+	end},
+	{name = "TP Above Map", defaultKey = nil, getState = function() return false end, callback = function()
+		tpAboveMap()
+	end},
+	{name = "TP to Void", defaultKey = nil, getState = function() return false end, callback = function()
+		local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
+		if h then voidTpPreviousPos = h.CFrame; h.CFrame = CFrame.new(voidBaseplatePos.X, voidBaseplatePos.Y + 1, voidBaseplatePos.Z); notify("Teleported", "Teleported to Void Baseplate", 2) end
+	end},
+	{name = "TP to Sheriff", defaultKey = nil, getState = function() return false end, callback = function()
+		tpToRole("Sheriff")
+	end},
+	{name = "TP to Hero", defaultKey = nil, getState = function() return false end, callback = function()
+		tpToRole("Hero")
+	end},
+	{name = "TP to Murderer", defaultKey = nil, getState = function() return false end, callback = function()
+		tpToRole("Murderer")
+	end},
+	{name = "Reset Player", defaultKey = nil, getState = function() return false end, callback = function()
+		executeNanFling()
+	end},
+	{name = "Reset Everyone", defaultKey = nil, getState = function() return false end, callback = function()
+		executeNanFlingEveryone()
+	end},
+	{name = "Kill Everyone", defaultKey = nil, getState = function() return false end, callback = function()
+		local c = doKillEveryone(false)
+		if c == nil then notify("Kill Everyone", "You need the knife (be the Murderer).", 2) else notify("Kill Everyone", "Hit " .. c .. " player(s).", 1.5) end
+	end},
+	{name = "Kill Everyone (No Friends)", defaultKey = nil, getState = function() return false end, callback = function()
+		local c = doKillEveryone(true)
+		if c == nil then notify("Kill Everyone", "You need the knife (be the Murderer).", 2) else notify("Kill Everyone", "Hit " .. c .. " non-friend(s).", 1.5) end
+	end},
+	{name = "Kill Sheriff", defaultKey = nil, getState = function() return false end, callback = function()
+		local c = doKillSheriff()
+		if c == nil then notify("Kill Sheriff", "You need the knife (be the Murderer).", 2) elseif c == 0 then notify("Kill Sheriff", "No Sheriff / gun holder found.", 2) else notify("Kill Sheriff", "Hit " .. c .. " target(s).", 1.5) end
+	end},
+	{name = "Kill Player", defaultKey = nil, getState = function() return false end, callback = function()
+		local sels = killPicker and killPicker.selectedNames
+		if not sels or #sels == 0 then notify("Kill Player", "No players selected.", 2) return end
+		local killed = 0
+		for _, sel in ipairs(sels) do local ok = doKillPlayer(sel); if ok then killed = killed + 1 end end
+		notify("Kill Player", "Knifed " .. killed .. "/" .. #sels .. " player(s)", 1.5)
+	end},
+	{name = "Shoot Murderer", defaultKey = nil, getState = function() return false end, callback = function()
+		doShootMurderer()
+	end},
+	{name = "Auto Mute Coins", defaultKey = nil, getState = function() return autoMuteCoinsEnabled end, callback = function()
+		toggleAutoMuteCoins()
+		setToggleState(btn.autoMuteCoins, autoMuteCoinsEnabled, "Auto Mute Coins: ON", "Auto Mute Coins: OFF")
+		setExtractedBtnState("Auto Mute Coins", autoMuteCoinsEnabled)
 	end},
 }
 
@@ -12949,7 +13952,7 @@ for bindOrder, feature in ipairs(bindableFeatures) do
 	row.Parent = categoryFrames["Binds"]
 
 	local label = Instance.new("TextLabel")
-	label.Size = UDim2.new(1, -164, 1, 0)
+	label.Size = UDim2.new(1, -160, 1, 0)
 	label.BackgroundTransparency = 1
 	label.Text = feature.name
 	label.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -13366,9 +14369,26 @@ function createTeamerPlayerButton(plr)
 			popupGui.Enabled = false
 		end)
 
+		-- Inspect Avatar button (below title bar)
+		local inspectBtn = Instance.new("TextButton")
+		inspectBtn.Name = "InspectAvatarBtn"
+		inspectBtn.Size = UDim2.new(0, 100, 0, 26)
+		inspectBtn.Position = UDim2.new(0.5, -50, 0, 42)
+		inspectBtn.BackgroundTransparency = 1
+		inspectBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		inspectBtn.Text = "Inspect Avatar"
+		inspectBtn.Font = Enum.Font.SourceSansBold
+		inspectBtn.TextSize = 14
+		inspectBtn.Parent = popup
+		inspectBtn.MouseButton1Click:Connect(function()
+			local GuiService = game:GetService("GuiService")
+			pcall(function() GuiService:CloseInspectMenu() end)
+			pcall(function() GuiService:InspectPlayerFromUserId(plr.UserId) end)
+		end)
+
 		local friendsScroll = Instance.new("ScrollingFrame")
-		friendsScroll.Size = UDim2.new(1, -10, 0, 400)
-		friendsScroll.Position = UDim2.new(0, 5, 0, 45)
+		friendsScroll.Size = UDim2.new(1, -10, 0, 370)
+		friendsScroll.Position = UDim2.new(0, 5, 0, 72)
 		friendsScroll.BackgroundTransparency = 1
 		friendsScroll.ScrollBarThickness = 4
 		friendsScroll.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
@@ -16809,6 +17829,325 @@ local voteStartInputC = Instance.new("UICorner")
 voteStartInputC.CornerRadius = UDim.new(0, 6)
 voteStartInputC.Parent = voteStartSoundInput
 
+-- ============== Multi-Config System ==============
+currentCategory = "Settings"
+CONFIGS_DIR = "AdrenalinConfigs"
+currentConfigName = "Default"
+autoSaveEnabled = false
+
+local function getConfigFiles()
+	ensureFolder()
+	local files = {}
+	local dir = CONFIGS_DIR .. "/"
+	local success, result = pcall(function() return listfiles(dir) end)
+	if success then
+		for _, f in ipairs(result) do
+			if f:match("%.json$") then
+				local name = f:match("([^/\\]+)%.json$")
+				if name then table.insert(files, name) end
+			end
+		end
+	end
+	if #files == 0 then table.insert(files, "Default") end
+	return files
+end
+
+local function saveConfigByName(name)
+	if isApplyingConfig then return end
+	ensureFolder()
+	local fullPath = CONFIGS_DIR .. "/" .. name .. ".json"
+	local configData = buildConfigData()
+	local encoded = game:GetService("HttpService"):JSONEncode(configData)
+	task.defer(function()
+		pcall(function() writefile(fullPath, encoded) end)
+	end)
+end
+
+function buildConfigData()
+	local config = { toggles = {}, values = {}, binds = {}, extractedBtns = {}, locks = {}, pickerCollapsed = {}, pickerMultiSelect = {} }
+	-- Fill with same fields as saveConfig...
+	config.toggles.isEnabled = isEnabled; config.toggles.wallhopToggle = wallhopToggle
+	config.toggles.noclipEnabled = noclipEnabled; config.toggles.reachEnabled = reachEnabled
+	config.toggles.fakeSpeedEnabled = fakeSpeedEnabled; config.toggles.secondLifeEnabled = secondLifeEnabled
+	config.toggles.invis_on = invis_on; config.toggles.autoInvisEnabled = autoInvisEnabled
+	config.toggles.autoTpEnabled = autoTpEnabled; config.toggles.clumsy_on = clumsy_on
+	config.toggles.PastedSources = PastedSources; config.toggles.desyncSpinEnabled = DesyncSpinActive
+	config.toggles.antiFlingEnabled = antiFlingEnabled; config.toggles.antiVoidEnabled = antiVoidEnabled
+	config.toggles.espEnabled = espEnabled; config.toggles.espLabelExploitersEnabled = espLabelExploitersEnabled
+	config.toggles.espLabelTeamersEnabled = espLabelTeamersEnabled; config.toggles.espLabelScammersEnabled = espLabelScammersEnabled
+	config.toggles.autoGrabGunEnabled = autoGrabGunEnabled; config.toggles.autoDodgeEnabled = autoDodgeEnabled
+	config.toggles.gunAuraEnabled = gunAuraEnabled; config.toggles.autoDeleteCoinsEnabled = autoDeleteCoinsEnabled
+	config.toggles.autoKillEveryoneEnabled = autoKillEveryoneEnabled; config.toggles.autoKillEveryoneNoFriendsEnabled = autoKillEveryoneNoFriendsEnabled
+	config.toggles.autoKillSheriffEnabled = autoKillSheriffEnabled; config.toggles.autoMuteCoinsEnabled = autoMuteCoinsEnabled
+	config.toggles.autoDeleteCorpsesEnabled = autoDeleteCorpsesEnabled; config.toggles.hiddenfling = hiddenfling
+	config.toggles.airStrafeEnabled = airStrafeEnabled; config.toggles.autoResetPlayerEnabled = autoResetPlayerEnabled
+	config.toggles.autoResetEveryoneEnabled = autoResetEveryoneEnabled; config.toggles.autoResetSheriffEnabled = autoResetSheriffEnabled
+	config.toggles.autoResetMurdererEnabled = autoResetMurdererEnabled; config.toggles.aimWallbangEnabled = aimWallbangEnabled
+	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled; config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
+	config.toggles.fakeDuckEnabled = fakeDuckEnabled; config.toggles.loopSpeedEnabled = loopSpeedEnabled
+	config.toggles.antiAimMode = currentMode; config.toggles.gameNotifEnabled = gameNotifEnabled
+	config.toggles.notifyOnExploiters = notifyOnExploiters; config.toggles.notifyOnTeamers = notifyOnTeamers
+	config.toggles.notifyOnScammers = notifyOnScammers; config.toggles.hideButtonsEnabled = hideButtonsEnabled
+	config.toggles.notifyOnVoteStart = notifyOnVoteStart
+	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled; config.toggles.headlessKorbloxEnabled = headlessKorbloxEnabled
+	config.toggles.crosshairEnabled = crosshairEnabled; config.toggles.keystrokeEnabled = keystrokeEnabled
+	config.toggles.shadersEnabled = shadersEnabled
+	if keystrokeSavedPos then config.keystrokePos = {X = {Scale = keystrokeSavedPos.X.Scale, Offset = keystrokeSavedPos.X.Offset}, Y = {Scale = keystrokeSavedPos.Y.Scale, Offset = keystrokeSavedPos.Y.Offset}} end
+	config.values.JUMP_BOOST_POWER = JUMP_BOOST_POWER; config.values.FAKE_SPEED_CFRAME_SPEED = FAKE_SPEED_CFRAME_SPEED
+	config.values.range = range; config.values.autoInvisActivateDist = autoInvisActivateDist
+	config.values.autoInvisDeactivateDist = autoInvisDeactivateDist; config.values.autoTpDist = autoTpDist
+	config.values.autoTpTarget = autoTpTarget; config.values.MAGNET_DISTANCE = MAGNET_DISTANCE
+	config.values.DesyncOffsetRange = DesyncOffsetRange; config.values.antiAimSpeed = antiAimSpeed
+	config.values.loopSpeedValue = loopSpeedValue; config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
+	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed; config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
+	config.values.multiFlingCollapsed = multiFlingCollapsed or false; config.values.airStrafeMultiplier = airStrafeMultiplier
+	config.values.toggleBgTransparency = toggleBgTransparency; config.values.mainBgTransparency = mainBgTransparency
+	config.values.popupBgTransparency = popupBgTransparency; config.values.toggleButtonSize = toggleButtonSize
+	config.values.mainMenuWidth = mainMenuWidth; config.values.mainMenuHeight = mainMenuHeight
+	config.values.popupBtnWidth = popupBtnWidth; config.values.popupBtnHeight = popupBtnHeight
+	config.values.fpsPingBtnWidth = fpsPingBtnWidth; config.values.fpsPingBtnHeight = fpsPingBtnHeight
+	config.values.customFov = customFov; config.values.animationEnabled = animationEnabled
+	config.values.btnPressAnimationEnabled = btnPressAnimationEnabled; config.values.animationStyle = animationStyle
+	config.values.mainBgImageUrl = mainBgImageUrl; config.values.clickSoundPath = clickSoundPath
+	config.values.toggleSoundPath = toggleSoundPath; config.values.startupSoundPath = startupSoundPath
+	config.values.sheriffDieSoundPath = sheriffDieSoundPath; config.values.murdererDieSoundPath = murdererDieSoundPath
+	config.values.teamerJoinSoundPath = teamerJoinSoundPath; config.values.teamerLeaveSoundPath = teamerLeaveSoundPath
+	config.values.exploiterJoinSoundPath = exploiterJoinSoundPath; config.values.exploiterLeaveSoundPath = exploiterLeaveSoundPath
+	config.values.scammerJoinSoundPath = scammerJoinSoundPath; config.values.scammerLeaveSoundPath = scammerLeaveSoundPath
+	config.values.markSoundPath = markSoundPath; config.values.unmarkSoundPath = unmarkSoundPath
+	config.values.roundStartSoundPath = roundStartSoundPath; config.values.voteStartSoundPath = voteStartSoundPath
+	config.values.scriptActivationCount = scriptActivationCount
+	if mainMenuColor then config.values.mainMenuColorR = math.floor(mainMenuColor.R * 255); config.values.mainMenuColorG = math.floor(mainMenuColor.G * 255); config.values.mainMenuColorB = math.floor(mainMenuColor.B * 255) end
+	if toggleBtnColor then config.values.toggleBtnColorR = math.floor(toggleBtnColor.R * 255); config.values.toggleBtnColorG = math.floor(toggleBtnColor.G * 255); config.values.toggleBtnColorB = math.floor(toggleBtnColor.B * 255) end
+	if tabBgColor then config.values.tabBgColorR = math.floor(tabBgColor.R * 255); config.values.tabBgColorG = math.floor(tabBgColor.G * 255); config.values.tabBgColorB = math.floor(tabBgColor.B * 255) end
+	if tabTextColor then config.values.tabTextColorR = math.floor(tabTextColor.R * 255); config.values.tabTextColorG = math.floor(tabTextColor.G * 255); config.values.tabTextColorB = math.floor(tabTextColor.B * 255) end
+	if tabActiveBgColor then config.values.tabActiveBgColorR = math.floor(tabActiveBgColor.R * 255); config.values.tabActiveBgColorG = math.floor(tabActiveBgColor.G * 255); config.values.tabActiveBgColorB = math.floor(tabActiveBgColor.B * 255) end
+	if tabActiveTextColor then config.values.tabActiveTextColorR = math.floor(tabActiveTextColor.R * 255); config.values.tabActiveTextColorG = math.floor(tabActiveTextColor.G * 255); config.values.tabActiveTextColorB = math.floor(tabActiveTextColor.B * 255) end
+	if inputBgColor then config.values.inputBgColorR = math.floor(inputBgColor.R * 255); config.values.inputBgColorG = math.floor(inputBgColor.G * 255); config.values.inputBgColorB = math.floor(inputBgColor.B * 255) end
+	if inputTextColor then config.values.inputTextColorR = math.floor(inputTextColor.R * 255); config.values.inputTextColorG = math.floor(inputTextColor.G * 255); config.values.inputTextColorB = math.floor(inputTextColor.B * 255) end
+	for name, key in pairs(featureBinds) do config.binds[name] = tostring(key) end
+	if extractedButtons then
+		for name, data in pairs(extractedButtons) do
+			if data and data.btn then
+				local p = data.btn.Position
+				config.extractedBtns[name] = { pos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}}, locked = (data.popupLockBtn and data.popupLockBtn.Text == "L") or false }
+			end
+		end
+	end
+	config.locks = { popupDragLocked = popupDragLocked or false, toggleDragLocked = toggleDragLocked or false }
+	if toggleButton then local p = toggleButton.Position; config.togglePos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}} end
+	if savedAvatars then config.savedAvatars = savedAvatars end
+	config.changerAutoApply = changerAutoApply or false; config.changerLastAvatarName = changerLastAvatarName; config.changerLastAvatarFields = changerLastAvatarFields
+	if savedSkyboxes then config.savedSkyboxes = savedSkyboxes end
+	config.bindToggleStates = {}; if bindToggleStates then for n, s in pairs(bindToggleStates) do config.bindToggleStates[n] = s end end
+	if trollPicker then config.pickerCollapsed.Troll = trollPicker.collapsed end
+	if resetPicker then config.pickerCollapsed.Reset = resetPicker.collapsed end
+	if shootPicker then config.pickerCollapsed.Shoot = shootPicker.collapsed end
+	if killPicker then config.pickerCollapsed.Kill = killPicker.collapsed end
+	if watchMurdererPicker then config.pickerCollapsed.WatchMurderer = watchMurdererPicker.collapsed end
+	if watchSheriffPicker then config.pickerCollapsed.WatchSheriff = watchSheriffPicker.collapsed end
+	return config
+end
+
+-- Config list row
+configListRow = Instance.new("Frame")
+configListRow.Size = UDim2.new(1, 0, 0, 42)
+configListRow.BackgroundTransparency = 1
+configListRow.LayoutOrder = 730
+configListRow.Parent = categoryFrames["Settings"]
+
+configListLabel = Instance.new("TextLabel")
+configListLabel.Size = UDim2.new(1, -172, 1, 0)
+configListLabel.BackgroundTransparency = 1
+configListLabel.Text = "Config: " .. currentConfigName
+configListLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+configListLabel.Font = Enum.Font.SourceSansBold
+configListLabel.TextSize = 15
+configListLabel.TextXAlignment = Enum.TextXAlignment.Left
+configListLabel.Parent = configListRow
+
+configListSelect = Instance.new("TextButton")
+configListSelect.Size = UDim2.new(0, 164, 1, 0)
+configListSelect.Position = UDim2.new(1, -168, 0, 0)
+configListSelect.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+configListSelect.TextColor3 = Color3.fromRGB(255, 255, 255)
+configListSelect.Text = currentConfigName .. " ▼"
+configListSelect.Font = Enum.Font.SourceSansBold
+configListSelect.TextSize = 13
+configListSelect.AutoButtonColor = false
+configListSelect.Parent = configListRow
+Instance.new("UICorner", configListSelect).CornerRadius = UDim.new(0, 6)
+
+local configDropdownFrame = Instance.new("Frame")
+configDropdownFrame.Size = UDim2.new(0, 164, 0, 0)
+configDropdownFrame.Position = UDim2.new(0, 0, 0, 42)
+configDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+configDropdownFrame.BorderSizePixel = 0
+configDropdownFrame.Visible = false
+configDropdownFrame.ZIndex = 10
+configDropdownFrame.Parent = configListRow
+
+local configDropdownList = Instance.new("ScrollingFrame")
+configDropdownList.Size = UDim2.new(1, 0, 1, 0)
+configDropdownList.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+configDropdownList.BorderSizePixel = 0
+configDropdownList.ScrollBarThickness = 4
+configDropdownList.ZIndex = 10
+configDropdownList.Parent = configDropdownFrame
+
+Instance.new("UICorner", configDropdownList).CornerRadius = UDim.new(0, 6)
+
+local function refreshConfigDropdown()
+	for _, child in ipairs(configDropdownList:GetChildren()) do
+		if child:IsA("TextButton") then child:Destroy() end
+	end
+	local files = getConfigFiles()
+	configDropdownList.CanvasSize = UDim2.new(0, 0, 0, #files * 30)
+	configDropdownFrame.Size = UDim2.new(0, 164, 0, math.min(#files * 30, 150))
+	for i, name in ipairs(files) do
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, 0, 0, 30)
+		btn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+		btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		btn.Text = name
+		btn.Font = Enum.Font.SourceSansBold
+		btn.TextSize = 14
+		btn.AutoButtonColor = false
+		btn.ZIndex = 10
+		btn.Parent = configDropdownList
+		btn.MouseButton1Click:Connect(function()
+			configListSelect.Text = name .. " ▼"
+			configDropdownFrame.Visible = false
+			-- Load config
+			local fullPath = CONFIGS_DIR .. "/" .. name .. ".json"
+			local ok, data = pcall(function() return readfile(fullPath) end)
+			if ok and data then
+				local decoded = game:GetService("HttpService"):JSONDecode(data)
+				loadedConfig = decoded
+				currentConfigName = name
+				configListLabel.Text = "Config: " .. currentConfigName
+				restoreFullConfig()
+				notify("Config", "Loaded '" .. name .. "'", 2)
+			end
+		end)
+		btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+		btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+	end
+end
+
+configListSelect.MouseButton1Click:Connect(function()
+	refreshConfigDropdown()
+	configDropdownFrame.Visible = not configDropdownFrame.Visible
+end)
+
+-- Close dropdown when clicking the toggle again (handled in toggle Click)
+
+-- Save As row (new config name input)
+configNameRow = Instance.new("Frame")
+configNameRow.Size = UDim2.new(1, 0, 0, 42)
+configNameRow.BackgroundTransparency = 1
+configNameRow.LayoutOrder = 731
+configNameRow.Parent = categoryFrames["Settings"]
+
+configNameInput = Instance.new("TextBox")
+configNameInput.Size = UDim2.new(1, -82, 1, 0)
+configNameInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+configNameInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+configNameInput.Text = ""
+configNameInput.PlaceholderText = "Enter config name..."
+configNameInput.Font = Enum.Font.SourceSansBold
+configNameInput.TextSize = 15
+configNameInput.ClearTextOnFocus = true
+configNameInput.Parent = configNameRow
+Instance.new("UICorner", configNameInput).CornerRadius = UDim.new(0, 6)
+
+configSaveAsBtn = Instance.new("TextButton")
+configSaveAsBtn.Size = UDim2.new(0, 76, 1, 0)
+configSaveAsBtn.Position = UDim2.new(1, -78, 0, 0)
+configSaveAsBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+configSaveAsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+configSaveAsBtn.Text = "Save As"
+configSaveAsBtn.Font = Enum.Font.SourceSansBold
+configSaveAsBtn.TextSize = 14
+configSaveAsBtn.AutoButtonColor = false
+configSaveAsBtn.Parent = configNameRow
+Instance.new("UICorner", configSaveAsBtn).CornerRadius = UDim.new(0, 6)
+
+configSaveAsBtn.MouseButton1Click:Connect(function()
+	local name = configNameInput.Text:match("^%s*(.-)%s*$")
+	if name and name ~= "" then
+		saveConfigByName(name)
+		currentConfigName = name
+		configListLabel.Text = "Config: " .. currentConfigName
+		configListSelect.Text = name .. " ▼"
+		configNameInput.Text = ""
+		refreshConfigDropdown()
+		notify("Config", "Saved as '" .. name .. "'", 2)
+	else
+		notify("Config", "Enter a valid config name", 2)
+	end
+end)
+
+configSaveBtn = createButton("ConfigSaveButton", "Save Config", 732)
+configSaveBtn.MouseButton1Click:Connect(function()
+	saveConfigByName(currentConfigName)
+	notify("Config", "Saved '" .. currentConfigName .. "'", 2)
+end)
+
+configLoadBtn = createButton("ConfigLoadButton", "Load Config", 733)
+configLoadBtn.MouseButton1Click:Connect(function()
+	local name = configListSelect.Text:gsub(" ▼$", "")
+	if name and name ~= "" then
+		local fullPath = CONFIGS_DIR .. "/" .. name .. ".json"
+		local ok, data = pcall(function() return readfile(fullPath) end)
+		if ok and data then
+			local decoded = game:GetService("HttpService"):JSONDecode(data)
+			loadedConfig = decoded
+			currentConfigName = name
+			configListLabel.Text = "Config: " .. currentConfigName
+			restoreFullConfig()
+			notify("Config", "Loaded '" .. name .. "'", 2)
+		else
+			notify("Config", "Config '" .. name .. "' not found", 2)
+		end
+	end
+end)
+
+configDeleteBtn = createButton("ConfigDeleteButton", "Delete Config", 734)
+configDeleteBtn.MouseButton1Click:Connect(function()
+	local name = configListSelect.Text:gsub(" ▼$", "")
+	if name and name ~= "" and name ~= "Default" then
+		local fullPath = CONFIGS_DIR .. "/" .. name .. ".json"
+		pcall(function() delfile(fullPath) end)
+		notify("Config", "Deleted '" .. name .. "'", 2)
+		configListSelect.Text = currentConfigName .. " ▼"
+		refreshConfigDropdown()
+	end
+end)
+
+configRefreshBtn = createButton("ConfigRefreshButton", "Refresh List", 735)
+configRefreshBtn.MouseButton1Click:Connect(function()
+	local files = getConfigFiles()
+	notify("Config", "Found " .. #files .. " config(s)", 2)
+end)
+
+-- Auto-save toggle
+autoSaveBtn = createButton("AutoSaveButton", "Auto-Save: OFF", 736)
+autoSaveBtn.MouseButton1Click:Connect(function()
+	autoSaveEnabled = not autoSaveEnabled
+	setToggleState(autoSaveBtn, autoSaveEnabled, "Auto-Save: ON", "Auto-Save: OFF")
+end)
+
+-- Patch saveConfig to auto-save to current config
+local origSaveConfig = saveConfig
+saveConfig = function()
+	origSaveConfig()
+	if autoSaveEnabled and currentConfigName then
+		saveConfigByName(currentConfigName)
+	end
+end
+
 -- ============================================
 -- SECTION 9: Buttons (standalone popup buttons)
 -- ============================================
@@ -16959,7 +18298,7 @@ btnFeatures = {
 	{name = "Kill Sheriff",
 	 toggle = function() local c = doKillSheriff(); if c == nil then notify("Kill Sheriff", "You need the knife (be the Murderer).", 2) elseif c == 0 then notify("Kill Sheriff", "No Sheriff / gun holder found.", 2) else notify("Kill Sheriff", "Hit " .. c .. " target(s).", 1.5) end end},
 	{name = "Kill Player",
-	 toggle = function() local sel = killPicker and killPicker.selectedName; if not sel then notify("Kill Player", "No player selected.", 2) return end; local ok, why = doKillPlayer(sel); if ok then notify("Kill Player", "Knifed " .. sel, 1.5) elseif why == "noknife" then notify("Kill Player", "You need the knife (be the Murderer).", 2) elseif why == "dead" then notify("Kill Player", sel .. " is already dead.", 2) else notify("Kill Player", "Target not available.", 2) end end},
+	 toggle = function() local sels = killPicker and killPicker.selectedNames; if not sels or #sels == 0 then notify("Kill Player", "No players selected.", 2) return end; local killed = 0; for _, sel in ipairs(sels) do local ok = doKillPlayer(sel); if ok then killed = killed + 1 end end; notify("Kill Player", "Knifed " .. killed .. "/" .. #sels .. " player(s)", 1.5) end},
 	{name = "Auto Kill Everyone",
 	 toggle = function() autoKillEveryoneEnabled = not autoKillEveryoneEnabled; setToggleState(autoKillEveryoneBtn, autoKillEveryoneEnabled, "Auto Kill Everyone: ON", "Auto Kill Everyone: OFF"); setExtractedBtnState("Auto Kill Everyone", autoKillEveryoneEnabled); if autoKillEveryoneEnabled then startAutoKillEveryone() end end,
 	 getState = function() return autoKillEveryoneEnabled end},
@@ -16994,6 +18333,8 @@ popupDragLocked = false
 popupBgTransparency = 0
 popupBtnWidth = 204
 popupBtnHeight = 46
+fpsPingBtnWidth = 200
+fpsPingBtnHeight = 64
 
 lockDragBtn = Instance.new("TextButton")
 lockDragBtn.Name = "LockDragBtn"
@@ -17163,7 +18504,7 @@ popupWidthInput.FocusLost:Connect(function()
 	if val and val >= 100 and val <= 400 then
 		popupBtnWidth = val
 		for name, data in pairs(extractedButtons) do
-			if data.btn then
+			if data.btn and name ~= "FPS+Ping" and name ~= "FPS" and name ~= "Ping" then
 				data.btn.Size = UDim2.new(0, val, 0, popupBtnHeight)
 			end
 		end
@@ -17178,12 +18519,81 @@ popupHeightInput.FocusLost:Connect(function()
 	if val and val >= 30 and val <= 100 then
 		popupBtnHeight = val
 		for name, data in pairs(extractedButtons) do
-			if data.btn then
+			if data.btn and name ~= "FPS+Ping" and name ~= "FPS" and name ~= "Ping" then
 				data.btn.Size = UDim2.new(0, popupBtnWidth, 0, val)
 			end
 		end
 	else
 		popupHeightInput.Text = tostring(popupBtnHeight)
+	end
+	saveConfig()
+end)
+
+-- FPS+Ping Button Size
+fpsPingSizeRow = Instance.new("Frame")
+fpsPingSizeRow.Size = UDim2.new(1, 0, 0, 42)
+fpsPingSizeRow.BackgroundTransparency = 1
+fpsPingSizeRow.LayoutOrder = 707
+fpsPingSizeRow.Parent = categoryFrames["Settings"]
+
+fpsPingSizeLabel = Instance.new("TextLabel")
+fpsPingSizeLabel.Size = UDim2.new(1, -160, 1, 0)
+fpsPingSizeLabel.BackgroundTransparency = 1
+fpsPingSizeLabel.Text = "FPS+Ping Btn (W x H)"
+fpsPingSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+fpsPingSizeLabel.Font = Enum.Font.SourceSansBold
+fpsPingSizeLabel.TextSize = 16
+fpsPingSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+fpsPingSizeLabel.Parent = fpsPingSizeRow
+
+fpsPingWidthInput = Instance.new("TextBox")
+fpsPingWidthInput.Size = UDim2.new(0, 68, 1, 0)
+fpsPingWidthInput.Position = UDim2.new(1, -146, 0, 0)
+fpsPingWidthInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+fpsPingWidthInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+fpsPingWidthInput.Text = tostring(fpsPingBtnWidth)
+fpsPingWidthInput.PlaceholderText = "W"
+fpsPingWidthInput.Font = Enum.Font.SourceSansBold
+fpsPingWidthInput.TextSize = 15
+fpsPingWidthInput.ClearTextOnFocus = false
+fpsPingWidthInput.Parent = fpsPingSizeRow
+Instance.new("UICorner", fpsPingWidthInput).CornerRadius = UDim.new(0, 6)
+
+fpsPingHeightInput = Instance.new("TextBox")
+fpsPingHeightInput.Size = UDim2.new(0, 68, 1, 0)
+fpsPingHeightInput.Position = UDim2.new(1, -74, 0, 0)
+fpsPingHeightInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+fpsPingHeightInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+fpsPingHeightInput.Text = tostring(fpsPingBtnHeight)
+fpsPingHeightInput.PlaceholderText = "H"
+fpsPingHeightInput.Font = Enum.Font.SourceSansBold
+fpsPingHeightInput.TextSize = 15
+fpsPingHeightInput.ClearTextOnFocus = false
+fpsPingHeightInput.Parent = fpsPingSizeRow
+Instance.new("UICorner", fpsPingHeightInput).CornerRadius = UDim.new(0, 6)
+
+fpsPingWidthInput.FocusLost:Connect(function()
+	local val = tonumber(fpsPingWidthInput.Text)
+	if val and val >= 80 and val <= 400 then
+		fpsPingBtnWidth = val
+		if extractedButtons["FPS+Ping"] and extractedButtons["FPS+Ping"].btn then
+			extractedButtons["FPS+Ping"].btn.Size = UDim2.new(0, val, 0, fpsPingBtnHeight)
+		end
+	else
+		fpsPingWidthInput.Text = tostring(fpsPingBtnWidth)
+	end
+	saveConfig()
+end)
+
+fpsPingHeightInput.FocusLost:Connect(function()
+	local val = tonumber(fpsPingHeightInput.Text)
+	if val and val >= 30 and val <= 120 then
+		fpsPingBtnHeight = val
+		if extractedButtons["FPS+Ping"] and extractedButtons["FPS+Ping"].btn then
+			extractedButtons["FPS+Ping"].btn.Size = UDim2.new(0, fpsPingBtnWidth, 0, val)
+		end
+	else
+		fpsPingHeightInput.Text = tostring(fpsPingBtnHeight)
 	end
 	saveConfig()
 end)
@@ -17252,8 +18662,8 @@ for bindOrder, feature in ipairs(btnFeatures) do
 			end
 
 			local isBoth = feature.name == "FPS+Ping"
-			local width = isBoth and 200 or 150
-			local height = isBoth and 64 or 46
+			local width = isBoth and fpsPingBtnWidth or 150
+			local height = isBoth and fpsPingBtnHeight or 46
 
 			local vpY = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y or 800
 			local maxRows = math.max(1, math.floor((vpY - 20) / (height + 2)))
@@ -17921,6 +19331,11 @@ function restoreFullConfig()
 	autoKillEveryoneEnabled = T.autoKillEveryoneEnabled or false
 	autoKillEveryoneNoFriendsEnabled = T.autoKillEveryoneNoFriendsEnabled or false
 	autoKillSheriffEnabled = T.autoKillSheriffEnabled or false
+	zombieTryhardEnabled = T.zombieTryhardEnabled or false
+	headlessKorbloxEnabled = T.headlessKorbloxEnabled or false
+	crosshairEnabled = T.crosshairEnabled or false
+	keystrokeEnabled = T.keystrokeEnabled or false
+	shadersEnabled = T.shadersEnabled or false
 
 	-- Restore values
 	if c.values then
@@ -17946,6 +19361,8 @@ function restoreFullConfig()
 		if c.values.mainMenuHeight ~= nil then mainMenuHeight = c.values.mainMenuHeight end
 		if c.values.popupBtnWidth ~= nil then popupBtnWidth = c.values.popupBtnWidth end
 		if c.values.popupBtnHeight ~= nil then popupBtnHeight = c.values.popupBtnHeight end
+		if c.values.fpsPingBtnWidth ~= nil then fpsPingBtnWidth = c.values.fpsPingBtnWidth end
+		if c.values.fpsPingBtnHeight ~= nil then fpsPingBtnHeight = c.values.fpsPingBtnHeight end
 		if c.values.customFov then customFov = c.values.customFov end
 		if c.values.mainMenuColorR ~= nil and c.values.mainMenuColorG ~= nil and c.values.mainMenuColorB ~= nil then
 			mainMenuColor = Color3.fromRGB(c.values.mainMenuColorR, c.values.mainMenuColorG, c.values.mainMenuColorB)
@@ -18237,6 +19654,12 @@ function restoreFullConfig()
 	if popupHeightInput and c.values and c.values.popupBtnHeight ~= nil then
 		popupHeightInput.Text = tostring(c.values.popupBtnHeight)
 	end
+	if fpsPingWidthInput and c.values and c.values.fpsPingBtnWidth ~= nil then
+		fpsPingWidthInput.Text = tostring(c.values.fpsPingBtnWidth)
+	end
+	if fpsPingHeightInput and c.values and c.values.fpsPingBtnHeight ~= nil then
+		fpsPingHeightInput.Text = tostring(c.values.fpsPingBtnHeight)
+	end
 	if fovInputBox and c.values and c.values.customFov then
 		fovInputBox.Text = tostring(c.values.customFov)
 	end
@@ -18485,6 +19908,44 @@ function restoreFullConfig()
 	end
 	updateAntiAimButtonVisual()
 
+	-- Restore utility toggles (re-enable if saved as on)
+	if T.zombieTryhardEnabled then zombieTryhardEnabled = false; enableZombieTryhard(); if btn.zombieBtn then setToggleState(btn.zombieBtn, true, "Zombie Tryhard: ON", "Zombie Tryhard: OFF") end end
+	if T.headlessKorbloxEnabled then headlessKorbloxEnabled = false; enableHeadlessKorblox(); if btn.headlessBtn then setToggleState(btn.headlessBtn, true, "Headless & Korblox: ON", "Headless & Korblox: OFF") end end
+	if T.crosshairEnabled then crosshairEnabled = false; enableCrosshair(); if btn.crosshairBtn then setToggleState(btn.crosshairBtn, true, "Adrenalin.win Crosshair: ON", "Adrenalin.win Crosshair: OFF") end end
+	-- Always restore the last keyboard position from config, even when Keystroke is currently
+	-- off, so that whenever it is enabled (now or later by hand) it returns to where it last was.
+	if c.keystrokePos then
+		local p = c.keystrokePos
+		keystrokeSavedPos = UDim2.new(p.X.Scale, p.X.Offset, p.Y.Scale, p.Y.Offset)
+	end
+	if T.keystrokeEnabled then
+		keystrokeEnabled = false; enableKeystroke()
+		if btn.keystrokeBtn then setToggleState(btn.keystrokeBtn, true, "Keystroke: ON", "Keystroke: OFF") end
+	end
+	if T.shadersEnabled then shadersEnabled = false; enableShaders(); if btn.shadersBtn then setToggleState(btn.shadersBtn, true, "Shaders: ON", "Shaders: OFF") end end
+
+	-- Restore bind toggle states
+	if c.bindToggleStates then
+		for name, state in pairs(c.bindToggleStates) do
+			bindToggleStates[name] = state
+		end
+	end
+
+	-- Restore Multi Fling collapse state
+	if c and c.values and c.values.multiFlingCollapsed ~= nil then
+		multiFlingCollapsed = c.values.multiFlingCollapsed
+		if multiFlingCollapsed then
+			local colBtn = multiFlingStatusLabel and multiFlingStatusLabel:FindFirstChild("MultiFlingCollapseBtn")
+			if colBtn then colBtn.Text = "+" end
+			if flingSearchBox then flingSearchBox.Visible = false end
+			if multiFlingFrame then multiFlingFrame.Visible = false end
+		end
+	end
+	-- Restore AirStrafe multiplier
+	if c and c.values and c.values.airStrafeMultiplier then
+		airStrafeMultiplier = c.values.airStrafeMultiplier
+		if airStrafeInput then airStrafeInput.Text = tostring(airStrafeMultiplier) end
+	end
 	-- Restore picker collapse states
 	if c and c.pickerCollapsed then
 		local pickers = { Troll = trollPicker, Reset = resetPicker, Shoot = shootPicker, Kill = killPicker, WatchMurderer = watchMurdererPicker, WatchSheriff = watchSheriffPicker }
@@ -18493,9 +19954,9 @@ function restoreFullConfig()
 				picker.collapsed = c.pickerCollapsed[key]
 				local titleBar = picker.statusLabel and picker.statusLabel.Parent
 				if titleBar then
-					local cb = titleBar:FindFirstChild(key .. "PickerCollapse")
-					local sb = titleBar.Parent:FindFirstChild(key .. "PickerSearch")
-					local pf = titleBar.Parent:FindFirstChild(key .. "PickerFrame")
+					local cb = titleBar:FindFirstChild(key .. "PickerCollapse") or titleBar:FindFirstChild(key .. "MultiPickerCollapse")
+					local sb = titleBar.Parent:FindFirstChild(key .. "PickerSearch") or titleBar.Parent:FindFirstChild(key .. "MultiPickerSearch")
+					local pf = titleBar.Parent:FindFirstChild(key .. "PickerFrame") or titleBar.Parent:FindFirstChild(key .. "MultiPickerFrame")
 					if cb then cb.Text = picker.collapsed and "+" or "-" end
 					if sb then sb.Visible = not picker.collapsed end
 					if pf then pf.Visible = not picker.collapsed end
@@ -18503,7 +19964,260 @@ function restoreFullConfig()
 			end
 		end
 	end
+	-- Restore multi-picker selections
+	if c and c.pickerMultiSelect then
+		local mpickers = { Kill = killPicker, WatchMurderer = watchMurdererPicker, WatchSheriff = watchSheriffPicker }
+		for key, picker in pairs(mpickers) do
+			if picker and c.pickerMultiSelect[key] then
+				picker.selectedNames = c.pickerMultiSelect[key]
+				task.defer(function() if picker.refresh then picker.refresh() end end)
+			end
+		end
+	end
 end
 
 -- Config restore Р±РµР· Р·Р°РґРµСЂР¶РєРё - UI СѓР¶Рµ РіРѕС‚РѕРІ Рє СЌС‚РѕРјСѓ РјРѕРјРµРЅС‚Сѓ
+
+-- ============================================
+-- TAB RESTRUCTURE: Re-parent elements to Sheriff, Murderer, Reset tabs
+-- ============================================
+do
+	-- SHERIFF TAB: LayoutOrder 250-260
+	local sheriffFrame = categoryFrames["Sheriff"]
+	if sheriffFrame then
+		local sherSection = Instance.new("TextLabel")
+		sherSection.Size = UDim2.new(1, 0, 0, 24)
+		sherSection.BackgroundTransparency = 1
+		sherSection.TextColor3 = Color3.fromRGB(255, 255, 255)
+		sherSection.TextXAlignment = Enum.TextXAlignment.Left
+		sherSection.Text = "Sheriff"
+		sherSection.Font = Enum.Font.SourceSansBold
+		sherSection.TextSize = 15
+		sherSection.LayoutOrder = 250
+		sherSection.Parent = sheriffFrame
+		-- Move Shoot Murderer
+		if shootMurdererButton then shootMurdererButton.Parent = sheriffFrame; shootMurdererButton.LayoutOrder = 251 end
+		-- Move LMB Shoot
+		if lmbShootButton then lmbShootButton.Parent = sheriffFrame; lmbShootButton.LayoutOrder = 252 end
+		-- Move Piercer Bullet
+		if wallBangButton then wallBangButton.Parent = sheriffFrame; wallBangButton.LayoutOrder = 253 end
+		-- Move Shoot Picker
+		if shootPicker and shootPicker.statusLabel then
+			local titleBar = shootPicker.statusLabel.Parent
+			if titleBar then titleBar.Parent = sheriffFrame; titleBar.LayoutOrder = 254 end
+			local searchBox = titleBar and titleBar.Parent and titleBar.Parent:FindFirstChild("ShootPickerSearch")
+			-- picker search and frame are siblings of titleBar in the same parent
+			for _, child in ipairs(sheriffFrame:GetChildren()) do end -- no-op
+		end
+		-- Actually re-parent all picker elements by prefix
+		local combatFrame = categoryFrames["Combat"]
+		if combatFrame then
+			for _, child in ipairs(combatFrame:GetChildren()) do
+				if child.Name:match("^Shoot") and child.Name:match("Picker") then
+					child.Parent = sheriffFrame
+					if child.Name:match("TitleBar") then child.LayoutOrder = 254 end
+					if child.Name:match("Search") then child.LayoutOrder = 254.005 end
+					if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 254.006 end
+				end
+			end
+		end
+		-- Move Shoot Player button
+		if shootPlayerButton then shootPlayerButton.Parent = sheriffFrame; shootPlayerButton.LayoutOrder = 255 end
+		-- Move Auto Shoot Murderer
+		if autoShotButton then autoShotButton.Parent = sheriffFrame; autoShotButton.LayoutOrder = 256 end
+		-- Move AutoGrab Gun
+		if btn.autoGrabGun then btn.autoGrabGun.Parent = sheriffFrame; btn.autoGrabGun.LayoutOrder = 257 end
+		-- Move Gun Aura (it's a dual row: btn.gunAura.Parent is a row frame)
+		if btn.gunAura then
+			local row = btn.gunAura.Parent
+			if row then row.Parent = sheriffFrame; row.LayoutOrder = 258 end
+		end
+	end
+
+	-- MURDERER TAB: LayoutOrder 270-285
+	local murdererFrame = categoryFrames["Murderer"]
+	if murdererFrame then
+		local murdSection = Instance.new("TextLabel")
+		murdSection.Size = UDim2.new(1, 0, 0, 24)
+		murdSection.BackgroundTransparency = 1
+		murdSection.TextColor3 = Color3.fromRGB(255, 255, 255)
+		murdSection.TextXAlignment = Enum.TextXAlignment.Left
+		murdSection.Text = "Murderer"
+		murdSection.Font = Enum.Font.SourceSansBold
+		murdSection.TextSize = 15
+		murdSection.LayoutOrder = 270
+		murdSection.Parent = murdererFrame
+		-- Move Kill Everyone
+		if killEveryoneBtn then killEveryoneBtn.Parent = murdererFrame; killEveryoneBtn.LayoutOrder = 271 end
+		-- Move Kill Everyone (except friends)
+		if killEveryoneNoFriendsBtn then killEveryoneNoFriendsBtn.Parent = murdererFrame; killEveryoneNoFriendsBtn.LayoutOrder = 272 end
+		-- Move Kill Sheriff
+		if killSheriffBtn then killSheriffBtn.Parent = murdererFrame; killSheriffBtn.LayoutOrder = 273 end
+		-- Move Kill Picker (by prefix search)
+		local combatFrame2 = categoryFrames["Combat"]
+		if combatFrame2 then
+			for _, child in ipairs(combatFrame2:GetChildren()) do
+				if child.Name:match("^Kill") and child.Name:match("Picker") then
+					child.Parent = murdererFrame
+					if child.Name:match("TitleBar") then child.LayoutOrder = 274 end
+					if child.Name:match("Search") then child.LayoutOrder = 274.005 end
+					if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 274.006 end
+				end
+			end
+		end
+		-- Move Kill Player
+		if killPlayerBtn then killPlayerBtn.Parent = murdererFrame; killPlayerBtn.LayoutOrder = 275 end
+		-- Move Auto Kill Everyone
+		if autoKillEveryoneBtn then autoKillEveryoneBtn.Parent = murdererFrame; autoKillEveryoneBtn.LayoutOrder = 276 end
+		-- Move Auto Kill Everyone (except friends)
+		if autoKillEveryoneNoFriendsBtn then autoKillEveryoneNoFriendsBtn.Parent = murdererFrame; autoKillEveryoneNoFriendsBtn.LayoutOrder = 277 end
+		-- Move Auto Kill Sheriff
+		if autoKillSheriffBtn then autoKillSheriffBtn.Parent = murdererFrame; autoKillSheriffBtn.LayoutOrder = 278 end
+		-- Move KillAura (dual row: reachButton.Parent is a row frame)
+		if reachButton then
+			local row = reachButton.Parent
+			if row then row.Parent = murdererFrame; row.LayoutOrder = 279 end
+		end
+	end
+
+	-- RESET TAB: LayoutOrder 310-330
+	local resetFrame = categoryFrames["Reset"]
+	local utilFrame = categoryFrames["Utilities"]
+	if resetFrame and utilFrame then
+		local rstSection = Instance.new("TextLabel")
+		rstSection.Size = UDim2.new(1, 0, 0, 24)
+		rstSection.BackgroundTransparency = 1
+		rstSection.TextColor3 = Color3.fromRGB(255, 255, 255)
+		rstSection.TextXAlignment = Enum.TextXAlignment.Left
+		rstSection.Text = "Reset"
+		rstSection.Font = Enum.Font.SourceSansBold
+		rstSection.TextSize = 15
+		rstSection.LayoutOrder = 310
+		rstSection.Parent = resetFrame
+		-- Move Reset Player row
+		if resetPlayerRow then resetPlayerRow.Parent = resetFrame; resetPlayerRow.LayoutOrder = 311 end
+		-- Move Reset Picker elements
+		for _, child in ipairs(utilFrame:GetChildren()) do
+			if child.Name:match("^Reset") and child.Name:match("Picker") then
+				child.Parent = resetFrame
+				if child.Name:match("TitleBar") then child.LayoutOrder = 312 end
+				if child.Name:match("Search") then child.LayoutOrder = 312.005 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 312.006 end
+			end
+		end
+		-- Move Reset Selected
+		if resetSelectedBtn then resetSelectedBtn.Parent = resetFrame; resetSelectedBtn.LayoutOrder = 313 end
+		-- Move Reset Everyone
+		if resetEveryoneBtn then resetEveryoneBtn.Parent = resetFrame; resetEveryoneBtn.LayoutOrder = 314 end
+		-- Move Reset Sheriff/Hero
+		if resetSheriffBtn then resetSheriffBtn.Parent = resetFrame; resetSheriffBtn.LayoutOrder = 315 end
+		-- Move Reset Murderer
+		if resetMurdererBtn then resetMurdererBtn.Parent = resetFrame; resetMurdererBtn.LayoutOrder = 316 end
+		-- Move Auto Reset Player
+		if autoResetPlayerBtn then autoResetPlayerBtn.Parent = resetFrame; autoResetPlayerBtn.LayoutOrder = 317 end
+		-- Move Auto Reset Everyone
+		if autoResetEveryoneBtn then autoResetEveryoneBtn.Parent = resetFrame; autoResetEveryoneBtn.LayoutOrder = 318 end
+		-- Move Auto Reset Sheriff/Hero
+		if autoResetSheriffBtn then autoResetSheriffBtn.Parent = resetFrame; autoResetSheriffBtn.LayoutOrder = 319 end
+		-- Move Auto Reset Murderer
+		if autoResetMurdererBtn then autoResetMurdererBtn.Parent = resetFrame; autoResetMurdererBtn.LayoutOrder = 320 end
+		-- Move Watch Murderer Picker
+		for _, child in ipairs(utilFrame:GetChildren()) do
+			if child.Name:match("^WatchMurderer") and child.Name:match("Picker") then
+				child.Parent = resetFrame
+				if child.Name:match("TitleBar") then child.LayoutOrder = 321 end
+				if child.Name:match("Search") then child.LayoutOrder = 321.005 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 321.006 end
+			end
+		end
+		-- Move Watch Sheriff Picker
+		for _, child in ipairs(utilFrame:GetChildren()) do
+			if child.Name:match("^WatchSheriff") and child.Name:match("Picker") then
+				child.Parent = resetFrame
+				if child.Name:match("TitleBar") then child.LayoutOrder = 322 end
+				if child.Name:match("Search") then child.LayoutOrder = 322.005 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 322.006 end
+			end
+		end
+	end
+
+	-- Move Auto Remove Coins, Auto Mute Coins, Auto Delete Corpses to Utilities
+	-- (currently in Movement tab) — place them after Vote Notification (LO 115.05)
+	local utilFrame2 = categoryFrames["Utilities"]
+	if utilFrame2 then
+		if btn.autoDeleteCoins then btn.autoDeleteCoins.Parent = utilFrame2; btn.autoDeleteCoins.LayoutOrder = 115.06 end
+		if btn.autoMuteCoins then btn.autoMuteCoins.Parent = utilFrame2; btn.autoMuteCoins.LayoutOrder = 115.07 end
+		if btn.autoDeleteCorpses then btn.autoDeleteCorpses.Parent = utilFrame2; btn.autoDeleteCorpses.LayoutOrder = 115.08 end
+	end
+
+	-- Move LoopSpeed to Movement 1st place (LayoutOrder 100.1)
+	local mvmtFrame = categoryFrames["Movement"]
+	if mvmtFrame then
+		local lsRow = loopSpeedButton and loopSpeedButton.Parent
+		if lsRow then lsRow.Parent = mvmtFrame; lsRow.LayoutOrder = 100.1 end
+		-- Move AirStrafe to Movement 2nd place (LayoutOrder 100.2)
+		-- Wrap AirStrafe in a dual row with value input
+		if airStrafeButton then
+			local asRow = Instance.new("Frame")
+			asRow.Name = "AirStrafeRow"
+			asRow.Size = UDim2.new(1, 0, 0, 42)
+			asRow.BackgroundTransparency = 1
+			asRow.LayoutOrder = 100.2
+			asRow.Parent = mvmtFrame
+			airStrafeButton.Size = UDim2.new(1, -70, 1, 0)
+			airStrafeButton.Position = UDim2.new(0, 0, 0, 0)
+			airStrafeButton.Parent = asRow
+			airStrafeButton.LayoutOrder = 0
+			airStrafeInput = Instance.new("TextBox")
+			airStrafeInput.Name = "AirStrafeInput"
+			airStrafeInput.Size = UDim2.new(0, 62, 1, 0)
+			airStrafeInput.Position = UDim2.new(1, -64, 0, 0)
+			airStrafeInput.BackgroundColor3 = inputBgColor or Color3.fromRGB(0, 0, 0)
+			airStrafeInput.TextColor3 = inputTextColor or Color3.fromRGB(255, 255, 255)
+			airStrafeInput.PlaceholderText = "Mult"
+			airStrafeInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+			airStrafeInput.Text = tostring(airStrafeMultiplier)
+			airStrafeInput.Font = Enum.Font.SourceSansBold
+			airStrafeInput.TextSize = 15
+			airStrafeInput.ClearTextOnFocus = false
+			airStrafeInput.Parent = asRow
+			Instance.new("UICorner", airStrafeInput).CornerRadius = UDim.new(0, 6)
+			airStrafeInput.FocusLost:Connect(function()
+				local v = tonumber(airStrafeInput.Text)
+				if v and v > 0 then
+					airStrafeMultiplier = v
+					saveConfig()
+				else
+					airStrafeInput.Text = tostring(airStrafeMultiplier)
+				end
+			end)
+		end
+	end
+
+	-- COLLAPSIBLE FLING PLAYER LIST
+	-- Add a collapse button to the Multi Fling section header
+	local utilFling = categoryFrames["Utilities"]
+	if utilFling and multiFlingFrame then
+		multiFlingCollapsed = false
+		local collapseBtn = Instance.new("TextButton")
+		collapseBtn.Name = "MultiFlingCollapseBtn"
+		collapseBtn.Size = UDim2.new(0, 24, 0, 24)
+		collapseBtn.Position = UDim2.new(1, -30, 0, 0)
+		collapseBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		collapseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		collapseBtn.Text = "-"
+		collapseBtn.Font = Enum.Font.SourceSansBold
+		collapseBtn.TextSize = 16
+		collapseBtn.Parent = multiFlingStatusLabel
+		Instance.new("UICorner", collapseBtn).CornerRadius = UDim.new(0, 4)
+		collapseBtn.MouseButton1Click:Connect(function()
+			multiFlingCollapsed = not multiFlingCollapsed
+			collapseBtn.Text = multiFlingCollapsed and "+" or "-"
+			if flingSearchBox then flingSearchBox.Visible = not multiFlingCollapsed end
+			multiFlingFrame.Visible = not multiFlingCollapsed
+			saveConfig()
+		end)
+	end
+end
+
 task.defer(restoreFullConfig)
