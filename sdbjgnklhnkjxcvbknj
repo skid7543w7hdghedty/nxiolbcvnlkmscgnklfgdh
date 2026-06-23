@@ -67,7 +67,7 @@ DesyncOffsetRange = 50
 -- positional offset so bullets/silent-aim miss even while you walk.
 DesyncSpinActive = false
 desyncSpinConnection = nil
-DesyncSpinOffset = 1
+DesyncSpinOffset = 5
 function RandomNumberRange(a)
 	return math.random(-a * 100, a * 100) / 100
 end
@@ -345,6 +345,19 @@ function saveConfig()
 	if bindToggleStates then
 		for name, state in pairs(bindToggleStates) do
 			config.bindToggleStates[name] = state
+		end
+	end
+	config.detachedEmotes = {}
+	if detachedEmotes then
+		for id, d in pairs(detachedEmotes) do
+			if d and d.frame then
+				local p = d.frame.Position
+				config.detachedEmotes[tostring(id)] = {
+					name = d.name,
+					pos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}},
+					locked = (d.popupLockBtn and d.popupLockBtn.Text == "L") or false,
+				}
+			end
 		end
 	end
 	local encoded = game:GetService("HttpService"):JSONEncode(config)
@@ -1810,6 +1823,28 @@ end
 
 setupScammerTracking()
 
+-- Notify about marked players that are ALREADY in the server at activation time.
+-- PlayerAdded only fires for FUTURE joins, so without this you never get warned about
+-- teamers / exploiters / scammers who were already here when you ran the script.
+function notifyExistingMarkedPlayers()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player then
+			if notifyOnExploiters and markedExploiters[plr.Name] then
+				exploiterNotifSend("[!] Exploiter In Server", plr, "is in the server!")
+				playSoundFile(exploiterJoinSoundPath)
+			end
+			if notifyOnTeamers and markedTeamers[plr.Name] then
+				teamerNotifSend("[!] Teamer In Server", plr, "is in the server!")
+				playSoundFile(teamerJoinSoundPath)
+			end
+			if notifyOnScammers and markedScammers[plr.Name] then
+				scammerNotifSend("[!] Scammer In Server", plr, "is in the server!")
+				playSoundFile(scammerJoinSoundPath)
+			end
+		end
+	end
+end
+
 _antiFlingLastSafePos = nil
 
 function antiFlingCollide(plr)
@@ -3163,6 +3198,7 @@ function stopCurrentAnimation()
 		animationUiById[playingAnimationId].Button.TextColor3 = Color3.fromRGB(255, 255, 255)
 	end
 	playingAnimationId = 0
+	if updateAllDetachedEmoteVisuals then updateAllDetachedEmoteVisuals() end
 end
 
 function playAnimation(animationId, speedValue)
@@ -3184,7 +3220,195 @@ function playAnimation(animationId, speedValue)
 		animationUiById[animationId].Button.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
 		animationUiById[animationId].Button.TextColor3 = Color3.fromRGB(0, 0, 0)
 	end
+	if updateAllDetachedEmoteVisuals then updateAllDetachedEmoteVisuals() end
 end
+
+-- ============================================
+-- Detached emote buttons (выносимые кнопки эмоций)
+-- A star toggle (☆/★) on each emote row pops that emote out as a small draggable
+-- on-screen button, so emotes like Take the L, Dahood Stomp, etc. can be played
+-- without opening the menu. Position + which emotes are detached are saved to the
+-- config and restored on the next load.
+-- ============================================
+detachedEmotes = {}
+
+function isEmoteDetached(animationId)
+	return detachedEmotes[animationId] ~= nil
+end
+
+function updateDetachedEmoteVisual(animationId)
+	local d = detachedEmotes[animationId]
+	if not d or not d.btn then return end
+	if playingAnimationId == animationId then
+		d.btn.BackgroundColor3 = extractedBtnActiveBgColor
+		d.btn.TextColor3 = extractedBtnActiveTextColor
+	else
+		d.btn.BackgroundColor3 = extractedBtnBgColor
+		d.btn.TextColor3 = extractedBtnTextColor
+	end
+end
+
+function updateAllDetachedEmoteVisuals()
+	for id in pairs(detachedEmotes) do
+		updateDetachedEmoteVisual(id)
+	end
+end
+
+function removeDetachedEmote(animationId, skipSave)
+	local d = detachedEmotes[animationId]
+	if not d then return end
+	if d.conns then
+		for _, c in ipairs(d.conns) do pcall(function() c:Disconnect() end) end
+	end
+	if d.frame then d.frame:Destroy() end
+	detachedEmotes[animationId] = nil
+	local ui = animationUiById[animationId]
+	if ui and ui.PopOut then ui.PopOut.Text = "☆" end
+	if not skipSave then pcall(saveConfig) end
+end
+
+function createDetachedEmote(animationId, animationName, savedPos, skipSave, savedLocked)
+	if not popupBtnGui then return end
+	if detachedEmotes[animationId] then return end
+	local ui = animationUiById[animationId]
+	animationName = animationName or (ui and ui.Name) or "Emote"
+
+	-- Built with the exact same anatomy as the other extracted buttons (border frame +
+	-- inner TextScaled button + U/L lock button) so the "Popup Button Size" controls
+	-- resize it too and it matches their look.
+	local frame = Instance.new("Frame")
+	frame.Name = "DetachedEmote_" .. tostring(animationId)
+	frame.Size = UDim2.new(0, popupBtnWidth, 0, popupBtnHeight)
+	if savedPos then
+		frame.Position = UDim2.new(savedPos.X.Scale, savedPos.X.Offset, savedPos.Y.Scale, savedPos.Y.Offset)
+	else
+		local n = 0
+		for _ in pairs(detachedEmotes) do n = n + 1 end
+		frame.Position = UDim2.new(0, 140, 0, 120 + n * (popupBtnHeight + 6))
+	end
+	frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	frame.BackgroundTransparency = 1
+	frame.BorderSizePixel = 0
+	frame.Parent = popupBtnGui
+
+	local borderStroke = Instance.new("UIStroke")
+	borderStroke.Color = Color3.fromRGB(255, 255, 255)
+	borderStroke.Thickness = 1.5
+	borderStroke.Parent = frame
+
+	local borderCorner = Instance.new("UICorner")
+	borderCorner.CornerRadius = UDim.new(0, 6)
+	borderCorner.Parent = frame
+
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, -30, 1, -4)
+	btn.Position = UDim2.new(0, 2, 0, 2)
+	btn.BackgroundColor3 = extractedBtnBgColor
+	btn.BackgroundTransparency = popupBgTransparency
+	btn.TextColor3 = extractedBtnTextColor
+	btn.Text = animationName
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextScaled = true
+	btn.AutoButtonColor = false
+	btn.BorderSizePixel = 0
+	btn.ClipsDescendants = true
+	btn.Parent = frame
+	if addBtnPressAnim then addBtnPressAnim(btn) end
+	local btnTSC = Instance.new("UITextSizeConstraint")
+	btnTSC.MaxTextSize = 17
+	btnTSC.MinTextSize = 9
+	btnTSC.Parent = btn
+
+	local btnCorner = Instance.new("UICorner")
+	btnCorner.CornerRadius = UDim.new(0, 6)
+	btnCorner.Parent = btn
+
+	local lockBtn = Instance.new("TextButton")
+	lockBtn.Size = UDim2.new(0, 22, 0, 22)
+	lockBtn.Position = UDim2.new(1, -27, 0.5, -11)
+	lockBtn.BackgroundColor3 = extractedBtnBgColor
+	lockBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	lockBtn.Text = "U"
+	lockBtn.Font = Enum.Font.SourceSansBold
+	lockBtn.TextSize = 12
+	lockBtn.AutoButtonColor = false
+	lockBtn.BorderSizePixel = 0
+	lockBtn.Parent = frame
+
+	local lockCorner = Instance.new("UICorner")
+	lockCorner.CornerRadius = UDim.new(0, 4)
+	lockCorner.Parent = lockBtn
+
+	local d = { frame = frame, btn = btn, popupBtn = btn, popupLockBtn = lockBtn, name = animationName, conns = {} }
+	detachedEmotes[animationId] = d
+
+	if savedLocked then
+		lockBtn.Text = "L"
+		lockBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+	end
+
+	lockBtn.MouseButton1Click:Connect(function()
+		if lockBtn.Text == "L" then
+			lockBtn.Text = "U"
+			lockBtn.BackgroundColor3 = extractedBtnBgColor
+		else
+			lockBtn.Text = "L"
+			lockBtn.BackgroundColor3 = Color3.fromRGB(150, 150, 150)
+		end
+		pcall(saveConfig)
+	end)
+
+	local dragging, moved, justDragged, startPos, framePos, dragIpt = false, false, false, nil, nil, nil
+	-- Drag handlers live on the inner button so the whole pill can be moved by holding
+	-- it (important on touch screens). The U/L button locks dragging exactly like the
+	-- other extracted buttons. A small threshold + justDragged flag keeps a normal tap
+	-- playing the emote and stops a drag from triggering it.
+	table.insert(d.conns, btn.InputBegan:Connect(function(ipt)
+		if popupDragLocked or lockBtn.Text == "L" then return end
+		if ipt.UserInputType == Enum.UserInputType.MouseButton1 or ipt.UserInputType == Enum.UserInputType.Touch then
+			dragging = true; moved = false; startPos = ipt.Position; framePos = frame.Position; dragIpt = ipt
+		end
+	end))
+	table.insert(d.conns, btn.InputChanged:Connect(function(ipt)
+		if ipt.UserInputType == Enum.UserInputType.MouseMovement or ipt.UserInputType == Enum.UserInputType.Touch then
+			dragIpt = ipt
+		end
+	end))
+	table.insert(d.conns, UserInputService.InputChanged:Connect(function(ipt)
+		if popupDragLocked or lockBtn.Text == "L" then return end
+		if ipt == dragIpt and dragging then
+			local delta = ipt.Position - startPos
+			if delta.Magnitude >= 5 then moved = true end
+			if moved then
+				frame.Position = UDim2.new(framePos.X.Scale, framePos.X.Offset + delta.X, framePos.Y.Scale, framePos.Y.Offset + delta.Y)
+			end
+		end
+	end))
+	table.insert(d.conns, btn.InputEnded:Connect(function(ipt)
+		if ipt.UserInputType == Enum.UserInputType.MouseButton1 or ipt.UserInputType == Enum.UserInputType.Touch then
+			local wasDragged = moved
+			dragging = false; moved = false; dragIpt = nil
+			justDragged = wasDragged
+			if wasDragged then pcall(saveConfig) end
+		end
+	end))
+
+	btn.MouseButton1Click:Connect(function()
+		if justDragged then justDragged = false; return end
+		if playingAnimationId == animationId then
+			stopCurrentAnimation()
+		else
+			local spd = (animationUiById[animationId] and animationUiById[animationId].Box and animationUiById[animationId].Box.Text) or "1"
+			playAnimation(animationId, spd)
+		end
+		updateDetachedEmoteVisual(animationId)
+	end)
+
+	if ui and ui.PopOut then ui.PopOut.Text = "★" end
+	updateDetachedEmoteVisual(animationId)
+	if not skipSave then pcall(saveConfig) end
+end
+
 
 Players.PlayerAdded:Connect(function()
 	task.defer(refreshPlayerList)
@@ -3910,9 +4134,9 @@ local function findStartupSoundFiles()
 	return files
 end
 
-clickSoundFiles = findClickSoundFiles()
-winSoundFiles = findWinSoundFiles()
-startupSoundFiles = findStartupSoundFiles()
+-- [perf deferred] clickSoundFiles = findClickSoundFiles()
+-- [perf deferred] winSoundFiles = findWinSoundFiles()
+-- [perf deferred] startupSoundFiles = findStartupSoundFiles()
 
 local function findSheriffDieSoundFiles()
 	local files = {}
@@ -4026,14 +4250,14 @@ local function findRoundStartSoundFiles()
 	return files
 end
 
-sheriffDieSoundFiles = findSheriffDieSoundFiles()
-murdererDieSoundFiles = findMurdererDieSoundFiles()
-teamerSoundFiles = findTeamerSoundFiles()
-exploiterSoundFiles = findExploiterSoundFiles()
-scammerSoundFiles = findScammerSoundFiles()
-markSoundFiles = findMarkSoundFiles()
-unmarkSoundFiles = findUnmarkSoundFiles()
-roundStartSoundFiles = findRoundStartSoundFiles()
+-- [perf deferred] sheriffDieSoundFiles = findSheriffDieSoundFiles()
+-- [perf deferred] murdererDieSoundFiles = findMurdererDieSoundFiles()
+-- [perf deferred] teamerSoundFiles = findTeamerSoundFiles()
+-- [perf deferred] exploiterSoundFiles = findExploiterSoundFiles()
+-- [perf deferred] scammerSoundFiles = findScammerSoundFiles()
+-- [perf deferred] markSoundFiles = findMarkSoundFiles()
+-- [perf deferred] unmarkSoundFiles = findUnmarkSoundFiles()
+-- [perf deferred] roundStartSoundFiles = findRoundStartSoundFiles()
 
 local function findVoteStartSoundFiles()
 	local files = {}
@@ -4049,9 +4273,9 @@ local function findVoteStartSoundFiles()
 	return files
 end
 
-voteStartSoundFiles = findVoteStartSoundFiles()
+-- [perf deferred] voteStartSoundFiles = findVoteStartSoundFiles()
 
-bgImageFiles = findBgFiles()
+-- [perf deferred] bgImageFiles = findBgFiles()
 
 local function resolveImageAsset(filePath)
 	if not filePath or filePath == "" then return nil end
@@ -4082,11 +4306,6 @@ local function applyBgImage(value)
 	end
 	mainBgImage.Image = ""
 	mainFrame.BackgroundTransparency = mainBgTransparency
-end
-
--- Auto-detect local image if no URL configured
-if mainBgImageUrl == "" and #bgImageFiles > 0 then
-	mainBgImageUrl = bgImageFiles[1]
 end
 
 -- Auto-detect local sounds if not configured
@@ -4138,6 +4357,81 @@ end
 if voteStartSoundPath == "" and #voteStartSoundFiles > 0 then
 	voteStartSoundPath = voteStartSoundFiles[1]
 end
+
+-- [perf] Heavy executor file-system scans (listfiles) + sound/bg auto-detect were
+-- blocking the synchronous load path (noticeable startup lag). They now run in a
+-- deferred background pass so the menu appears instantly; sound/image defaults
+-- populate a moment later. The original auto-detect below stays as a harmless no-op
+-- (its tables are empty until this pass fills them).
+task.defer(function()
+	clickSoundFiles = findClickSoundFiles()
+	winSoundFiles = findWinSoundFiles()
+	startupSoundFiles = findStartupSoundFiles()
+	sheriffDieSoundFiles = findSheriffDieSoundFiles()
+	murdererDieSoundFiles = findMurdererDieSoundFiles()
+	teamerSoundFiles = findTeamerSoundFiles()
+	exploiterSoundFiles = findExploiterSoundFiles()
+	scammerSoundFiles = findScammerSoundFiles()
+	markSoundFiles = findMarkSoundFiles()
+	unmarkSoundFiles = findUnmarkSoundFiles()
+	roundStartSoundFiles = findRoundStartSoundFiles()
+	voteStartSoundFiles = findVoteStartSoundFiles()
+	bgImageFiles = findBgFiles()
+	-- Auto-detect local image if no URL configured
+	if mainBgImageUrl == "" and #bgImageFiles > 0 then
+		mainBgImageUrl = bgImageFiles[1]
+	end
+
+	-- Auto-detect local sounds if not configured
+	if clickSoundPath == "" and #clickSoundFiles > 0 then
+		clickSoundPath = clickSoundFiles[1]
+	end
+	if toggleSoundPath == "" and #winSoundFiles > 0 then
+		toggleSoundPath = winSoundFiles[1]
+	end
+	if startupSoundPath == "" and #startupSoundFiles > 0 then
+		startupSoundPath = startupSoundFiles[1]
+	end
+	if sheriffDieSoundPath == "" and #sheriffDieSoundFiles > 0 then
+		sheriffDieSoundPath = sheriffDieSoundFiles[1]
+	end
+	if murdererDieSoundPath == "" and #murdererDieSoundFiles > 0 then
+		murdererDieSoundPath = murdererDieSoundFiles[1]
+	end
+	if teamerJoinSoundPath == "" and #teamerSoundFiles > 0 then
+		teamerJoinSoundPath = teamerSoundFiles[1]
+		teamerLeaveSoundPath = teamerSoundFiles[1]
+	end
+	if teamerLeaveSoundPath == "" and #teamerSoundFiles > 0 then
+		teamerLeaveSoundPath = teamerSoundFiles[1]
+	end
+	if exploiterJoinSoundPath == "" and #exploiterSoundFiles > 0 then
+		exploiterJoinSoundPath = exploiterSoundFiles[1]
+		exploiterLeaveSoundPath = exploiterSoundFiles[1]
+	end
+	if exploiterLeaveSoundPath == "" and #exploiterSoundFiles > 0 then
+		exploiterLeaveSoundPath = exploiterSoundFiles[1]
+	end
+	if scammerJoinSoundPath == "" and #scammerSoundFiles > 0 then
+		scammerJoinSoundPath = scammerSoundFiles[1]
+		scammerLeaveSoundPath = scammerSoundFiles[1]
+	end
+	if scammerLeaveSoundPath == "" and #scammerSoundFiles > 0 then
+		scammerLeaveSoundPath = scammerSoundFiles[1]
+	end
+	if markSoundPath == "" and #markSoundFiles > 0 then
+		markSoundPath = markSoundFiles[1]
+	end
+	if unmarkSoundPath == "" and #unmarkSoundFiles > 0 then
+		unmarkSoundPath = unmarkSoundFiles[1]
+	end
+	if roundStartSoundPath == "" and #roundStartSoundFiles > 0 then
+		roundStartSoundPath = roundStartSoundFiles[1]
+	end
+	if voteStartSoundPath == "" and #voteStartSoundFiles > 0 then
+		voteStartSoundPath = voteStartSoundFiles[1]
+	end
+end)
 
 task.spawn(function()
 	task.wait(0.5)
@@ -5877,21 +6171,24 @@ function executeNanFlingByRole(roleName)
 	end
 
 	if roleName == "Sheriff" then
-		local heroTarget, sheriffTarget = nil, nil
-		for name, data in pairs(result) do
-			if name ~= player.Name and not isPlayerWhitelisted(name) then
+		-- Always target the LAST (most recent) Hero/Sheriff, preferring one that is still
+		-- alive. Iterate Players:GetPlayers() (deterministic join order) instead of pairs()
+		-- (which is unordered) so we never randomly grab the first / older hero.
+		local lastHeroAlive, lastHeroAny, lastSheriffAlive, lastSheriffAny = nil, nil, nil, nil
+		for _, plr in ipairs(Players:GetPlayers()) do
+			local name = plr.Name
+			local data = result[name]
+			if data and name ~= player.Name and not isPlayerWhitelisted(name) then
 				if data.Role == "Hero" or (data.HasGun and data.Role ~= "Murderer") then
-					if not heroTarget or (not isAlive(heroTarget) and isAlive(name)) then
-						heroTarget = name
-					end
+					lastHeroAny = name
+					if isAlive(name) then lastHeroAlive = name end
 				elseif data.Role == "Sheriff" then
-					if not sheriffTarget or (not isAlive(sheriffTarget) and isAlive(name)) then
-						sheriffTarget = name
-					end
+					lastSheriffAny = name
+					if isAlive(name) then lastSheriffAlive = name end
 				end
 			end
 		end
-		local chosen = heroTarget or sheriffTarget
+		local chosen = lastHeroAlive or lastHeroAny or lastSheriffAlive or lastSheriffAny
 		if chosen then
 			nanFlingTargetName = chosen
 			executeNanFling()
@@ -7417,6 +7714,8 @@ function tpToRole(roleName)
 
 	local lastTarget = nil
 	local lastName = nil
+	local lastAliveTarget = nil
+	local lastAliveName = nil
 
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr ~= player then
@@ -7435,10 +7734,21 @@ function tpToRole(roleName)
 				if isTarget then
 					lastTarget = plr
 					lastName = plr.Name
+					local ch = plr.Character
+					local hum = ch and ch:FindFirstChildOfClass("Humanoid")
+					if hum and hum.Health > 0 then
+						lastAliveTarget = plr
+						lastAliveName = plr.Name
+					end
 				end
 			end
 		end
 	end
+
+	-- Always prefer the LAST target that is still alive (the current hero/sheriff), so we
+	-- never teleport to an older / dead role holder instead of the most recent one.
+	lastTarget = lastAliveTarget or lastTarget
+	lastName = lastAliveName or lastName
 
 	if lastTarget then
 		local char = lastTarget.Character
@@ -8140,19 +8450,23 @@ function createKeystrokeUI()
 	end))
 	local dragging, dragStart, startPos
 	table.insert(keystrokeConns, Frame.InputBegan:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true; dragStart = input.Position; startPos = Frame.Position
-			input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
+			input.Changed:Connect(function()
+				if input.UserInputState == Enum.UserInputState.End then
+					dragging = false; keystrokeSavedPos = Frame.Position; saveConfig()
+				end
+			end)
 		end
 	end))
 	table.insert(keystrokeConns, UserInputService.InputChanged:Connect(function(input)
-		if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
 			local delta = input.Position - dragStart
 			Frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
 		end
 	end))
 	table.insert(keystrokeConns, UserInputService.InputEnded:Connect(function(input)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 and dragging then
+		if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and dragging then
 			dragging = false; keystrokeSavedPos = Frame.Position; saveConfig()
 		end
 	end))
@@ -9348,7 +9662,13 @@ local function aimUpdateTargetDot()
 		if aimTargetDot then aimTargetDot:Destroy(); aimTargetDot = nil end
 	end
 end
+-- [perf] The target-dot tracker used to run aimFindMurderer() every single frame
+-- regardless of any toggle, which cost FPS for nothing. The dot is parented to the
+-- target so it follows automatically; re-resolving the murderer ~10x/sec is plenty.
+_targetDotFrame = 0
 RunService.RenderStepped:Connect(function()
+	_targetDotFrame = _targetDotFrame + 1
+	if _targetDotFrame % 6 ~= 0 then return end
 	pcall(aimUpdateTargetDot)
 end)
 
@@ -12431,7 +12751,7 @@ for index = 1, #animationButtons, 2 do
 
 	local animationButton = Instance.new("TextButton")
 	animationButton.Name = "AnimButton_" .. animationName:gsub("%W", "")
-	animationButton.Size = UDim2.new(1, -94, 1, 0)
+	animationButton.Size = UDim2.new(1, -118, 1, 0)
 	animationButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	animationButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 	animationButton.Text = animationName
@@ -12461,12 +12781,38 @@ for index = 1, #animationButtons, 2 do
 	speedCorner.CornerRadius = UDim.new(0, 6)
 	speedCorner.Parent = speedBox
 
+	local animationPopOut = Instance.new("TextButton")
+	animationPopOut.Name = "AnimPopOut_" .. animationName:gsub("%W", "")
+	animationPopOut.Size = UDim2.new(0, 24, 1, 0)
+	animationPopOut.Position = UDim2.new(1, -114, 0, 0)
+	animationPopOut.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	animationPopOut.TextColor3 = Color3.fromRGB(255, 255, 255)
+	animationPopOut.Text = isEmoteDetached(animationId) and "★" or "☆"
+	animationPopOut.Font = Enum.Font.SourceSansBold
+	animationPopOut.TextSize = 16
+	animationPopOut.Parent = animationRow
+
+	local animationPopOutCorner = Instance.new("UICorner")
+	animationPopOutCorner.CornerRadius = UDim.new(0, 6)
+	animationPopOutCorner.Parent = animationPopOut
+
 	animationUiById[animationId] = {
 		Row = animationRow,
 		Button = animationButton,
 		Box = speedBox,
 		Name = animationName,
+		PopOut = animationPopOut,
 	}
+
+	animationPopOut.MouseButton1Click:Connect(function()
+		if isEmoteDetached(animationId) then
+			removeDetachedEmote(animationId)
+			animationPopOut.Text = "☆"
+		else
+			createDetachedEmote(animationId, animationName)
+			animationPopOut.Text = "★"
+		end
+	end)
 
 	animationButton.MouseButton1Click:Connect(function()
 		if playingAnimationId == animationId then
@@ -18508,6 +18854,11 @@ popupWidthInput.FocusLost:Connect(function()
 				data.btn.Size = UDim2.new(0, val, 0, popupBtnHeight)
 			end
 		end
+		for _, d in pairs(detachedEmotes) do
+			if d.frame then
+				d.frame.Size = UDim2.new(0, val, 0, popupBtnHeight)
+			end
+		end
 	else
 		popupWidthInput.Text = tostring(popupBtnWidth)
 	end
@@ -18521,6 +18872,11 @@ popupHeightInput.FocusLost:Connect(function()
 		for name, data in pairs(extractedButtons) do
 			if data.btn and name ~= "FPS+Ping" and name ~= "FPS" and name ~= "Ping" then
 				data.btn.Size = UDim2.new(0, popupBtnWidth, 0, val)
+			end
+		end
+		for _, d in pairs(detachedEmotes) do
+			if d.frame then
+				d.frame.Size = UDim2.new(0, popupBtnWidth, 0, val)
 			end
 		end
 	else
@@ -20221,3 +20577,26 @@ do
 end
 
 task.defer(restoreFullConfig)
+
+-- Restore detached emote buttons (выносимые кнопки эмоций) saved in the config.
+task.defer(function()
+	local c = loadedConfig
+	if not c or not c.detachedEmotes then return end
+	for idStr, info in pairs(c.detachedEmotes) do
+		local id = tonumber(idStr)
+		if id and not isEmoteDetached(id) then
+			pcall(function()
+				createDetachedEmote(id, info and info.name, info and info.pos, true, info and info.locked)
+				local ui = animationUiById[id]
+				if ui and ui.PopOut then ui.PopOut.Text = "★" end
+			end)
+		end
+	end
+end)
+
+-- After the config (and the notify-on toggles) has been restored, warn about any
+-- teamers / exploiters / scammers that are ALREADY in the server on activation.
+task.defer(function()
+	task.wait(2)
+	if notifyExistingMarkedPlayers then pcall(notifyExistingMarkedPlayers) end
+end)
