@@ -2717,14 +2717,14 @@ getgenv().OldPos = nil
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
 animationButtons = {
-	79480770273758, "Anti-Aim", 77094699387328, "Glitch Spin", 83265734904502, "Take the L", 92249489340640, "Dahood Stomp",
+	79480770273758, "Anti-Aim", 122919757436131, "Low Cortisol", 83265734904502, "Take the L", 92249489340640, "Dahood Stomp",
 	121368513461476, "Six Seven dance", 120852662885277, "Six Seven emote", 92618727772186, "IShowSpeed Dance", 122840737847239, "Man Squat",
 	98974619620224, "Laugh Ragebait", 127118661424463, "Caramell Dance", 124522818196151, "Head Spin",
-	81147896850705, "Asian Squat", 72007752012770, "Poop sniff", 90333292347820, "The Worm",
-	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 110146282544198, "Orange Justice",
-	108747312576405, "Les goooo", 93616720070707, "Omni Man",
+	125329959146841, "Massive Poop", 72007752012770, "Poop sniff", 90333292347820, "The Worm",
+	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 90018336892195, "Nervy Dance",
+	108747312576405, "Les goooo", 108242544356577, "Shake Dance",
 	99499783161907, "Aura farm", 114400428765989, "180° Flip", 70432904702322, "Get skinwalked", 109873544976020, "Weird Spin",
-	129537633250603, "It's Peanut Butter Jelly Time"
+	126264342780589, "Punch Anim"
 }
 animationObject = Instance.new("Animation")
 animationTrack = nil
