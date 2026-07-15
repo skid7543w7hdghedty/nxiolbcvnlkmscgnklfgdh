@@ -253,6 +253,9 @@ function saveConfig()
 	config.toggles.autofarmShootPiercerEnabled = autofarmShootPiercerEnabled
 	config.toggles.autofarmWebhookEnabled = autofarmWebhookEnabled
 	config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
+	config.toggles.autofarmAvoidMurdererEnabled = autofarmAvoidMurdererEnabled
+	config.toggles.autofarmAutoAntiShootEnabled = autofarmAutoAntiShootEnabled
+	config.toggles.autofarmAutoKillSheriffEnabled = autofarmAutoKillSheriffEnabled
 
 	config.values.JUMP_BOOST_POWER = JUMP_BOOST_POWER
 	config.values.FAKE_SPEED_CFRAME_SPEED = FAKE_SPEED_CFRAME_SPEED
@@ -340,6 +343,8 @@ function saveConfig()
 	config.values.autofarmResetDeathEnabled = autofarmResetDeathEnabled
 	config.values.autofarmWebhookIntervalMin = autofarmWebhookIntervalMin
 	config.values.autofarmScriptUrl = AUTOFARM_SCRIPT_URL
+	config.values.autofarmAvoidMurdererModeIndex = autofarmAvoidMurdererModeIndex
+	config.values.autofarmAvoidMurdererDist = autofarmAvoidMurdererDist
 	-- Session stats survive rejoins/server hops (farming time keeps counting)
 	config.values.autofarmSessionCoins = autofarmSessionCoins
 	config.values.autofarmSessionElapsed = autofarmSessionStart and (os.clock() - autofarmSessionStart) or 0
@@ -11744,7 +11749,7 @@ do
 end
 
 -- ============================================
--- SECTION 5: Multi Fling (LayoutOrder 500-599) - РџР Р•Р”РџРћРЎР›Р•Р”РќРР™
+-- SECTION 5: Multi Fling (LayoutOrder 500-599) - РџР Р•Р”РџРћРЎР›Р•Р”РќРР™
 -- ============================================
 currentCategory = "Utilities"
 createSection("Utilities", 114.5)
@@ -13912,6 +13917,28 @@ autofarmCoinRetries = {}              -- [coin] = failed-touch retry count
 autofarmRoleCache = nil               -- cached invokePlayerData result (refreshed every second, not every frame)
 autofarmRoleCacheAt = 0
 
+-- Avoid murderer: teleport away when within a set distance during autofarm
+autofarmAvoidMurdererEnabled = false
+autofarmAvoidMurdererDist = 30        -- studs: teleport when closer than this to the murderer
+autofarmAvoidMurdererModeIndex = 1    -- destination selector (same modes as pre/post TP)
+
+-- Auto Anti-Shoot: enable Anti-Shoot at round start, disable when farming begins
+autofarmAutoAntiShootEnabled = false
+
+-- Auto Kill Sheriff/Hero: when you're the Murderer, kill anyone who picks up the gun
+autofarmAutoKillSheriffEnabled = false
+
+-- Stuck detector: if the player hasn't moved significantly for STUCK_TIMEOUT
+-- seconds during active farming, auto TP to map to unstick.
+-- We track position over a 1-second rolling window (not per-frame, because at
+-- 60fps the character moves ~1.8 studs/frame which is below the per-frame
+-- threshold and would trigger false stuck detections).
+autofarmStuckSince = nil          -- os.clock() when we first noticed being stuck
+autofarmStuckLastPos = nil        -- last known position (Vector3)
+autofarmStuckCheckAt = 0          -- os.clock() of last distance check
+AUTOFARM_STUCK_TIMEOUT = 5       -- seconds of being stuck before auto TP
+AUTOFARM_STUCK_MIN_DIST = 5      -- studs: if we moved less than this in 1 second, we're stuck
+
 -- Auto teleport BEFORE the farm (toggle + location selector, same destinations)
 autofarmPreTpEnabled = false
 autofarmPreTpModeIndex = 1
@@ -14173,10 +14200,10 @@ function autofarmWatchCoin(coin)
 		if parent == nil and autofarmEnabled and autofarmCoinWatched[coin] then
 			autofarmCoinWatched[coin] = nil
 			autofarmSpentCoins[coin] = true
-			-- Count via removal event ONLY when the bag GUI can't be read.
-			-- When it can, the bag-delta counter in the main loop is the single
-			-- source of truth (server-accepted count — can't skip or double-count).
-			if autofarmGetBagCount() == nil then
+			-- Only count if WE touched this coin (not when another player collects
+			-- a coin we just flew past). autofarmTouchedAt is set when the farm's
+			-- HRP or body parts actually fireTouchInterest the coin.
+			if autofarmTouchedAt[coin] and autofarmGetBagCount() == nil then
 				autofarmCollected += 1
 				autofarmSessionCoins += 1
 			end
@@ -14207,17 +14234,17 @@ function autofarmClaimCoin(coin)
 		local removed = (coin.Parent == nil) or (not part)
 		local turnedInvisible = visAtClaim and (not visAtClaim.Parent or visAtClaim.Transparency >= 0.95)
 		if removed or turnedInvisible then
-			-- Collected: permanently blacklist + make sure it gets counted even if
-			-- AncestryChanged missed (double count impossible — the watched flag is
-			-- cleared exactly once)
+			-- Collected: permanently blacklist so we never fly back to it.
 			autofarmSpentCoins[coin] = true
-			if turnedInvisible and autofarmCoinWatched[coin] and autofarmEnabled then
+			if autofarmCoinWatched[coin] then
 				autofarmCoinWatched[coin] = nil
-				-- Same rule as the removal event: only count locally when the
-				-- server bag count is unreadable (see autofarmWatchCoin).
-				if autofarmGetBagCount() == nil then
-					autofarmCollected += 1
-					autofarmSessionCoins += 1
+				-- Only count if WE touched this coin (not when another player's
+				-- collection makes it invisible locally).
+				if turnedInvisible and autofarmTouchedAt[coin] and autofarmEnabled then
+					if autofarmGetBagCount() == nil then
+						autofarmCollected += 1
+						autofarmSessionCoins += 1
+					end
 				end
 			end
 		else
@@ -14357,6 +14384,65 @@ function autofarmStopFlight()
 	if hum then pcall(function() hum.PlatformStand = false end) end
 end
 
+-- Pause flight between coins WITHOUT dropping the character: zero velocity,
+-- keep PlatformStand = true so the character floats in place instead of falling.
+-- This eliminates the sharp dip and the delay when switching coin targets.
+function autofarmPauseFlight()
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		pcall(function()
+			hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+			hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+		end)
+	end
+end
+
+-- Teleport to the selected Avoid Murderer destination
+function autofarmDoAvoidMurdererTp()
+	local mode = autofarmAvoidMurdererModes[autofarmAvoidMurdererModeIndex]
+	if mode == "OFF" then return end
+	local myChar = player.Character
+	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not myHrp then return end
+	if mode == "Lobby" then
+		pcall(doInstantTp, myHrp, myChar, CFrame.new(23, 505, -34))
+	elseif mode == "VoteMap" then
+		pcall(doInstantTp, myHrp, myChar, CFrame.new(14, 507, 35))
+	elseif mode == "Map" then
+		pcall(tpToMap)
+	elseif mode == "Above Map" then
+		pcall(tpAboveMap)
+	elseif mode == "Void" then
+		pcall(createVoidBaseplate)
+		pcall(function()
+			voidTpPreviousPos = myHrp.CFrame
+			myHrp.CFrame = CFrame.new(voidBaseplatePos.X, voidBaseplatePos.Y + 1, voidBaseplatePos.Z)
+		end)
+	end
+	notify("Autofarm", "Avoid Murderer TP: " .. mode, 2)
+end
+
+-- Check distance to the murderer and teleport away if too close during autofarm
+function autofarmCheckAvoidMurderer(hrp)
+	if not autofarmAvoidMurdererEnabled then return false end
+	if autofarmAvoidMurdererModeIndex <= 1 then return false end -- "OFF" selected
+	if not isPlayerMurderer() then
+		local murderer = autofarmFindMurdererPlayer()
+		if murderer and murderer.Character then
+			local mHrp = murderer.Character:FindFirstChild("HumanoidRootPart")
+			if mHrp then
+				local dist = (hrp.Position - mHrp.Position).Magnitude
+				if dist <= autofarmAvoidMurdererDist then
+					autofarmDoAvoidMurdererTp()
+					return true
+				end
+			end
+		end
+	end
+	return false
+end
+
 function startAutofarm()
 	task.spawn(function()
 		while autofarmEnabled do
@@ -14390,6 +14476,8 @@ function startAutofarm()
 					autofarmBagPrev = nil       -- restart the bag-delta baseline
 					autofarmNoCoinSince = nil   -- restart the no-coin grace timer
 					autofarmRoundFinished = false
+					autofarmStuckSince = nil    -- reset stuck detector for new round
+					autofarmStuckLastPos = nil
 				end
 
 				-- Effective count = the max of the local counter and the REAL
@@ -14434,10 +14522,10 @@ function startAutofarm()
 					end
 					if coin then autofarmNoCoinSince = nil end
 					if not coin and auraStillPulling then
-						-- Last remaining coins are inside the aura pull — just glide and
-						-- let the aura finish collecting them.
+						-- Last remaining coins are inside the aura pull — just hold
+						-- position and let the aura finish collecting them.
 						autofarmNoCoinSince = nil
-						task.wait()
+						autofarmPauseFlight()
 					elseif not coin then
 						-- 39/40 FIX: no targetable coin does NOT mean the round is over.
 						-- Two real causes of finishing one coin short:
@@ -14461,7 +14549,6 @@ function startAutofarm()
 						end
 						if revived then
 							autofarmNoCoinSince = nil
-							task.wait()
 						elseif effectiveCollected > 0 then
 							autofarmNoCoinSince = autofarmNoCoinSince or os.clock()
 							if (os.clock() - autofarmNoCoinSince) >= 8 then
@@ -14470,15 +14557,27 @@ function startAutofarm()
 								notify("Autofarm", "No more coins — finishing round (" .. effectiveCollected .. "/" .. autofarmTargetCoins .. ")", 2)
 								autofarmFinishRound()
 							else
-								autofarmStopFlight()
-								task.wait()
+								autofarmPauseFlight()
 							end
 						else
-							autofarmStopFlight()
-							task.wait()
+							autofarmPauseFlight()
 						end
 					else
+						-- Avoid murderer: teleport away if too close during autofarm
+						if autofarmCheckAvoidMurderer(hrp) then
+							autofarmStopFlight()
+							task.wait()
+						else
 						-- Fly: through walls, lying on the back (face up).
+						-- Auto Anti-Shoot: disable now that farming has started
+						if autofarmAutoAntiShootActive then
+							autofarmAutoAntiShootActive = false
+							if PastedSources then
+								toggleDesync()
+								if desyncButton then setToggleState(desyncButton, false, "Anti-Shoot: ON", "Anti-Shoot: OFF") end
+								setExtractedBtnState("Anti-Shoot", false)
+							end
+						end
 						-- NO teleport snaps anywhere — instant position jumps are exactly
 						-- what the anti-cheat kicked for. Every frame the character moves
 						-- at most autofarmSpeed studs/sec toward the target, and dt is
@@ -14576,6 +14675,32 @@ function startAutofarm()
 							hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
 							hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
 						end)
+						-- Stuck detector: check position over a 1-second window.
+						-- Every ~1 second, compare current position to where we were.
+						-- If moved less than STUCK_MIN_DIST studs in that second, start
+						-- the stuck timer. After STUCK_TIMEOUT seconds stuck, TP to map.
+						local curPos = hrp.Position
+						local now = os.clock()
+						if (now - autofarmStuckCheckAt) >= 1 then
+							autofarmStuckCheckAt = now
+							if autofarmStuckLastPos then
+								local movedDist = (curPos - autofarmStuckLastPos).Magnitude
+								if movedDist < AUTOFARM_STUCK_MIN_DIST then
+									if not autofarmStuckSince then
+										autofarmStuckSince = now
+									elseif (now - autofarmStuckSince) >= AUTOFARM_STUCK_TIMEOUT then
+										autofarmStuckSince = nil
+										autofarmStuckLastPos = nil
+										notify("Autofarm", "Stuck detected — teleporting to map...", 2)
+										pcall(tpToMap)
+									end
+								else
+									autofarmStuckSince = nil
+								end
+							end
+							autofarmStuckLastPos = curPos
+						end
+						end -- avoid murderer else
 					end
 				end
 			end
@@ -14703,6 +14828,82 @@ task.spawn(function()
 		end
 	end
 end)
+
+-- Auto Anti-Shoot: enable Anti-Shoot at round start, disable when farming begins.
+-- The pre-farm TP loop detects round start — we piggyback on the same detection:
+-- when a new round starts and Auto Anti-Shoot is ON, enable Anti-Shoot immediately
+-- (it protects you during the pre-farm wait). The farming loop then disables it
+-- the moment it starts flying to coins.
+autofarmAutoAntiShootLastRound = ""
+autofarmAutoAntiShootActive = false -- true while Anti-Shoot is ON due to this feature
+task.spawn(function()
+	while task.wait(0.4) do
+		if autofarmEnabled and autofarmAutoAntiShootEnabled then
+			local result = autofarmGetPlayerData()
+			if result then
+				local murderer, sheriff = nil, nil
+				for name, data in pairs(result) do
+					if data.Role == "Murderer" then
+						murderer = name
+					elseif data.Role == "Sheriff" then
+						sheriff = name
+					end
+				end
+				if murderer and sheriff then
+					local roundKey = murderer .. "_" .. sheriff
+					if roundKey ~= autofarmAutoAntiShootLastRound then
+						autofarmAutoAntiShootLastRound = roundKey
+						-- Wait for the pre-farm TP to fire (3 seconds), then enable
+						-- Anti-Shoot right after so it protects during the remaining wait.
+						task.wait(3.5)
+						if autofarmEnabled and autofarmAutoAntiShootEnabled then
+							if not PastedSources then
+								toggleDesync()
+								if desyncButton then setToggleState(desyncButton, true, "Anti-Shoot: ON", "Anti-Shoot: OFF") end
+								setExtractedBtnState("Anti-Shoot", true)
+								autofarmAutoAntiShootActive = true
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+
+-- Auto Kill Sheriff/Hero: when you're the Murderer, kill anyone who picks up the gun
+-- Runs on Heartbeat and immediately eliminates any player holding a Gun tool.
+autofarmAutoKillSheriffConnection = nil
+function autofarmSetupAutoKillSheriff()
+	if autofarmAutoKillSheriffConnection then
+		autofarmAutoKillSheriffConnection:Disconnect()
+		autofarmAutoKillSheriffConnection = nil
+	end
+	if not autofarmAutoKillSheriffEnabled then return end
+	autofarmAutoKillSheriffConnection = RunService.Heartbeat:Connect(function()
+		if not autofarmAutoKillSheriffEnabled then return end
+		if not isPlayerMurderer() then return end
+		-- Check every player for a gun
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player then
+				local hasGun = false
+				local char = plr.Character
+				if char and char:FindFirstChild("Gun") then
+					hasGun = true
+				else
+					local bp = plr:FindFirstChild("Backpack")
+					if bp and bp:FindFirstChild("Gun") then
+						hasGun = true
+					end
+				end
+				if hasGun then
+					pcall(doKillPlayer, plr.Name)
+				end
+			end
+		end
+	end)
+end
+autofarmSetupAutoKillSheriff()
 
 -- ===== Discord webhook: coins farmed + how long you've been farming =====
 function autofarmFormatDuration(sec)
@@ -14869,6 +15070,14 @@ autofarmResetMurdererBtn.MouseButton1Click:Connect(function()
 	setToggleState(autofarmResetMurdererBtn, autofarmResetMurdererEnabled, "Auto Reset (Murderer): ON", "Auto Reset (Murderer): OFF")
 end)
 
+-- Auto Kill Sheriff/Hero: when you're the Murderer, kill anyone who picks up the gun
+autofarmAutoKillSheriffBtn = createButton("AutofarmAutoKillSheriffButton", "Auto Kill Sheriff/Hero (Murderer): OFF", 306.5)
+autofarmAutoKillSheriffBtn.MouseButton1Click:Connect(function()
+	autofarmAutoKillSheriffEnabled = not autofarmAutoKillSheriffEnabled
+	setToggleState(autofarmAutoKillSheriffBtn, autofarmAutoKillSheriffEnabled, "Auto Kill Sheriff/Hero (Murderer): ON", "Auto Kill Sheriff/Hero (Murderer): OFF")
+	saveConfig()
+end)
+
 -- Auto shot at the murderer with FORCED Piercer Bullet at the end of the farm
 -- (works for anyone holding the gun: sheriff, hero, or innocent who picked it up)
 autofarmPiercerBtn = createButton("AutofarmPiercerButton", "Shoot Murderer (Piercer, Sheriff/Hero): OFF", 307)
@@ -14881,6 +15090,14 @@ autofarmKillAllBtn = createButton("AutofarmKillAllButton", "Kill Everyone (Murde
 autofarmKillAllBtn.MouseButton1Click:Connect(function()
 	autofarmKillAllEnabled = not autofarmKillAllEnabled
 	setToggleState(autofarmKillAllBtn, autofarmKillAllEnabled, "Kill Everyone (Murderer): ON", "Kill Everyone (Murderer): OFF")
+end)
+
+-- Auto Anti-Shoot: enable Anti-Shoot at round start, auto-disable when farming begins
+autofarmAutoAntiShootBtn = createButton("AutofarmAutoAntiShootButton", "Auto Anti-Shoot: OFF", 308.1)
+autofarmAutoAntiShootBtn.MouseButton1Click:Connect(function()
+	autofarmAutoAntiShootEnabled = not autofarmAutoAntiShootEnabled
+	setToggleState(autofarmAutoAntiShootBtn, autofarmAutoAntiShootEnabled, "Auto Anti-Shoot: ON", "Auto Anti-Shoot: OFF")
+	saveConfig()
 end)
 
 -- ===== Pre-farm TP: toggle + location dropdown on the same row =====
@@ -15046,6 +15263,129 @@ autofarmTpSelect.MouseButton1Click:Connect(function()
 	autofarmTpDropdownFrame.Visible = not autofarmTpDropdownFrame.Visible
 end)
 
+-- ===== Avoid Murderer: toggle + location dropdown + distance input =====
+autofarmAvoidMurdererModes = {"OFF", "Lobby", "VoteMap", "Map", "Above Map", "Void"}
+
+autofarmAvoidMurdererRow = Instance.new("Frame")
+autofarmAvoidMurdererRow.Name = "AutofarmAvoidMurdererRow"
+autofarmAvoidMurdererRow.Size = UDim2.new(1, 0, 0, 42)
+autofarmAvoidMurdererRow.BackgroundTransparency = 1
+autofarmAvoidMurdererRow.LayoutOrder = 308.9
+autofarmAvoidMurdererRow.Parent = categoryFrames["Autofarm"]
+
+autofarmAvoidMurdererBtn = Instance.new("TextButton")
+autofarmAvoidMurdererBtn.Name = "AutofarmAvoidMurdererButton"
+autofarmAvoidMurdererBtn.Size = UDim2.new(0.5, -2, 1, 0)
+autofarmAvoidMurdererBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAvoidMurdererBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmAvoidMurdererBtn.Text = "Avoid Murderer TP: OFF"
+autofarmAvoidMurdererBtn.Font = Enum.Font.SourceSansBold
+autofarmAvoidMurdererBtn.TextSize = 14
+autofarmAvoidMurdererBtn.Parent = autofarmAvoidMurdererRow
+Instance.new("UICorner", autofarmAvoidMurdererBtn).CornerRadius = UDim.new(0, 6)
+autofarmAvoidMurdererBtn.MouseButton1Click:Connect(function()
+	autofarmAvoidMurdererEnabled = not autofarmAvoidMurdererEnabled
+	setToggleState(autofarmAvoidMurdererBtn, autofarmAvoidMurdererEnabled, "Avoid Murderer TP: ON", "Avoid Murderer TP: OFF")
+	saveConfig()
+end)
+
+autofarmAvoidMurdererSelect = Instance.new("TextButton")
+autofarmAvoidMurdererSelect.Size = UDim2.new(0.5, -2, 1, 0)
+autofarmAvoidMurdererSelect.Position = UDim2.new(0.5, 2, 0, 0)
+autofarmAvoidMurdererSelect.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAvoidMurdererSelect.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmAvoidMurdererSelect.Text = "Lobby ▼"
+autofarmAvoidMurdererSelect.Font = Enum.Font.SourceSansBold
+autofarmAvoidMurdererSelect.TextSize = 14
+autofarmAvoidMurdererSelect.AutoButtonColor = false
+autofarmAvoidMurdererSelect.Parent = autofarmAvoidMurdererRow
+Instance.new("UICorner", autofarmAvoidMurdererSelect).CornerRadius = UDim.new(0, 6)
+
+autofarmAvoidMurdererDropdownFrame = Instance.new("Frame")
+autofarmAvoidMurdererDropdownFrame.Size = UDim2.new(0.5, -2, 0, math.min(#autofarmAvoidMurdererModes * 30, 180))
+autofarmAvoidMurdererDropdownFrame.Position = UDim2.new(0.5, 2, 0, 42)
+autofarmAvoidMurdererDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAvoidMurdererDropdownFrame.BorderSizePixel = 0
+autofarmAvoidMurdererDropdownFrame.Visible = false
+autofarmAvoidMurdererDropdownFrame.ZIndex = 10
+autofarmAvoidMurdererDropdownFrame.Parent = autofarmAvoidMurdererRow
+
+autofarmAvoidMurdererDropdownList = Instance.new("ScrollingFrame")
+autofarmAvoidMurdererDropdownList.Size = UDim2.new(1, 0, 1, 0)
+autofarmAvoidMurdererDropdownList.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAvoidMurdererDropdownList.BorderSizePixel = 0
+autofarmAvoidMurdererDropdownList.ScrollBarThickness = 4
+autofarmAvoidMurdererDropdownList.CanvasSize = UDim2.new(0, 0, 0, #autofarmAvoidMurdererModes * 30)
+autofarmAvoidMurdererDropdownList.ZIndex = 10
+autofarmAvoidMurdererDropdownList.Parent = autofarmAvoidMurdererDropdownFrame
+Instance.new("UICorner", autofarmAvoidMurdererDropdownList).CornerRadius = UDim.new(0, 6)
+
+for i, modeName in ipairs(autofarmAvoidMurdererModes) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 30)
+	btn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+	btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Text = modeName
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 14
+	btn.AutoButtonColor = false
+	btn.ZIndex = 10
+	btn.Parent = autofarmAvoidMurdererDropdownList
+	btn.MouseButton1Click:Connect(function()
+		autofarmAvoidMurdererModeIndex = i
+		autofarmAvoidMurdererSelect.Text = modeName .. " ▼"
+		autofarmAvoidMurdererDropdownFrame.Visible = false
+	end)
+	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+end
+autofarmAvoidMurdererSelect.MouseButton1Click:Connect(function()
+	autofarmAvoidMurdererDropdownFrame.Visible = not autofarmAvoidMurdererDropdownFrame.Visible
+end)
+
+-- Avoid Murderer distance row: label + input box
+autofarmAvoidMurdererDistRow = Instance.new("Frame")
+autofarmAvoidMurdererDistRow.Name = "AutofarmAvoidMurdererDistRow"
+autofarmAvoidMurdererDistRow.Size = UDim2.new(1, 0, 0, 42)
+autofarmAvoidMurdererDistRow.BackgroundTransparency = 1
+autofarmAvoidMurdererDistRow.LayoutOrder = 310
+autofarmAvoidMurdererDistRow.Parent = categoryFrames["Autofarm"]
+
+autofarmAvoidMurdererDistLabel = Instance.new("TextLabel")
+autofarmAvoidMurdererDistLabel.Size = UDim2.new(1, -80, 1, 0)
+autofarmAvoidMurdererDistLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAvoidMurdererDistLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmAvoidMurdererDistLabel.Text = "Avoid Distance (studs)"
+autofarmAvoidMurdererDistLabel.Font = Enum.Font.SourceSansBold
+autofarmAvoidMurdererDistLabel.TextSize = 14
+autofarmAvoidMurdererDistLabel.Parent = autofarmAvoidMurdererDistRow
+Instance.new("UICorner", autofarmAvoidMurdererDistLabel).CornerRadius = UDim.new(0, 6)
+
+autofarmAvoidMurdererDistBox = Instance.new("TextBox")
+autofarmAvoidMurdererDistBox.Name = "AutofarmAvoidMurdererDistInput"
+autofarmAvoidMurdererDistBox.Size = UDim2.new(0, 74, 1, 0)
+autofarmAvoidMurdererDistBox.Position = UDim2.new(1, -74, 0, 0)
+autofarmAvoidMurdererDistBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAvoidMurdererDistBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmAvoidMurdererDistBox.Text = tostring(autofarmAvoidMurdererDist)
+autofarmAvoidMurdererDistBox.PlaceholderText = "Studs"
+autofarmAvoidMurdererDistBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+autofarmAvoidMurdererDistBox.Font = Enum.Font.SourceSansBold
+autofarmAvoidMurdererDistBox.TextSize = 14
+autofarmAvoidMurdererDistBox.ClearTextOnFocus = false
+autofarmAvoidMurdererDistBox.Parent = autofarmAvoidMurdererDistRow
+Instance.new("UICorner", autofarmAvoidMurdererDistBox).CornerRadius = UDim.new(0, 6)
+
+autofarmAvoidMurdererDistBox.FocusLost:Connect(function()
+	local n = tonumber(autofarmAvoidMurdererDistBox.Text)
+	if n then
+		autofarmAvoidMurdererDist = math.clamp(n, 5, 200)
+	end
+	autofarmAvoidMurdererDistBox.Text = tostring(autofarmAvoidMurdererDist)
+	saveConfig()
+end)
+
 -- Reset Murderer On Death: LAST button in this category
 autofarmResetDeathEnabled = false
 autofarmResetDeathBtn = createButton("AutofarmResetDeathButton", "Reset Murderer On Death: OFF", 309)
@@ -15108,9 +15448,9 @@ task.spawn(function()
 end)
 
 -- ===== Discord webhook UI =====
-createSection("Webhook", 310)
+createSection("Webhook", 311)
 
-autofarmWebhookBtn = createButton("AutofarmWebhookButton", "Discord Webhook Notification: OFF", 311)
+autofarmWebhookBtn = createButton("AutofarmWebhookButton", "Discord Webhook Notification: OFF", 312)
 autofarmWebhookBtn.MouseButton1Click:Connect(function()
 	autofarmWebhookEnabled = not autofarmWebhookEnabled
 	setToggleState(autofarmWebhookBtn, autofarmWebhookEnabled, "Discord Webhook Notification: ON", "Discord Webhook Notification: OFF")
@@ -15121,7 +15461,7 @@ autofarmWebhookUrlRow = Instance.new("Frame")
 autofarmWebhookUrlRow.Name = "AutofarmWebhookUrlRow"
 autofarmWebhookUrlRow.Size = UDim2.new(1, 0, 0, 64)
 autofarmWebhookUrlRow.BackgroundTransparency = 1
-autofarmWebhookUrlRow.LayoutOrder = 311.5
+autofarmWebhookUrlRow.LayoutOrder = 312.5
 autofarmWebhookUrlRow.Parent = categoryFrames["Autofarm"]
 
 autofarmWebhookUrlLabel = Instance.new("TextLabel")
@@ -15173,7 +15513,7 @@ autofarmWebhookRow = Instance.new("Frame")
 autofarmWebhookRow.Name = "AutofarmWebhookRow"
 autofarmWebhookRow.Size = UDim2.new(1, 0, 0, 42)
 autofarmWebhookRow.BackgroundTransparency = 1
-autofarmWebhookRow.LayoutOrder = 312
+autofarmWebhookRow.LayoutOrder = 313
 autofarmWebhookRow.Parent = categoryFrames["Autofarm"]
 
 autofarmWebhookLabel = Instance.new("TextLabel")
@@ -15210,13 +15550,13 @@ autofarmWebhookBox.FocusLost:Connect(function()
 end)
 
 -- Manual "send now" button for instant reports
-autofarmWebhookSendBtn = createButton("AutofarmWebhookSendButton", "Send Notification Now (Test)", 313)
+autofarmWebhookSendBtn = createButton("AutofarmWebhookSendButton", "Send Notification Now (Test)", 314)
 autofarmWebhookSendBtn.MouseButton1Click:Connect(function()
 	task.spawn(autofarmSendWebhook)
 end)
 
 -- ===== Auto server hop when you're the only player left =====
-createSection("Server Hop", 314)
+createSection("Server Hop", 315)
 
 -- Queue the script for re-execution after the teleport so it auto-loads on the
 -- new server and the config restore re-enables everything that was turned on.
@@ -15284,7 +15624,7 @@ task.spawn(function()
 	end
 end)
 
-autofarmServerHopBtn = createButton("AutofarmServerHopButton", "Server Hop When Alone: OFF", 315)
+autofarmServerHopBtn = createButton("AutofarmServerHopButton", "Server Hop When Alone: OFF", 316)
 autofarmServerHopBtn.MouseButton1Click:Connect(function()
 	autofarmServerHopEnabled = not autofarmServerHopEnabled
 	setToggleState(autofarmServerHopBtn, autofarmServerHopEnabled, "Server Hop When Alone: ON", "Server Hop When Alone: OFF")
@@ -15297,7 +15637,7 @@ autofarmScriptUrlRow = Instance.new("Frame")
 autofarmScriptUrlRow.Name = "AutofarmScriptUrlRow"
 autofarmScriptUrlRow.Size = UDim2.new(1, 0, 0, 64)
 autofarmScriptUrlRow.BackgroundTransparency = 1
-autofarmScriptUrlRow.LayoutOrder = 316
+autofarmScriptUrlRow.LayoutOrder = 317
 autofarmScriptUrlRow.Parent = categoryFrames["Autofarm"]
 
 autofarmScriptUrlLabel = Instance.new("TextLabel")
@@ -22334,7 +22674,7 @@ end
 hookDescendants(mainGui)
 -- popupBtnGui buttons are hooked individually in extraction code
 
--- Р Р°Р·СЂРµС€Р°РµРј СЃРєСЂРѕР»Р» РїРѕСЃР»Рµ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё
+-- Р Р°Р·СЂРµС€Р°РµРј СЃРєСЂРѕР»Р» РїРѕСЃР»Рµ РёРЅРёС†РёР°Р»РёР·Р°С†РёРё
 task.wait(0.1)
 canScroll = true
 
@@ -23482,6 +23822,27 @@ function restoreFullConfig()
 	if T.autofarmServerHopEnabled then
 		autofarmServerHopEnabled = true
 		if autofarmServerHopBtn then setToggleState(autofarmServerHopBtn, true, "Server Hop When Alone: ON", "Server Hop When Alone: OFF") end
+	end
+	if T.autofarmAvoidMurdererEnabled then
+		autofarmAvoidMurdererEnabled = true
+		if autofarmAvoidMurdererBtn then setToggleState(autofarmAvoidMurdererBtn, true, "Avoid Murderer TP: ON", "Avoid Murderer TP: OFF") end
+	end
+	if T.autofarmAutoAntiShootEnabled then
+		autofarmAutoAntiShootEnabled = true
+		if autofarmAutoAntiShootBtn then setToggleState(autofarmAutoAntiShootBtn, true, "Auto Anti-Shoot: ON", "Auto Anti-Shoot: OFF") end
+	end
+	if T.autofarmAutoKillSheriffEnabled then
+		autofarmAutoKillSheriffEnabled = true
+		if autofarmAutoKillSheriffBtn then setToggleState(autofarmAutoKillSheriffBtn, true, "Auto Kill Sheriff/Hero (Murderer): ON", "Auto Kill Sheriff/Hero (Murderer): OFF") end
+		autofarmSetupAutoKillSheriff()
+	end
+	if c.values and c.values.autofarmAvoidMurdererModeIndex and autofarmAvoidMurdererModes[c.values.autofarmAvoidMurdererModeIndex] then
+		autofarmAvoidMurdererModeIndex = c.values.autofarmAvoidMurdererModeIndex
+		if autofarmAvoidMurdererSelect then autofarmAvoidMurdererSelect.Text = autofarmAvoidMurdererModes[autofarmAvoidMurdererModeIndex] .. " ▼" end
+	end
+	if c.values and c.values.autofarmAvoidMurdererDist then
+		autofarmAvoidMurdererDist = math.clamp(c.values.autofarmAvoidMurdererDist, 5, 200)
+		if autofarmAvoidMurdererDistBox then autofarmAvoidMurdererDistBox.Text = tostring(autofarmAvoidMurdererDist) end
 	end
 	if T.autofarmEnabled then
 		-- Continue the farming session stats across rejoins/server hops so the
