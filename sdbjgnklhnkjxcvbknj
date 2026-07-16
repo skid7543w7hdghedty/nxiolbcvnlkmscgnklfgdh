@@ -14882,6 +14882,7 @@ function autofarmSetupAutoKillSheriff()
 	if not autofarmAutoKillSheriffEnabled then return end
 	autofarmAutoKillSheriffConnection = RunService.Heartbeat:Connect(function()
 		if not autofarmAutoKillSheriffEnabled then return end
+		if not autofarmEnabled then return end
 		if not isPlayerMurderer() then return end
 		-- Check every player for a gun
 		for _, plr in ipairs(Players:GetPlayers()) do
@@ -15404,7 +15405,7 @@ autofarmResetDeathBusy = false
 task.spawn(function()
 	local wasAlive = false
 	while task.wait(0.2) do
-		if autofarmResetDeathEnabled then
+		if autofarmResetDeathEnabled and autofarmEnabled then
 			local char = player.Character
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			local isAlive = (hum ~= nil) and hum.Health > 0
