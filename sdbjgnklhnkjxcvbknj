@@ -256,6 +256,7 @@ function saveConfig()
 	config.toggles.autofarmAvoidMurdererEnabled = autofarmAvoidMurdererEnabled
 	config.toggles.autofarmAutoAntiShootEnabled = autofarmAutoAntiShootEnabled
 	config.toggles.autofarmAutoKillSheriffEnabled = autofarmAutoKillSheriffEnabled
+	config.toggles.antiAfkEnabled = antiAfkEnabled
 
 	config.values.JUMP_BOOST_POWER = JUMP_BOOST_POWER
 	config.values.FAKE_SPEED_CFRAME_SPEED = FAKE_SPEED_CFRAME_SPEED
@@ -15051,6 +15052,40 @@ autofarmSpeedBox.FocusLost:Connect(function()
 	autofarmSpeedBox.Text = tostring(autofarmSpeed)
 end)
 
+-- ===== Anti-Afk: keeps you connected by simulating input when the game goes idle =====
+antiAfkEnabled = false
+antiAfkConnection = nil
+antiAfkVirtualUser = game:GetService("VirtualUser")
+
+function setupAntiAfk()
+	if antiAfkConnection then antiAfkConnection:Disconnect(); antiAfkConnection = nil end
+	if not antiAfkEnabled then return end
+	antiAfkConnection = player.Idled:Connect(function()
+		pcall(function()
+			antiAfkVirtualUser:CaptureController()
+			antiAfkVirtualUser:ClickButton2(Vector2.new())
+		end)
+	end)
+end
+
+function stopAntiAfk()
+	antiAfkEnabled = false
+	if antiAfkConnection then antiAfkConnection:Disconnect(); antiAfkConnection = nil end
+end
+
+currentCategory = "Autofarm"
+antiAfkBtn = createButton("AntiAfkButton", "Anti-Afk: OFF", 302.7)
+antiAfkBtn.MouseButton1Click:Connect(function()
+	antiAfkEnabled = not antiAfkEnabled
+	if antiAfkEnabled then
+		setupAntiAfk()
+	else
+		stopAntiAfk()
+	end
+	setToggleState(antiAfkBtn, antiAfkEnabled, "Anti-Afk: ON", "Anti-Afk: OFF")
+	saveConfig()
+end)
+
 createSection("After Autofarm", 303)
 
 autofarmResetInnocentBtn = createButton("AutofarmResetInnocentButton", "Auto Reset (Innocent): OFF", 304)
@@ -16914,6 +16949,9 @@ createSection("Binds", 500)
 bindToggleStates = {}
 
 bindableFeatures = {
+	{name = "Toggle Menu", defaultKey = nil, getState = function() return menuVisible end, callback = function()
+		toggleMenu()
+	end},
 	{name = "Infinite Jump", defaultKey = nil, getState = function() return isEnabled end, callback = function()
 		isEnabled = not isEnabled
 		setToggleState(button1, isEnabled, "Infinite Jump: ON", "Infinite Jump: OFF")
@@ -22996,7 +23034,21 @@ toggleClickButton.InputEnded:Connect(function(input)
 			saveConfig()
 		end
 	end
-end)		clumsy_on = false
+end)
+
+-- Toggle the menu open/closed (same behavior as clicking the toggle button, Win-X style)
+function toggleMenu()
+	playClickSound()
+	menuVisible = not menuVisible
+	if mainGui and mainGui.Parent then
+		if animationEnabled then
+			animateMenu(menuVisible)
+		else
+			mainGui.Enabled = menuVisible
+		end
+	end
+end
+		clumsy_on = false
 		removeClumsyGhost()
 		if clumsyButton then
 			clumsyButton.Text = "Clumsy: OFF"
@@ -23836,6 +23888,11 @@ function restoreFullConfig()
 		autofarmAutoKillSheriffEnabled = true
 		if autofarmAutoKillSheriffBtn then setToggleState(autofarmAutoKillSheriffBtn, true, "Auto Kill Sheriff/Hero (Murderer): ON", "Auto Kill Sheriff/Hero (Murderer): OFF") end
 		autofarmSetupAutoKillSheriff()
+	end
+	if T.antiAfkEnabled then
+		antiAfkEnabled = true
+		if antiAfkBtn then setToggleState(antiAfkBtn, true, "Anti-Afk: ON", "Anti-Afk: OFF") end
+		setupAntiAfk()
 	end
 	if c.values and c.values.autofarmAvoidMurdererModeIndex and autofarmAvoidMurdererModes[c.values.autofarmAvoidMurdererModeIndex] then
 		autofarmAvoidMurdererModeIndex = c.values.autofarmAvoidMurdererModeIndex
