@@ -230,6 +230,7 @@ function saveConfig()
 
 	config.toggles.fakeDuckEnabled = fakeDuckEnabled
 	config.toggles.loopSpeedEnabled = loopSpeedEnabled
+	config.toggles.customJumpPowerEnabled = customJumpPowerEnabled
 	config.toggles.antiAimMode = currentMode
 	config.toggles.gameNotifEnabled = gameNotifEnabled
 	config.toggles.notifyOnExploiters = notifyOnExploiters
@@ -257,9 +258,19 @@ function saveConfig()
 	config.toggles.autofarmAutoAntiShootEnabled = autofarmAutoAntiShootEnabled
 	config.toggles.autofarmAutoKillSheriffEnabled = autofarmAutoKillSheriffEnabled
 	config.toggles.antiAfkEnabled = antiAfkEnabled
+	config.toggles.instantRoleNotifyEnabled = instantRoleNotifyEnabled
+	config.toggles.showRoundTimerEnabled = showRoundTimerEnabled
 
 	config.values.JUMP_BOOST_POWER = JUMP_BOOST_POWER
 	config.values.FAKE_SPEED_CFRAME_SPEED = FAKE_SPEED_CFRAME_SPEED
+	config.values.instantRolePosXScale = instantRolePosXScale
+	config.values.instantRolePosYScale = instantRolePosYScale
+	config.values.instantRoleSizeXScale = instantRoleSizeXScale
+	config.values.instantRoleSizeYScale = instantRoleSizeYScale
+	config.values.roundTimerPosXScale = roundTimerPosXScale
+	config.values.roundTimerPosYScale = roundTimerPosYScale
+	config.values.roundTimerSizeXScale = roundTimerSizeXScale
+	config.values.roundTimerSizeYScale = roundTimerSizeYScale
 	config.values.range = range
 	config.values.throwingKnifeAuraRadius = throwingKnifeAuraRadius
 	config.values.autoInvisActivateDist = autoInvisActivateDist
@@ -272,6 +283,7 @@ function saveConfig()
 	config.values.DesyncOffsetRange = DesyncOffsetRange
 	config.values.antiAimSpeed = antiAimSpeed
 	config.values.loopSpeedValue = loopSpeedValue
+	config.values.customJumpPowerValue = customJumpPowerValue
 	config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
 	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed
 	config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
@@ -701,6 +713,12 @@ loopSpeedConn = nil
 loopSpeedDiedConn = nil
 loopSpeedButton = nil
 loopSpeedInput = nil
+customJumpPowerEnabled = false
+customJumpPowerValue = 50
+customJumpPowerConn = nil
+customJumpPowerButton = nil
+customJumpPowerInput = nil
+customJumpPowerRow = nil
 loopSpeedPreFakeDuck = nil
 
 -- Anti-Aim Speed Glitch variables (speed glitch that auto-activates with Anti-Aim)
@@ -829,8 +847,8 @@ function cycleMode()
 		-- LoopSpeed integration: save current value, set to 10
 		if loopSpeedEnabled and loopSpeedPreFakeDuck == nil then
 			loopSpeedPreFakeDuck = loopSpeedValue
-			loopSpeedValue = 23
-			if loopSpeedInput then loopSpeedInput.Text = "23" end
+			loopSpeedValue = 25
+			if loopSpeedInput then loopSpeedInput.Text = "25" end
 			setupLoopSpeed()
 		end
 	else
@@ -1119,104 +1137,27 @@ reachBuildCache()
 Players.PlayerAdded:Connect(reachBuildCache)
 Players.PlayerRemoving:Connect(reachBuildCache)
 
--- KillAura: brings targets to your real position, strips their weapons, and
--- knife touch-kills them. Works with any equipped tool (not just knives).
-function toggleReach()
-	reachEnabled = not reachEnabled
-	if reachEnabled then
-		reachConnection = RunService.Heartbeat:Connect(function()
-			local myChar = player.Character
-			if not myChar then return end
-			local hrp = myChar:FindFirstChild("HumanoidRootPart")
-			local myHum = myChar:FindFirstChildOfClass("Humanoid")
-			if not (hrp and myHum and myHum.Health > 0) then return end
+-- KillAura: while the knife is IN YOUR HAND, slashing (clicking to cut) kills
+-- every alive player within `range` studs of you. It never pulls anyone toward
+-- you and never auto-kills on its own — the kill only fires the moment you
+-- actually swing the knife. Distance is measured from you to each victim, so a
+-- player you merely walk past (e.g. within 7 studs) is killed when you slash.
+reachActivatedConns = {}
+reachHookConns = {}
+reachHookedTools = {}
 
-			local tool = myChar:FindFirstChildOfClass("Tool")
-			if not (tool and tool:FindFirstChild("Handle")) then return end
-			if not tool.Name:lower():find("knife") then return end
-			local handle = tool.Handle
-
-			-- Real position (works with Anti-Shoot / Desync)
-			local realCF = killGetRealCFrame()
-
-			local p = reachCachePlayers
-			local idx = 0
-			for i = 1, #p do
-				local plr = p[i]
-				if plr ~= player then
-					local v = plr.Character
-					if v then
-						local tRoot = v:FindFirstChild("HumanoidRootPart")
-						local tHum = v:FindFirstChildOfClass("Humanoid")
-						if tRoot and tHum and tHum.Health > 0 then
-							local dist = (realCF.Position - tRoot.Position).Magnitude
-							if dist <= range then
-								idx = idx + 1
-								-- Bring target to our real position
-								pcall(function()
-									tRoot.CFrame = realCF * CFrame.new(idx * 0.5, 0, 0)
-								end)
-								-- Strip their weapons
-								pcall(function()
-									local bp = plr:FindFirstChild("Backpack")
-									if bp then bp:ClearAllChildren() end
-									for _, child in pairs(v:GetChildren()) do
-										if child:IsA("Tool") then child:Destroy() end
-									end
-								end)
-								-- Knife: activate + firetouchinterest
-								pcall(function() tool:Activate() end)
-								for _, part in ipairs(v:GetDescendants()) do
-									if part:IsA("BasePart") then
-										safeFireTouch(handle, part)
-									end
-								end
-							end
-						end
-					end
-				end
-			end
-		end)
-	else
-		if reachConnection then
-			reachConnection:Disconnect()
-			reachConnection = nil
-		end
-	end
-end
-
--- ============================================
--- Throwing Knife Aura
--- ============================================
--- When a thrown ThrowingKnife in Workspace is within `throwingKnifeAuraRadius`
--- studs of an alive player, that player is killed using the local player's
--- equipped knife (same mechanism as KillAura). Only works when the local
--- player is the Murderer.
-throwingKnifeAuraEnabled = false
-throwingKnifeAuraConnection = nil
-throwingKnifeAuraRadius = 15
-
--- Live set of thrown-knife instances currently in the workspace.
--- Value = last known world position of the knife. Keeping the position lets us
--- still register a hit when the knife despawns on impact — at close range the
--- knife hits and disappears within a frame or two, long before a kill lands.
-activeThrownKnives = {}
-
--- [fix] Targets latched for killing, keyed by Player; value = os.clock()
--- deadline. At close range the thrown knife reaches the victim (and despawns)
--- while our knife tool is still on its post-throw cooldown / re-equipping, so
--- a single Activate+touch attempt silently does nothing. Instead of one-shot
--- attempts tied to the knife instance's lifetime, we latch the target and
--- keep retrying every Heartbeat until they die or the window expires. This is
--- what made the aura only work at long range (~60 studs): the flight time
--- there was long enough for the cooldown to expire before the knife despawned.
-tkaPendingKills = {}
-TKA_KILL_RETRY_WINDOW = 2.0
-
--- Latch every alive player within the aura radius of `pos` for killing.
-function tkaMarkTargetsNear(pos)
-	if not pos then return end
-	local deadline = os.clock() + TKA_KILL_RETRY_WINDOW
+function reachDoSlashKill()
+	if not reachEnabled then return end
+	local myChar = player.Character
+	local hrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+	if not (hrp and myHum and myHum.Health > 0) then return end
+	-- Only while the knife is actually equipped in your hand.
+	local tool = myChar:FindFirstChildOfClass("Tool")
+	if not (tool and tool.Name:lower():find("knife") and tool:FindFirstChild("Handle")) then return end
+	local handle = tool.Handle
+	local handleTouched = tkaGetHandleTouched()
+	local origin = killGetRealCFrame().Position
 	local p = reachCachePlayers
 	for i = 1, #p do
 		local plr = p[i]
@@ -1225,109 +1166,78 @@ function tkaMarkTargetsNear(pos)
 			local tRoot = v and v:FindFirstChild("HumanoidRootPart")
 			local tHum = v and v:FindFirstChildOfClass("Humanoid")
 			if tRoot and tHum and tHum.Health > 0
-				and (pos - tRoot.Position).Magnitude <= throwingKnifeAuraRadius then
-				tkaPendingKills[plr] = deadline
+				and (origin - tRoot.Position).Magnitude <= range then
+				for _, part in ipairs(v:GetDescendants()) do
+					if part:IsA("BasePart") then
+						if handleTouched then
+							pcall(function() handleTouched:FireServer(part) end)
+						end
+						safeFireTouch(handle, part)
+					end
+				end
 			end
 		end
 	end
 end
 
--- [fix] Anti-pull guard. The game's stab logic snaps the murderer to the
--- victim a few FRAMES AFTER the hit registers — not on the same frame as
--- Activate. That's why restoring the CFrame right after Activate never
--- worked: the restore ran before the game moved us. Instead, for a short
--- window after every aura stab we watch the HumanoidRootPart each Heartbeat;
--- if it jumps further than TKA_GUARD_JUMP studs in a single frame (a teleport
--- / grab, impossible from normal running), we snap it straight back, zero the
--- velocity and strip any injected body movers. Normal walking during the
--- window is untouched because per-frame movement is well under the threshold.
-tkaGuardUntil = 0
-tkaGuardLastPos = nil
-TKA_GUARD_WINDOW = 0.75
-TKA_GUARD_JUMP = 8
+-- Hook a knife tool's Activated event so each swing triggers a distance kill.
+-- Guarded so the same tool instance is never hooked twice (avoids double hits).
+function reachHookTool(tool)
+	if not (tool and tool:IsA("Tool")) then return end
+	if not tool.Name:lower():find("knife") then return end
+	if reachHookedTools[tool] then return end
+	reachHookedTools[tool] = true
+	local conn = tool.Activated:Connect(function()
+		reachDoSlashKill()
+	end)
+	table.insert(reachActivatedConns, conn)
+end
 
-function tkaGuardCheck()
-	local myChar = player.Character
-	local hrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
-	if not hrp then
-		tkaGuardLastPos = nil
-		return
-	end
+function reachWatchChar(char)
+	if not char then return end
+	local tool = char:FindFirstChildOfClass("Tool")
+	if tool then reachHookTool(tool) end
+	table.insert(reachHookConns, char.ChildAdded:Connect(function(ch)
+		if reachEnabled then reachHookTool(ch) end
+	end))
+end
 
-	if os.clock() > tkaGuardUntil then
-		tkaGuardLastPos = nil
-		return
-	end
-
-	local pos = hrp.Position
-	if tkaGuardLastPos and (pos - tkaGuardLastPos).Magnitude > TKA_GUARD_JUMP then
-		-- We got yanked (stab grab / lunge teleport) — put us back.
-		for _, ch in ipairs(hrp:GetChildren()) do
-			if ch:IsA("BodyVelocity") or ch:IsA("BodyGyro") or ch:IsA("BodyPosition")
-				or ch:IsA("LinearVelocity") or ch:IsA("VectorForce")
-				or ch:IsA("AlignPosition") or ch:IsA("AlignOrientation") then
-				ch:Destroy()
-			end
-		end
-		hrp.CFrame = hrp.CFrame - hrp.CFrame.Position + tkaGuardLastPos
-		hrp.AssemblyLinearVelocity = Vector3.zero
+function toggleReach()
+	reachEnabled = not reachEnabled
+	if reachEnabled then
+		reachHookedTools = {}
+		reachWatchChar(player.Character)
+		table.insert(reachHookConns, player.CharacterAdded:Connect(function(newChar)
+			if reachEnabled then reachWatchChar(newChar) end
+		end))
 	else
-		tkaGuardLastPos = pos
+		for _, c in ipairs(reachActivatedConns) do pcall(function() c:Disconnect() end) end
+		for _, c in ipairs(reachHookConns) do pcall(function() c:Disconnect() end) end
+		reachActivatedConns = {}
+		reachHookConns = {}
+		reachHookedTools = {}
 	end
 end
 
--- [fix] Retry the stab on all latched targets until they die or time out.
--- Uses the same kill mechanism as "Kill Everyone" (killGetKnife +
--- killKnifeTouch). Every stab arms the anti-pull guard above so the game's
--- delayed grab/teleport toward the victim gets reverted the frame it happens.
-function tkaProcessPendingKills()
-	if next(tkaPendingKills) == nil then return end
+-- ============================================
+-- Throwing Knife Aura
+-- ============================================
+-- When enabled and the local player is the Murderer, throwing the knife kills
+-- every alive player whose body passes within `throwingKnifeAuraRadius` studs of
+-- the FLYING KNIFE itself — not of you. So a knife thrown across the map that
+-- sails 7 studs past a target (with the field set to 7) still kills them, even
+-- on a complete miss. We detect the throw by the projectile appearing in the
+-- Workspace, track it every frame along its whole flight, and for each player
+-- within range register a hit through the knife's own Events.HandleTouched
+-- remote plus a firetouchinterest fallback on the projectile Handle. The
+-- murderer is never teleported.
+throwingKnifeAuraEnabled = false
+throwingKnifeAuraConnection = nil
+throwingKnifeAuraRadius = 15
+tkaThrowCooldownUntil = 0
 
-	local now = os.clock()
-	local myChar = player.Character
-	local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
-	if not (myHum and myHum.Health > 0) then return end
-
-	local knife = killGetKnife()
-	if not knife then return end
-
-	local didStab = false
-	for plr, deadline in pairs(tkaPendingKills) do
-		local v = plr.Parent and plr.Character
-		local tHum = v and v:FindFirstChildOfClass("Humanoid")
-		if now > deadline or not v or not tHum or tHum.Health <= 0 then
-			tkaPendingKills[plr] = nil
-		else
-			didStab = true
-			pcall(killKnifeTouch, v, knife)
-		end
-	end
-
-	if didStab then
-		-- Arm/refresh the guard window; seed the anchor position now.
-		tkaGuardUntil = now + TKA_GUARD_WINDOW
-		local hrp = myChar:FindFirstChild("HumanoidRootPart")
-		if hrp and not tkaGuardLastPos then
-			tkaGuardLastPos = hrp.Position
-		end
-	end
-end
-
-function tkaGetKnifePosition(inst)
-	if inst:IsA("BasePart") then
-		return inst.Position
-	elseif inst:IsA("Model") then
-		if inst.PrimaryPart then
-			return inst.PrimaryPart.Position
-		end
-		local bp = inst:FindFirstChildWhichIsA("BasePart")
-		if bp then return bp.Position end
-		local ok, cf = pcall(function() return inst:GetBoundingBox() end)
-		if ok and cf then return cf.Position end
-	end
-	return nil
-end
-
+-- True only for a thrown-knife projectile living directly in the Workspace
+-- (not the tool sitting in someone's Backpack / Character).
 function tkaIsThrownKnife(inst)
 	if not inst then return false end
 	if not (inst:IsA("BasePart") or inst:IsA("Model")) then return false end
@@ -1344,83 +1254,134 @@ function tkaIsThrownKnife(inst)
 	return inst:IsDescendantOf(Workspace)
 end
 
-function tkaRescanKnives()
-	for inst, lastPos in pairs(activeThrownKnives) do
-		if not inst.Parent or not inst:IsDescendantOf(Workspace) or not tkaIsThrownKnife(inst) then
-			-- [fix] Knife despawned (hit something / landed). Mark targets at
-			-- its LAST KNOWN position — at close range this is the only chance
-			-- we get, because the knife lives for just a few frames.
-			activeThrownKnives[inst] = nil
-			tkaMarkTargetsNear(lastPos)
-		end
+-- BasePart of the flying projectile, used for the firetouchinterest fallback.
+function tkaGetThrownHandle(inst)
+	if not inst then return nil end
+	if inst:IsA("BasePart") then return inst end
+	if inst:IsA("Model") then
+		return inst:FindFirstChild("Handle")
+			or inst.PrimaryPart
+			or inst:FindFirstChildWhichIsA("BasePart")
 	end
-	for _, inst in ipairs(Workspace:GetDescendants()) do
-		if tkaIsThrownKnife(inst) and not activeThrownKnives[inst] then
-			activeThrownKnives[inst] = tkaGetKnifePosition(inst) or true
+	return nil
+end
+
+-- Current world position of the flying knife.
+function tkaGetKnifePosition(inst)
+	local h = tkaGetThrownHandle(inst)
+	if h then return h.Position end
+	if inst and inst:IsA("Model") then
+		local ok, cf = pcall(function() return inst:GetBoundingBox() end)
+		if ok and cf then return cf.Position end
+	end
+	return nil
+end
+
+-- Shortest distance from point p to the segment a-b. Using the segment (rather
+-- than a single sampled point) means a knife moving fast enough to skip past a
+-- target between two frames is still caught if its PATH grazed within range.
+function tkaPointSegDist(p, a, b)
+	local ab = b - a
+	local len2 = ab:Dot(ab)
+	if len2 <= 0 then return (p - a).Magnitude end
+	local t = (p - a):Dot(ab) / len2
+	if t < 0 then t = 0 elseif t > 1 then t = 1 end
+	local proj = a + ab * t
+	return (p - proj).Magnitude
+end
+
+-- Locate the knife tool (equipped, or in the Backpack while on post-throw
+-- cooldown) and return its Events.HandleTouched remote.
+function tkaGetHandleTouched()
+	local knifeTool = player.Character and player.Character:FindFirstChild("Knife")
+	if not knifeTool then
+		local bp = player:FindFirstChild("Backpack")
+		knifeTool = bp and bp:FindFirstChild("Knife")
+	end
+	if not knifeTool then return nil end
+	local ev = knifeTool:FindFirstChild("Events")
+	return ev and ev:FindFirstChild("HandleTouched")
+end
+
+-- Kill every alive player whose HumanoidRootPart is within the aura radius of
+-- the knife's flight segment (prevPos -> curPos). prevPos may be nil on the
+-- first sampled frame, in which case we fall back to a point check at curPos.
+function tkaKillNearby(prevPos, curPos, thrownHandle)
+	if not curPos then return end
+	local handleTouched = tkaGetHandleTouched()
+
+	local players = Players:GetPlayers()
+	for i = 1, #players do
+		local plr = players[i]
+		if plr ~= player then
+			local tChar = plr.Character
+			local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+			local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+			if tRoot and tHum and tHum.Health > 0 then
+				local dist
+				if prevPos then
+					dist = tkaPointSegDist(tRoot.Position, prevPos, curPos)
+				else
+					dist = (tRoot.Position - curPos).Magnitude
+				end
+				if dist <= throwingKnifeAuraRadius then
+					for _, part in ipairs(tChar:GetDescendants()) do
+						if part:IsA("BasePart") then
+							if handleTouched then
+								pcall(function() handleTouched:FireServer(part) end)
+							end
+							if thrownHandle then
+								safeFireTouch(thrownHandle, part)
+							end
+						end
+					end
+				end
+			end
 		end
 	end
 end
 
-Workspace.DescendantAdded:Connect(function(inst)
-	if not throwingKnifeAuraEnabled then return end
-	if inst.Parent and tkaIsThrownKnife(inst) then
-		activeThrownKnives[inst] = tkaGetKnifePosition(inst) or true
-		pcall(tkaMarkTargetsNear, tkaGetKnifePosition(inst))
-	end
-end)
-
-tkaLastRescan = 0
+-- Toggle: hook the Workspace so each detected throw is tracked in flight and
+-- kills anyone the knife passes within range of.
 function toggleThrowingKnifeAura()
 	throwingKnifeAuraEnabled = not throwingKnifeAuraEnabled
 	if throwingKnifeAuraEnabled then
-		tkaPendingKills = {}
-		tkaRescanKnives()
-		tkaLastRescan = os.clock()
-		throwingKnifeAuraConnection = RunService.Heartbeat:Connect(function()
+		if throwingKnifeAuraConnection then
+			throwingKnifeAuraConnection:Disconnect()
+			throwingKnifeAuraConnection = nil
+		end
+		throwingKnifeAuraConnection = Workspace.DescendantAdded:Connect(function(inst)
 			if not throwingKnifeAuraEnabled then return end
+			if not tkaIsThrownKnife(inst) then return end
 			if not isPlayerMurderer() then return end
-
-			local now = os.clock()
-			if now - tkaLastRescan >= 0.2 then
-				tkaLastRescan = now
-				tkaRescanKnives()
-			end
-
-			for knifeInst, lastPos in pairs(activeThrownKnives) do
-				if not (knifeInst.Parent and knifeInst:IsDescendantOf(Workspace))
-					or not tkaIsThrownKnife(knifeInst) then
-					-- [fix] Same as in tkaRescanKnives: the knife just despawned,
-					-- use its last known position to latch nearby targets.
-					activeThrownKnives[knifeInst] = nil
-					pcall(tkaMarkTargetsNear, lastPos)
-				else
-					local kPos = tkaGetKnifePosition(knifeInst)
-					if kPos then
-						activeThrownKnives[knifeInst] = kPos -- keep last known position fresh
-						pcall(tkaMarkTargetsNear, kPos)
+			-- Debounce: one throw can spawn several descendants; track once.
+			if os.clock() < tkaThrowCooldownUntil then return end
+			tkaThrowCooldownUntil = os.clock() + 0.15
+			task.spawn(function()
+				-- Follow the projectile for its whole flight, sampling every
+				-- frame. Each step we measure the knife's travel segment against
+				-- every player so nobody is skipped even on a fast throw.
+				local prevPos = nil
+				local startT = os.clock()
+				while throwingKnifeAuraEnabled and (os.clock() - startT) < 5 do
+					if not (inst and inst.Parent and inst:IsDescendantOf(Workspace) and tkaIsThrownKnife(inst)) then
+						break
 					end
+					local curPos = tkaGetKnifePosition(inst)
+					if curPos then
+						local handle = tkaGetThrownHandle(inst)
+						pcall(tkaKillNearby, prevPos, curPos, handle)
+						prevPos = curPos
+					end
+					RunService.Heartbeat:Wait()
 				end
-			end
-
-			-- [fix] Keep retrying kills on latched targets every frame until they
-			-- die or the retry window expires. This survives the knife tool's
-			-- post-throw cooldown / re-equip, which is what broke close-range kills.
-			pcall(tkaProcessPendingKills)
-
-			-- [fix] Anti-pull: revert the game's delayed grab/teleport toward the
-			-- victim. Must run every Heartbeat, not only on stab frames, because
-			-- the yank lands a few frames after the hit registers.
-			pcall(tkaGuardCheck)
+			end)
 		end)
 	else
 		if throwingKnifeAuraConnection then
 			throwingKnifeAuraConnection:Disconnect()
 			throwingKnifeAuraConnection = nil
 		end
-		activeThrownKnives = {}
-		tkaPendingKills = {}
-		tkaGuardUntil = 0
-		tkaGuardLastPos = nil
 	end
 end
 
@@ -4472,7 +4433,7 @@ titleBar.Position = UDim2.new(0, 10, 0, 0)
 titleBar.BackgroundTransparency = 1
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.TextXAlignment = Enum.TextXAlignment.Left
-titleBar.Text = "Adrenalin.win V7.0 ODH"
+titleBar.Text = "Adrenalin.win V6.7 ODH"
 titleBar.Font = Enum.Font.SourceSansBold
 titleBar.TextSize = 16.5
 titleBar.Parent = topBar
@@ -6648,7 +6609,24 @@ function executeNanFling()
 			return
 		end
 
-		hrp.CFrame = targetRoot.CFrame
+		-- [strict-down] Overlap the target from ABOVE (world space, over the head)
+		-- instead of inside their center. The direction a victim flies is decided
+		-- by the depenetration normal on THEIR client: overlapping the center makes
+		-- that normal random (often straight up into the sky), while hammering from
+		-- above forces it to point DOWN — under the map. NaN guard: once the victim
+		-- corrupts, their position turns NaN — keep the old behavior for that frame.
+		-- Offset 1.8: both HRPs are 2 studs tall, so contact needs the centers
+		-- closer than 2.0. Empirically tuned: 2.2 missed standing targets, 1.5
+		-- overlapped too deep (impulse escaped sideways/up), 1.9 was too thin —
+		-- replication jitter kept breaking the top contact, so moving/jumping
+		-- victims entered the hitbox from below and flew INTO THE SKY. 1.8
+		-- (0.2-stud overlap) is the sweet spot: ~9/10 flings go straight down.
+		local tp = targetRoot.Position
+		if tp.X == tp.X and tp.Y == tp.Y and tp.Z == tp.Z then
+			hrp.CFrame = CFrame.new(tp + Vector3.new(0, 1.8, 0))
+		else
+			hrp.CFrame = targetRoot.CFrame
+		end
 		hrp.AssemblyLinearVelocity = nanVector
 		hrp.AssemblyAngularVelocity = nanVector
 		pcall(function()
@@ -7195,8 +7173,18 @@ resetPlayerInput.FocusLost:Connect(function()
 end)
 
 resetPlayerBtn.MouseButton1Click:Connect(function()
-	nanFlingTargetName = resetPlayerInput.Text
-	executeNanFling()
+	-- If players are ticked in the multi-select picker, reset EVERY one of them
+	-- sequentially (same paced fling as Reset Everyone). Otherwise fall back to
+	-- the single name typed in the box.
+	local sel = resetPicker and resetPicker.selectedNames
+	if sel and #sel > 0 then
+		local names = {}
+		for _, n in ipairs(sel) do table.insert(names, n) end
+		executeNanFlingNames(names)
+	else
+		nanFlingTargetName = resetPlayerInput.Text
+		executeNanFling()
+	end
 end)
 
 -- Reset player picker (collapsible multi-select) + Reset Selected button
@@ -10173,6 +10161,301 @@ task.spawn(function()
 end)
 
 -- ============================================================
+-- Instant Role Notify (Utilities) + Office3 gun/notify reliability fix
+-- ============================================================
+instantRoleNotifyEnabled = false
+-- Position/size stored as scale (0-1) so the label looks the same on phone, tablet and PC
+instantRolePosXScale = 0.5
+instantRolePosYScale = 0.4
+instantRoleSizeXScale = 0.3
+instantRoleSizeYScale = 0.08
+
+function showInstantRoleLabel(text, color)
+	local pg = player:FindFirstChild("PlayerGui")
+	if not pg then return end
+	local gui = pg:FindFirstChild("InstantRoleGui")
+	if not gui then
+		gui = Instance.new("ScreenGui")
+		gui.Name = "InstantRoleGui"
+		gui.ResetOnSpawn = false
+		gui.DisplayOrder = 999999
+		gui.IgnoreGuiInset = true
+		gui.Parent = pg
+	end
+	local old = gui:FindFirstChild("RoleLabel")
+	if old then old:Destroy() end
+	local lbl = Instance.new("TextLabel")
+	lbl.Name = "RoleLabel"
+	lbl.AnchorPoint = Vector2.new(0.5, 0.5)
+	lbl.Position = UDim2.new(instantRolePosXScale, 0, instantRolePosYScale, 0)
+	lbl.Size = UDim2.new(instantRoleSizeXScale, 0, instantRoleSizeYScale, 0)
+	lbl.BackgroundTransparency = 1
+	lbl.Text = text
+	lbl.TextColor3 = color
+	lbl.Font = Enum.Font.GothamBold
+	lbl.TextScaled = true
+	lbl.TextStrokeTransparency = 0.35
+	lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+	lbl.Parent = gui
+	task.delay(4.5, function()
+		if lbl and lbl.Parent then lbl:Destroy() end
+	end)
+end
+
+-- Round-start detection based on the Murderer/Sheriff assignment (the same signal
+-- used by the round notification). Runs independently of the Notifications toggle.
+task.spawn(function()
+	task.wait(2)
+	local lastRoundKey = nil
+	while true do
+		task.wait(0.4)
+		if not instantRoleNotifyEnabled then continue end
+		local ok, roles = pcall(function()
+			return invokePlayerData()
+		end)
+		if ok and roles then
+			local murderer, sheriff = nil, nil
+			for name, data in pairs(roles) do
+				if data.Role == "Murderer" then murderer = name
+				elseif data.Role == "Sheriff" then sheriff = name end
+			end
+			if murderer and sheriff then
+				local roundKey = murderer .. "_" .. sheriff
+				if roundKey ~= lastRoundKey then
+					lastRoundKey = roundKey
+					local myData = roles[player.Name]
+					local roleText, roleColor
+					if myData and myData.Role == "Murderer" then
+						roleText, roleColor = "Murderer", Color3.fromRGB(255, 0, 0)
+					elseif myData and myData.Role == "Sheriff" then
+						roleText, roleColor = "Sheriff", Color3.fromRGB(0, 0, 255)
+					else
+						roleText, roleColor = "Innocent", Color3.fromRGB(0, 255, 0)
+					end
+					showInstantRoleLabel(roleText, roleColor)
+				end
+			end
+		end
+	end
+end)
+
+-- Utilities tab button
+do
+	local _prevCategory = currentCategory
+	currentCategory = "Utilities"
+	instantRoleNotifyBtn = createButton("InstantRoleNotifyButton", "Instant Role Notify: OFF", 116.5)
+	instantRoleNotifyBtn.MouseButton1Click:Connect(function()
+		instantRoleNotifyEnabled = not instantRoleNotifyEnabled
+		setToggleState(instantRoleNotifyBtn, instantRoleNotifyEnabled, "Instant Role Notify: ON", "Instant Role Notify: OFF")
+	end)
+	currentCategory = _prevCategory
+end
+
+-- ============================================================
+-- Show Round Timer (Utilities): reads Workspace.RoundTimerPart Time (seconds)
+-- and displays it as "Xm YYs" in white, slightly above the role notify label.
+-- ============================================================
+showRoundTimerEnabled = false
+roundTimerPosXScale = 0.5
+roundTimerPosYScale = 0.33
+roundTimerSizeXScale = 0.25
+roundTimerSizeYScale = 0.06
+
+function getRoundTimerSeconds()
+	local part = Workspace:FindFirstChild("RoundTimerPart")
+	if not part then return nil end
+	local t = part:GetAttribute("Time")
+	if t == nil then
+		local tv = part:FindFirstChild("Time")
+		if tv then
+			local ok, val = pcall(function() return tv.Value end)
+			if ok then t = val end
+		end
+	end
+	if type(t) == "string" then t = tonumber(t) end
+	if type(t) ~= "number" then return nil end
+	return t
+end
+
+function ensureRoundTimerLabel()
+	local pg = player:FindFirstChild("PlayerGui")
+	if not pg then return nil end
+	local gui = pg:FindFirstChild("RoundTimerGui")
+	if not gui then
+		gui = Instance.new("ScreenGui")
+		gui.Name = "RoundTimerGui"
+		gui.ResetOnSpawn = false
+		gui.DisplayOrder = 999999
+		gui.IgnoreGuiInset = true
+		gui.Parent = pg
+	end
+	local lbl = gui:FindFirstChild("TimerLabel")
+	if not lbl then
+		lbl = Instance.new("TextLabel")
+		lbl.Name = "TimerLabel"
+		lbl.AnchorPoint = Vector2.new(0.5, 0.5)
+		lbl.BackgroundTransparency = 1
+		lbl.TextColor3 = Color3.fromRGB(255, 255, 255)
+		lbl.Font = Enum.Font.GothamBold
+		lbl.TextScaled = true
+		lbl.TextStrokeTransparency = 0.35
+		lbl.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		lbl.Parent = gui
+	end
+	lbl.Position = UDim2.new(roundTimerPosXScale, 0, roundTimerPosYScale, 0)
+	lbl.Size = UDim2.new(roundTimerSizeXScale, 0, roundTimerSizeYScale, 0)
+	return lbl
+end
+
+-- [perf + accuracy] Round timer: polls fast (every ~0.1s) so it appears the
+-- instant you enable it and stays in lock-step with the real countdown, but it
+-- only rewrites the label when the displayed second actually changes (no GUI
+-- churn / no lag). math.ceil matches the game's countdown so the value no longer
+-- trails the real timer by one second. Position/Size are re-applied only when
+-- the configured scales change.
+task.spawn(function()
+	local cachedLbl = nil
+	local lastText = nil
+	local lastPosX, lastPosY, lastSizeX, lastSizeY = nil, nil, nil, nil
+	while true do
+		task.wait(0.1)
+		if not showRoundTimerEnabled then
+			if cachedLbl and cachedLbl.Parent then cachedLbl.Visible = false end
+			cachedLbl = nil
+			lastText = nil
+			continue
+		end
+		if not cachedLbl or not cachedLbl.Parent then
+			cachedLbl = ensureRoundTimerLabel()
+			lastText = nil
+			lastPosX, lastPosY, lastSizeX, lastSizeY = nil, nil, nil, nil
+		end
+		if cachedLbl then
+			if roundTimerPosXScale ~= lastPosX or roundTimerPosYScale ~= lastPosY then
+				cachedLbl.Position = UDim2.new(roundTimerPosXScale, 0, roundTimerPosYScale, 0)
+				lastPosX, lastPosY = roundTimerPosXScale, roundTimerPosYScale
+			end
+			if roundTimerSizeXScale ~= lastSizeX or roundTimerSizeYScale ~= lastSizeY then
+				cachedLbl.Size = UDim2.new(roundTimerSizeXScale, 0, roundTimerSizeYScale, 0)
+				lastSizeX, lastSizeY = roundTimerSizeXScale, roundTimerSizeYScale
+			end
+			local secs = getRoundTimerSeconds()
+			if secs and secs > 0 then
+				local whole = math.ceil(secs)
+				local m = math.floor(whole / 60)
+				local r = whole % 60
+				local txt = string.format("%dm %02ds", m, r)
+				if txt ~= lastText then
+					cachedLbl.Text = txt
+					lastText = txt
+				end
+				if not cachedLbl.Visible then cachedLbl.Visible = true end
+			else
+				if cachedLbl.Visible then cachedLbl.Visible = false end
+			end
+		end
+	end
+end)
+
+-- Utilities tab button (placed right after Instant Role Notify)
+do
+	local _prevCategory = currentCategory
+	currentCategory = "Utilities"
+	showRoundTimerBtn = createButton("ShowRoundTimerButton", "Show Round Timer: OFF", 116.6)
+	showRoundTimerBtn.MouseButton1Click:Connect(function()
+		showRoundTimerEnabled = not showRoundTimerEnabled
+		setToggleState(showRoundTimerBtn, showRoundTimerEnabled, "Show Round Timer: ON", "Show Round Timer: OFF")
+	end)
+	currentCategory = _prevCategory
+end
+
+-- ============================================================
+-- Reliability fix: on some maps (e.g. Office3) the Workspace.DescendantAdded
+-- event can occasionally not fire for a freshly dropped "GunDrop", and the gun
+-- ESP was previously limited to a hardcoded ESP_MAP_NAMES list. This periodic,
+-- map-agnostic fallback guarantees every GunDrop gets ESP-hooked and that the
+-- "sheriff/hero died" (Gun Dropped) notification always fires exactly once.
+-- ============================================================
+gunDropAnnounced = {}
+
+function fireGunDroppedNotif()
+	if not gameNotifEnabled then return end
+	local droppedByName = lastSheriffHeroName
+	local droppedByUserId = lastSheriffHeroUserId
+	if not droppedByName then
+		local ok, roles = pcall(function()
+			return invokePlayerData()
+		end)
+		if ok and roles and gameNotifPrevRoles then
+			for name, data in pairs(gameNotifPrevRoles) do
+				if data.HasGun or data.Role == "Sheriff" then
+					local currentData = roles[name]
+					if not currentData or (not currentData.HasGun and currentData.Role ~= "Sheriff") then
+						droppedByName = name
+						local p = Players:FindFirstChild(name)
+						if p then droppedByUserId = p.UserId end
+						break
+					end
+				end
+			end
+		end
+	end
+	if droppedByName then
+		local droppedByPlayer = nil
+		if droppedByUserId then
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p.UserId == droppedByUserId then droppedByPlayer = p break end
+			end
+		end
+		if not droppedByPlayer then
+			for _, p in ipairs(Players:GetPlayers()) do
+				if p.Name == droppedByName then droppedByPlayer = p break end
+			end
+		end
+		if droppedByPlayer then
+			gameNotifSend("Gun Dropped", droppedByName .. " died and dropped the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255), droppedByPlayer)
+		elseif droppedByUserId then
+			gameNotifSendWithUserId("Gun Dropped", droppedByName .. " died and dropped the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255), droppedByUserId)
+		else
+			gameNotifSend("Gun Dropped", droppedByName .. " died and dropped the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+		end
+	else
+		gameNotifSend("Gun Dropped", "A gun has appeared on the map!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+	end
+	playSoundFile(sheriffDieSoundPath)
+end
+
+task.spawn(function()
+	task.wait(3)
+	while true do
+		task.wait(1)
+		if not espEnabled and not gameNotifEnabled then
+			for g in pairs(gunDropAnnounced) do
+				if not g.Parent then gunDropAnnounced[g] = nil end
+			end
+		else
+			pcall(function()
+				for _, obj in ipairs(Workspace:GetDescendants()) do
+					if obj.Name == "GunDrop" then
+						if espEnabled and espTrackedGuns and not espTrackedGuns[obj] then
+							task.spawn(espHookGunDrop, obj)
+						end
+						if not gunDropAnnounced[obj] and not gameNotifGunDrops[obj] then
+							gunDropAnnounced[obj] = true
+							gameNotifGunDrops[obj] = true
+							fireGunDroppedNotif()
+						end
+					end
+				end
+			end)
+			for g in pairs(gunDropAnnounced) do
+				if not g.Parent then gunDropAnnounced[g] = nil end
+			end
+		end
+	end
+end)
+
+-- ============================================================
 -- AIM SUITE: Shoot Murderer + Wall Bang + Auto Shot (ported from Aim.lua)
 -- Lives in the Combat tab. Reuses the menu's espRoles cache when ESP is on,
 -- otherwise keeps its own light role poll so Auto Shot works without ESP.
@@ -10183,9 +10466,9 @@ aimWallbangEnabled = false
 aimAutoShotEnabled = false
 aimLmbShootEnabled = false
 flickShotEnabled = false
-flickShotDuration = 0.30
+flickShotDuration = 0.5
 spin360Enabled = false
-spin360Duration = 1.5
+spin360Duration = 0.5
 aimTargetDot = nil
 
 AIM_CONFIG = {
@@ -10196,18 +10479,22 @@ AIM_CONFIG = {
 	aimPart            = "Torso",          -- center mass for bigger hitbox
 	rolePollRate       = 0.15,
 	gravityComp        = true,
-	shotsPerClick      = 4,                -- shots per manual burst (each burst now covers the WHOLE predicted path)
+	shotsPerClick      = 1,                -- the gun fires ONE real bullet per shot; extra FireServer calls never spawn more bullets
 	shotSpacing        = 0.0,
 	wallbangOriginDist = 0.6,              -- very close origin = almost guaranteed piercer hit
 	autoShotCooldown   = 0.35,             -- min seconds between Auto Shot bursts (0.0 spammed 300+ remotes/sec and lagged the game)
-	autoShotBurst      = 3,                -- shots per AUTO burst (smaller than manual so auto mode stays lag-free)
+	autoShotBurst      = 1,                -- one real bullet per auto attempt too
 	scatterRadius      = 0.35,             -- scatter radius around the full-lead point (covers strafe direction changes)
 	scatterShots       = 2,
 	jumpAimYBoost      = 1.5,              -- higher Y offset for jumping targets
 	alwaysPierceOrigin = true,             -- always place origin next to target (bypass desync/invis)
-	velTrackAlpha      = 0.55,             -- smoothing for the measured-velocity tracker (higher = reacts faster to direction changes)
-	pathFanFracs       = {0, 0.45, 1.0, 1.45}, -- lead fractions covered by one burst: shots fan ALONG the predicted path
-	pathSegHalf        = 1.8,              -- half-length (studs) of the path segment each bullet SWEEPS along the movement direction
+	velTrackAlpha      = 0.7,              -- smoothing for the measured-velocity tracker (higher = reacts faster to direction changes)
+	pathFanFracs       = {0, -0.4, 0.35, 0.7, 1.0, 1.4}, -- lead fractions covered by one burst (negative = behind current pos: covers strafe reversals)
+	pathSegHalf        = 2.4,              -- (legacy, kept for config compatibility)
+	sweepBackFrac      = -0.6,             -- single-bullet path ray: starts this far BEHIND the current position (in lead fractions)
+	sweepAheadFrac     = 1.3,              -- ...and ends this far PAST the full ping-lead point
+	stableWaitMax      = 0.25,             -- max seconds to wait for a stable velocity read before firing anyway
+	stableAngleDeg     = 25,               -- per-frame direction change below which the target counts as moving steadily
 }
 
 -- Our own role cache (used only when the ESP cache espRoles is not available)
@@ -10299,6 +10586,24 @@ local function aimTrackVelocity(character)
 		rec.pos, rec.t = p, now
 	end
 	return rec.vel
+end
+
+-- [flick/spin accuracy] After a turn animation (Flick Shot / Spin 360) or any
+-- idle gap, the measured-velocity tracker is stale, so the first prediction is
+-- averaged over the whole delay and misses. Priming discards the stale record
+-- and takes fresh short-dt samples so the shot predicts the target's CURRENT
+-- motion. Called before every Shoot Murderer shot. aimVelTrack is an upvalue
+-- from the enclosing chunk, so this global can reset it.
+function aimPrimeVelocity(character)
+	if not character then return end
+	pcall(function()
+		aimVelTrack[character] = nil
+		aimTrackVelocity(character)
+		RunService.Heartbeat:Wait()
+		aimTrackVelocity(character)
+		RunService.Heartbeat:Wait()
+		aimTrackVelocity(character)
+	end)
 end
 
 -- Best-guess velocity for prediction: blend of reported and measured, capped at
@@ -10516,34 +10821,32 @@ function doFlickToTarget(targetPlayer, callback)
 	local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
 	if not targetRoot then callback() return end
 
-	local originalCF = hrp.CFrame
+	-- [movement-safe] We never freeze your position: each frame we read your
+	-- LIVE position (which keeps updating as you walk) and only override the
+	-- facing/yaw, blended toward the target so the turn is still visible to
+	-- others. AutoRotate is disabled only for the brief aim window and the shot
+	-- fires immediately after — there is no forced "rotate back" phase that used
+	-- to lock you in place next to the murderer.
+	local startCF = hrp.CFrame
 	local wasAutoRotate = hum.AutoRotate
 	hum.AutoRotate = false
 
-	local direction = (targetRoot.Position - hrp.Position) * Vector3.new(1, 0, 1)
-	if direction.Magnitude < 0.1 then
-		hum.AutoRotate = wasAutoRotate
-		callback()
-		return
-	end
-	local targetCF = CFrame.lookAt(hrp.Position, hrp.Position + direction.Unit)
-
 	local steps = math.max(2, math.floor(flickShotDuration * 60))
 	for i = 1, steps do
-		hrp.CFrame = originalCF:Lerp(targetCF, i / steps)
+		local curPos = hrp.Position
+		local dir = (targetRoot.Position - curPos) * Vector3.new(1, 0, 1)
+		if dir.Magnitude >= 0.1 then
+			local aimCF = CFrame.lookAt(curPos, curPos + dir.Unit)
+			local blended = startCF:Lerp(aimCF, i / steps)
+			hrp.CFrame = CFrame.new(curPos) * (blended - blended.Position)
+		end
 		RunService.Heartbeat:Wait()
 	end
-	hrp.CFrame = targetCF
-	task.wait(0.03)
 
 	callback()
 
-	task.wait(0.03)
-	for i = 1, steps do
-		hrp.CFrame = targetCF:Lerp(originalCF, i / steps)
-		RunService.Heartbeat:Wait()
-	end
-	hrp.CFrame = originalCF
+	-- Restore normal control instantly; the humanoid re-orients to your movement
+	-- on its own, so you can keep walking right away.
 	hum.AutoRotate = wasAutoRotate
 end
 
@@ -10556,40 +10859,82 @@ function doSpin360(callback)
 	local hum = char:FindFirstChildOfClass("Humanoid")
 	if not (hrp and hum) then callback() return end
 
-	local originalCF = hrp.CFrame
+	-- [faster + movement-safe] Spins over spin360Duration (now 0.5s: quick but
+	-- still long enough for other players to actually SEE the spin), keeps your
+	-- live position each frame so you are not frozen, and fires the shot the
+	-- instant the spin completes instead of after extra waits.
 	local wasAutoRotate = hum.AutoRotate
 	hum.AutoRotate = false
 
-	local startYaw = math.atan2(-originalCF.LookVector.X, -originalCF.LookVector.Z)
+	local startYaw = math.atan2(-hrp.CFrame.LookVector.X, -hrp.CFrame.LookVector.Z)
 	local totalAngle = math.rad(360)
 	local steps = math.max(2, math.floor(spin360Duration * 60))
 	for i = 1, steps do
-		local frac = i / steps
-		local currentAngle = startYaw + totalAngle * frac
+		local curPos = hrp.Position
+		local currentAngle = startYaw + totalAngle * (i / steps)
 		local dir = Vector3.new(math.sin(currentAngle), 0, math.cos(currentAngle))
-		hrp.CFrame = CFrame.lookAt(hrp.Position, hrp.Position + dir)
+		hrp.CFrame = CFrame.lookAt(curPos, curPos + dir)
 		RunService.Heartbeat:Wait()
 	end
-	hrp.CFrame = originalCF
-	task.wait(0.05)
 
 	callback()
 
-	task.wait(0.05)
-	hrp.CFrame = originalCF
 	hum.AutoRotate = wasAutoRotate
 end
 
+-- [single-bullet accuracy] With exactly ONE bullet per shot, firing during an
+-- erratic moment (mid-turn / mid-direction-change) wastes the whole shot. This
+-- briefly holds the trigger until the target's measured velocity direction has
+-- been steady for two consecutive frames (standing targets pass instantly), and
+-- fires unconditionally once stableWaitMax runs out so the shot is never lost.
+function aimWaitForStableVelocity(character)
+	local maxWait = AIM_CONFIG.stableWaitMax or 0.25
+	local cosMin = math.cos(math.rad(AIM_CONFIG.stableAngleDeg or 25))
+	local deadline = os.clock() + maxWait
+	local prev = nil
+	local stableStreak = 0
+	while os.clock() < deadline do
+		local ok = pcall(function()
+			local v = aimGetTargetVelocity(character)
+			local h = Vector3.new(v.X, 0, v.Z)
+			if h.Magnitude < 2 then
+				stableStreak = 2
+				return
+			end
+			local u = h.Unit
+			if prev and u:Dot(prev) >= cosMin then
+				stableStreak = stableStreak + 1
+			else
+				stableStreak = 0
+			end
+			prev = u
+		end)
+		if not ok then return end
+		if stableStreak >= 2 then return end
+		RunService.Heartbeat:Wait()
+	end
+end
+
 function aimFireGunAt(murderer, burstOverride)
+	-- Prime a fresh velocity read immediately before pulling the trigger so the
+	-- prediction is accurate whether we fired instantly or after a Flick / Spin,
+	-- then hold briefly for a stable read: the ONE bullet must not be wasted.
+	local function fire()
+		if murderer and murderer.Character then
+			aimPrimeVelocity(murderer.Character)
+			aimWaitForStableVelocity(murderer.Character)
+		end
+		return aimFireGunAtOriginal(murderer, burstOverride)
+	end
 	if flickShotEnabled and murderer then
 		local result = false
 		local function afterFlick()
 			if spin360Enabled then
 				doSpin360(function()
-					result = aimFireGunAtOriginal(murderer, burstOverride)
+					result = fire()
 				end)
 			else
-				result = aimFireGunAtOriginal(murderer, burstOverride)
+				result = fire()
 			end
 		end
 		doFlickToTarget(murderer, afterFlick)
@@ -10598,81 +10943,62 @@ function aimFireGunAt(murderer, burstOverride)
 	if spin360Enabled then
 		local result = false
 		doSpin360(function()
-			result = aimFireGunAtOriginal(murderer, burstOverride)
+			result = fire()
 		end)
 		return result
 	end
-	return aimFireGunAtOriginal(murderer, burstOverride)
+	return fire()
 end
 
 function aimFireGunAtOriginal(murderer, burstOverride)
 	local shoot = aimGetShootRemote()
 	if not shoot then return false end
 	if not (murderer and murderer.Character) then return false end
-	local shots = math.max(1, burstOverride or AIM_CONFIG.shotsPerClick)
-	local segHalf = AIM_CONFIG.pathSegHalf or 1.8
-	local fracs = AIM_CONFIG.pathFanFracs or {0, 0.5, 1.0}
-	local hitAny = false
-	for i = 1, shots do
-		if not aimMurdererAlive(murderer) then break end
-		local char = murderer.Character
-		if not char then break end
-		-- FRESH data for every bullet
-		local v = aimGetTargetVelocity(char)
-		local hSpeed = math.sqrt(v.X * v.X + v.Z * v.Z)
-		if hSpeed < 2 then
-			-- STANDING target: exact spot + vertical bracket on the first bullet
-			local center = aimPredictTorso(char, 0)
-			if center then
-				hitAny = aimFireOnce(shoot, center) or hitAny
-				if i == 1 then
-					hitAny = aimFireOnce(shoot, center + Vector3.new(0, 1.2, 0)) or hitAny
-					hitAny = aimFireOnce(shoot, center - Vector3.new(0, 1.0, 0)) or hitAny
-				end
-			end
-		else
-			local moveDir = Vector3.new(v.X, 0, v.Z).Unit
-			-- Fan point along the predicted path, swept as a segment ray
-			local frac = fracs[((i - 1) % #fracs) + 1]
-			local pt = aimPredictTorso(char, frac)
-			if pt then
-				hitAny = aimFireOnce(shoot, pt + moveDir * segHalf, pt - moveDir * segHalf) or hitAny
-			end
-			if i == 1 then
-				-- Full-path sweep: one ray from the CURRENT position through past
-				-- the full-lead point — covers the entire uncertainty window even
-				-- when the ping-based lead estimate is completely wrong.
-				local cur = aimPredictTorso(char, 0)
-				local lead = aimPredictTorso(char, 1.45)
-				if cur and lead then
-					hitAny = aimFireOnce(shoot, lead + moveDir * segHalf, cur - moveDir * segHalf) or hitAny
-				end
-				-- Vertical bracket at the full-lead point (jump / crouch mid-run)
-				local center = aimPredictTorso(char, 1)
-				if center then
-					hitAny = aimFireOnce(shoot, center + Vector3.new(0, 1.2, 0) + moveDir * segHalf,
-						center + Vector3.new(0, 1.2, 0) - moveDir * segHalf) or hitAny
-					hitAny = aimFireOnce(shoot, center - Vector3.new(0, 1.0, 0) + moveDir * segHalf,
-						center - Vector3.new(0, 1.0, 0) - moveDir * segHalf) or hitAny
-				end
-			end
-			if i == shots then
-				-- Light scatter around the full-lead point, each also swept along
-				-- the path — covers sudden strafe direction changes
-				local center = aimPredictTorso(char, 1)
-				if center then
-					local extras = aimScatterPositions(center)
-					for j = 2, #extras do
-						hitAny = aimFireOnce(shoot, extras[j] + moveDir * segHalf, extras[j] - moveDir * segHalf) or hitAny
-					end
-				end
-			end
-		end
-		-- Spread the burst across frames: each following bullet re-predicts with
-		-- fresh replicated data instead of repeating one stale snapshot.
-		if i < shots then RunService.Heartbeat:Wait() end
+	if not aimMurdererAlive(murderer) then return false end
+	local char = murderer.Character
+	-- SINGLE-BULLET STRATEGY: the gun fires exactly ONE real bullet per shot, so
+	-- instead of spraying many rays (only the first ever mattered) we place one
+	-- ray as smartly as possible with the freshest data available.
+	local v = aimGetTargetVelocity(char)
+	local hSpeed = math.sqrt(v.X * v.X + v.Z * v.Z)
+	if hSpeed < 2 then
+		-- Standing / nearly standing: point-blank pierce shot at the exact torso
+		-- (aimPredictTorso already handles airborne gravity compensation).
+		local center = aimPredictTorso(char, 0)
+		if not center then return false end
+		return aimFireOnce(shoot, center)
 	end
-	return hitAny
+	-- Moving: lay the ONE bullet ray ALONG the target's movement path. The origin
+	-- sits BEHIND the current position and the endpoint PAST the full ping-lead
+	-- point, so wherever on that segment the target really is on the server
+	-- (running early, late, or even just after a strafe reversal), the bullet
+	-- crosses its hitbox. The single bullet becomes forgiving to lead error
+	-- instead of betting everything on one predicted point.
+	local back = aimPredictTorso(char, AIM_CONFIG.sweepBackFrac or -0.6)
+	local ahead = aimPredictTorso(char, AIM_CONFIG.sweepAheadFrac or 1.3)
+	local cur = aimPredictTorso(char, 0)
+	if not (back and ahead and cur) then return false end
+	-- Keep the ray clear of world geometry: if a wall sits between the back point
+	-- and the target (corner-hugging targets), a bullet from behind would hit the
+	-- wall first — fall back to a pierce origin right next to the target instead.
+	local origin = back
+	local ok, blocked = pcall(function()
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		local list = {char}
+		if player.Character then table.insert(list, player.Character) end
+		params.FilterDescendantsInstances = list
+		params.IgnoreWater = true
+		local dir = cur - back
+		if dir.Magnitude < 1e-3 then return false end
+		return Workspace:Raycast(back, dir, params) ~= nil
+	end)
+	if ok and blocked then
+		local dir = cur - ahead
+		local unit = dir.Magnitude > 1e-3 and dir.Unit or Vector3.new(0, 1, 0)
+		origin = cur + unit * (AIM_CONFIG.wallbangOriginDist or 0.6)
+	end
+	return aimFireOnce(shoot, ahead, origin)
 end
 
 -- Red dot on the current murderer (same aim indicator as the standalone script)
@@ -11022,53 +11348,51 @@ function killGetRealCFrame()
 	return r and r.CFrame or CFrame.new()
 end
 
--- Kill a list of players: BRING them to us + auto-knife (no teleporting ourselves)
-function killBatch(targets, knife)
+-- No-equip knife lookup: returns the Knife tool whether it is in your hand or
+-- still sitting in the Backpack, WITHOUT equipping it, so kills never pull it out.
+function killGetKnifeNoEquip()
 	local char = player.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if not (hrp and hum and knife and knife:FindFirstChild("Handle")) then return 0 end
+	local tool = char and char:FindFirstChild("Knife")
+	if tool then return tool end
+	local bp = player:FindFirstChild("Backpack")
+	return bp and bp:FindFirstChild("Knife")
+end
 
-	local handle = knife.Handle
-
-	-- Bring all targets to us and auto-knife for 30 frames
-	for frame = 1, 30 do
-		local bringCF = killGetRealCFrame()
-		local allDead = true
-
-		for idx, plr in ipairs(targets) do
-			if plr and plr.Character and killIsAlive(plr.Character) then
-				allDead = false
-				local tChar = plr.Character
-				local tRoot = tChar:FindFirstChild("HumanoidRootPart")
-				if tRoot then
-					-- Bring target to our real position (small offset per player)
-					pcall(function()
-						tRoot.CFrame = bringCF * CFrame.new(idx * 0.5, 0, 0)
-					end)
-					-- Strip their weapons so they can't fight back
-					pcall(function()
-						local bp = plr:FindFirstChild("Backpack")
-						if bp then bp:ClearAllChildren() end
-						for _, child in pairs(tChar:GetChildren()) do
-							if child:IsA("Tool") then child:Destroy() end
-						end
-					end)
-					-- Knife: activate + firetouchinterest on all parts
-					pcall(function() knife:Activate() end)
-					for _, part in ipairs(tChar:GetDescendants()) do
-						if part:IsA("BasePart") then
-							safeFireTouch(handle, part)
-						end
-					end
-				end
+-- Distance kill: register a hit on a target through the knife's own
+-- Events.HandleTouched remote (plus a firetouchinterest fallback when a Handle
+-- is available). Never teleports the target and never requires the knife to be
+-- equipped.
+function killTargetAtDistance(tChar, handleTouched, handle)
+	if not tChar then return end
+	handleTouched = handleTouched or tkaGetHandleTouched()
+	for _, part in ipairs(tChar:GetDescendants()) do
+		if part:IsA("BasePart") then
+			if handleTouched then
+				pcall(function() handleTouched:FireServer(part) end)
+			end
+			if handle then
+				safeFireTouch(handle, part)
 			end
 		end
+	end
+end
 
+-- Kill a list of players at range: no pulling, no teleporting, and without
+-- pulling out the knife. Fires the knife's Events.HandleTouched remote per victim.
+function killBatch(targets, knife)
+	local handleTouched = tkaGetHandleTouched()
+	local handle = knife and knife:FindFirstChild("Handle")
+	for frame = 1, 10 do
+		local allDead = true
+		for _, plr in ipairs(targets) do
+			if plr and plr.Character and killIsAlive(plr.Character) then
+				allDead = false
+				killTargetAtDistance(plr.Character, handleTouched, handle)
+			end
+		end
 		if allDead then break end
 		RunService.Heartbeat:Wait()
 	end
-
 	local count = 0
 	for _, plr in ipairs(targets) do
 		if plr and plr.Character and not killIsAlive(plr.Character) then count = count + 1 end
@@ -11077,7 +11401,7 @@ function killBatch(targets, knife)
 end
 
 function doKillEveryone(exceptFriends)
-	local knife = killGetKnife()
+	local knife = killGetKnifeNoEquip()
 	if not knife then return nil end
 	local targets = {}
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -11099,7 +11423,7 @@ function doKillEveryone(exceptFriends)
 end
 
 function doKillSheriff()
-	local knife = killGetKnife()
+	local knife = killGetKnifeNoEquip()
 	if not knife then return nil end
 	local ok, result = pcall(function()
 		return invokePlayerData()
@@ -11119,7 +11443,7 @@ function doKillSheriff()
 end
 
 function doKillPlayer(targetName)
-	local knife = killGetKnife()
+	local knife = killGetKnifeNoEquip()
 	if not knife then return false, "noknife" end
 	local plr = targetName and Players:FindFirstChild(targetName)
 	if not (plr and plr.Character) then return false, "notarget" end
@@ -11699,6 +12023,37 @@ do
 	end)
 end
 
+-- Custom Jump Power: continuously forces the Humanoid JumpPower to a value you
+-- choose (decimals like 56.4 allowed).
+function setupCustomJumpPower()
+	if customJumpPowerConn then customJumpPowerConn:Disconnect(); customJumpPowerConn = nil end
+	if not customJumpPowerEnabled then
+		-- Reverting: restore JumpPower to 50.5 when the feature is turned off.
+		local c = player.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		if h then
+			pcall(function() h.UseJumpPower = true end)
+			h.JumpPower = 50.5
+		end
+		return
+	end
+	local function apply()
+		local c = player.Character
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		if h and h.Health > 0 then
+			if h.UseJumpPower ~= true then pcall(function() h.UseJumpPower = true end) end
+			if h.JumpPower ~= customJumpPowerValue then h.JumpPower = customJumpPowerValue end
+		end
+	end
+	customJumpPowerConn = RunService.Heartbeat:Connect(apply)
+	apply()
+end
+
+function toggleCustomJumpPower()
+	customJumpPowerEnabled = not customJumpPowerEnabled
+	setupCustomJumpPower()
+end
+
 -- LoopSpeed UI (button + input)
 do
 	local lsRow = Instance.new("Frame")
@@ -11745,6 +12100,58 @@ do
 			saveConfig()
 		else
 			loopSpeedInput.Text = tostring(loopSpeedValue)
+		end
+	end)
+end
+
+-- Custom Jump Power UI (button + input) -- moved to sit right after LoopSpeed in Movement
+do
+	local jpRow = Instance.new("Frame")
+	jpRow.Name = "CustomJumpPowerRow"
+	jpRow.Size = UDim2.new(1, 0, 0, 42)
+	jpRow.BackgroundTransparency = 1
+	jpRow.LayoutOrder = 216.5
+	if categoryFrames["Combat"] then jpRow.Parent = categoryFrames["Combat"] end
+	customJumpPowerRow = jpRow
+
+	customJumpPowerButton = Instance.new("TextButton")
+	customJumpPowerButton.Name = "CustomJumpPowerButton"
+	customJumpPowerButton.Size = UDim2.new(1, -70, 1, 0)
+	customJumpPowerButton.BackgroundColor3 = btnBgColor
+	customJumpPowerButton.TextColor3 = btnTextColor
+	customJumpPowerButton.Text = "Jump Power: OFF"
+	customJumpPowerButton.Font = Enum.Font.SourceSansBold
+	customJumpPowerButton.TextSize = 15
+	customJumpPowerButton.Parent = jpRow
+	Instance.new("UICorner", customJumpPowerButton).CornerRadius = UDim.new(0, 6)
+
+	customJumpPowerInput = Instance.new("TextBox")
+	customJumpPowerInput.Name = "CustomJumpPowerInput"
+	customJumpPowerInput.Size = UDim2.new(0, 62, 1, 0)
+	customJumpPowerInput.Position = UDim2.new(1, -64, 0, 0)
+	customJumpPowerInput.BackgroundColor3 = inputBgColor
+	customJumpPowerInput.TextColor3 = inputTextColor
+	customJumpPowerInput.PlaceholderText = "Pwr"
+	customJumpPowerInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	customJumpPowerInput.Text = tostring(customJumpPowerValue)
+	customJumpPowerInput.Font = Enum.Font.SourceSansBold
+	customJumpPowerInput.TextSize = 15
+	customJumpPowerInput.ClearTextOnFocus = false
+	customJumpPowerInput.Parent = jpRow
+	Instance.new("UICorner", customJumpPowerInput).CornerRadius = UDim.new(0, 6)
+
+	customJumpPowerButton.MouseButton1Click:Connect(function()
+		toggleCustomJumpPower()
+		setToggleState(customJumpPowerButton, customJumpPowerEnabled, "Jump Power: ON", "Jump Power: OFF")
+	end)
+	customJumpPowerInput.FocusLost:Connect(function()
+		local v = tonumber(customJumpPowerInput.Text)
+		if v and v > 0 then
+			customJumpPowerValue = v
+			if customJumpPowerEnabled then setupCustomJumpPower() end
+			saveConfig()
+		else
+			customJumpPowerInput.Text = tostring(customJumpPowerValue)
 		end
 	end)
 end
@@ -12936,6 +13343,12 @@ savedExploitersPadding.Parent = savedExploitersScroll
 
 function refreshSavedExploiters()
 	if not savedExploitersScroll then return end
+	local _sigNames = {}
+	for _n in pairs(markedExploiters) do _sigNames[#_sigNames+1] = _n end
+	table.sort(_sigNames)
+	local _sig = table.concat(_sigNames, ",")
+	if _sig == _savedExploitersLastSig then return end
+	_savedExploitersLastSig = _sig
 	for _, child in ipairs(savedExploitersScroll:GetChildren()) do
 		if not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
 			child:Destroy()
@@ -13023,11 +13436,7 @@ end
 
 refreshSavedExploiters()
 
-task.spawn(function()
-	while task.wait(5) do
-		refreshSavedExploiters()
-	end
-end)
+-- [perf] removed periodic 5s saved-list rebuild (refreshSavedExploiters): major freeze source with large lists; list now refreshes only when it actually changes
 
 -- ============================================
 -- SCAMMERS TAB UI
@@ -13720,6 +14129,12 @@ savedScammersPadding.Parent = savedScammersScroll
 
 function refreshSavedScammers()
 	if not savedScammersScroll then return end
+	local _sigNames = {}
+	for _n in pairs(markedScammers) do _sigNames[#_sigNames+1] = _n end
+	table.sort(_sigNames)
+	local _sig = table.concat(_sigNames, ",")
+	if _sig == _savedScammersLastSig then return end
+	_savedScammersLastSig = _sig
 	for _, child in ipairs(savedScammersScroll:GetChildren()) do
 		if not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
 			child:Destroy()
@@ -13807,11 +14222,7 @@ end
 
 refreshSavedScammers()
 
-task.spawn(function()
-	while task.wait(5) do
-		refreshSavedScammers()
-	end
-end)
+-- [perf] removed periodic 5s saved-list rebuild (refreshSavedScammers): major freeze source with large lists; list now refreshes only when it actually changes
 
 -- ============================================
 -- Autofarm tab (MM2 coin autofarm)
@@ -18836,6 +19247,12 @@ savedTeamersPadding.Parent = savedTeamersScroll
 
 function refreshSavedTeamers()
 	if not savedTeamersScroll then return end
+	local _sigNames = {}
+	for _n in pairs(markedTeamers) do _sigNames[#_sigNames+1] = _n end
+	table.sort(_sigNames)
+	local _sig = table.concat(_sigNames, ",")
+	if _sig == _savedTeamersLastSig then return end
+	_savedTeamersLastSig = _sig
 	for _, child in ipairs(savedTeamersScroll:GetChildren()) do
 		if not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
 			child:Destroy()
@@ -18922,11 +19339,7 @@ end
 
 refreshSavedTeamers()
 
-task.spawn(function()
-	while task.wait(5) do
-		refreshSavedTeamers()
-	end
-end)
+-- [perf] removed periodic 5s saved-list rebuild (refreshSavedTeamers): major freeze source with large lists; list now refreshes only when it actually changes
 
 -- Initial refresh
 refreshTeamerList()
@@ -18947,7 +19360,7 @@ createSection("Main", 700)
 
 mainProfileFrame = Instance.new("Frame")
 mainProfileFrame.Name = "MainProfileFrame"
-mainProfileFrame.Size = UDim2.new(1, 0, 0, 382)
+mainProfileFrame.Size = UDim2.new(1, 0, 0, 404)
 mainProfileFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
 mainProfileFrame.BorderSizePixel = 0
 mainProfileFrame.LayoutOrder = 701
@@ -18989,6 +19402,7 @@ function createProfileLabel(text, yPos)
 end
 
 currentPlaceLabel = createProfileLabel("Current Place: Loading...", 10)
+createProfileLabel("Place ID: " .. tostring(game.PlaceId), 32)
 coroutine.wrap(function()
 	local suc, info = pcall(function()
 		return game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId)
@@ -18997,17 +19411,17 @@ coroutine.wrap(function()
 		currentPlaceLabel.Text = "Current Place: " .. info.Name
 	end
 end)()
-createProfileLabel("Discord: Verified", 32)
-createProfileLabel("Subscription: WIN-X Premium & Star+", 76)
-scriptActivationLabel = createProfileLabel("Script Activations: " .. scriptActivationCount, 98)
-serverTimeLabel = createProfileLabel("Server Time: 0d 0h 0m 0s", 120)
-createProfileLabel("Roles: Owner & Developer", 54)
+createProfileLabel("Discord: Verified", 54)
+createProfileLabel("Subscription: WIN-X Premium & Star+", 98)
+scriptActivationLabel = createProfileLabel("Script Activations: " .. scriptActivationCount, 120)
+serverTimeLabel = createProfileLabel("Server Time: 0d 0h 0m 0s", 142)
+createProfileLabel("Roles: Owner & Developer", 76)
 
-createProfileLabel("Display Name: " .. player.DisplayName, 142)
-createProfileLabel("Username: " .. player.Name, 164)
-createProfileLabel("User ID: " .. player.UserId, 186)
+createProfileLabel("Display Name: " .. player.DisplayName, 164)
+createProfileLabel("Username: " .. player.Name, 186)
+createProfileLabel("User ID: " .. player.UserId, 208)
 
-regDateLabel = createProfileLabel("Registered: Loading...", 208)
+regDateLabel = createProfileLabel("Registered: Loading...", 230)
 mainCreationTime = os.time() - player.AccountAge * 86400
 coroutine.wrap(function()
 	local function calcRegDate(accountAge)
@@ -19074,14 +19488,14 @@ ageText = player.AccountAge .. " days"
 if years > 0 or months > 0 or days > 0 then
 	ageText = ageText .. " (" .. years .. "y, " .. months .. "m, " .. days .. "d)"
 end
-createProfileLabel("Account Age: " .. ageText, 230)
+createProfileLabel("Account Age: " .. ageText, 252)
 
-exactAgeLabel = createProfileLabel("Current Age: N/A", 252)
-positionLabel = createProfileLabel("Player Position: N/A", 274)
-speedLabel = createProfileLabel("Walk Speed: N/A", 296)
-jumpPowerLabel = createProfileLabel("Jump Power: N/A", 318)
-healthLabel = createProfileLabel("Health: N/A", 340)
-gravityLabel = createProfileLabel("Gravity: N/A", 362)
+exactAgeLabel = createProfileLabel("Current Age: N/A", 274)
+positionLabel = createProfileLabel("Player Position: N/A", 296)
+speedLabel = createProfileLabel("Walk Speed: N/A", 318)
+jumpPowerLabel = createProfileLabel("Jump Power: N/A", 340)
+healthLabel = createProfileLabel("Health: N/A", 362)
+gravityLabel = createProfileLabel("Gravity: N/A", 384)
 
 -- Server time updater
 coroutine.wrap(function()
@@ -19334,6 +19748,39 @@ end)
 
 currentCategory = "Settings"
 createSection("Settings", 700)
+
+settingsSearchBox = Instance.new("TextBox")
+settingsSearchBox.Name = "SettingsSearchBox"
+settingsSearchBox.Size = UDim2.new(1, 0, 0, 42)
+settingsSearchBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+settingsSearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+settingsSearchBox.PlaceholderText = "Search settings"
+settingsSearchBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+settingsSearchBox.Text = ""
+settingsSearchBox.Font = Enum.Font.SourceSansBold
+settingsSearchBox.TextSize = 16
+settingsSearchBox.ClearTextOnFocus = false
+settingsSearchBox.LayoutOrder = 700.5
+settingsSearchBox.Parent = categoryFrames["Settings"]
+
+settingsSearchCorner = Instance.new("UICorner")
+settingsSearchCorner.CornerRadius = UDim.new(0, 6)
+settingsSearchCorner.Parent = settingsSearchBox
+
+settingsSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	local searchText = string.lower(settingsSearchBox.Text)
+	for _, child in ipairs(categoryFrames["Settings"]:GetChildren()) do
+		if child ~= settingsSearchBox and not child:IsA("UIListLayout") and not child:IsA("UIPadding") then
+			local txt = ""
+			if child:IsA("TextLabel") or child:IsA("TextButton") or child:IsA("TextBox") then
+				txt = child.Text
+			end
+			local lbl = child:FindFirstChildWhichIsA("TextLabel", true)
+			if lbl then txt = txt .. " " .. lbl.Text end
+			child.Visible = (searchText == "") or (string.find(string.lower(txt), searchText, 1, true) ~= nil)
+		end
+	end
+end)
 
 toggleBgRow = Instance.new("Frame")
 toggleBgRow.Size = UDim2.new(1, 0, 0, 42)
@@ -19770,6 +20217,280 @@ extractedActiveTextLabel.Parent = extractedActiveTextRow
 extractedActiveTextRBox = createColorBox(extractedActiveTextRow, -186, "R", function() return math.floor(extractedBtnActiveTextColor.R * 255) end, function(v) extractedBtnActiveTextColor = Color3.fromRGB(v, math.floor(extractedBtnActiveTextColor.G * 255), math.floor(extractedBtnActiveTextColor.B * 255)); applyExtractedColors(); saveConfig() end)
 extractedActiveTextGBox = createColorBox(extractedActiveTextRow, -124, "G", function() return math.floor(extractedBtnActiveTextColor.G * 255) end, function(v) extractedBtnActiveTextColor = Color3.fromRGB(math.floor(extractedBtnActiveTextColor.R * 255), v, math.floor(extractedBtnActiveTextColor.B * 255)); applyExtractedColors(); saveConfig() end)
 extractedActiveTextBBox = createColorBox(extractedActiveTextRow, -62, "B", function() return math.floor(extractedBtnActiveTextColor.B * 255) end, function(v) extractedBtnActiveTextColor = Color3.fromRGB(math.floor(extractedBtnActiveTextColor.R * 255), math.floor(extractedBtnActiveTextColor.G * 255), v); applyExtractedColors(); saveConfig() end)
+
+-- ============== Instant Role Notify Settings ==============
+instantRolePosRow = Instance.new("Frame")
+instantRolePosRow.Size = UDim2.new(1, 0, 0, 42)
+instantRolePosRow.BackgroundTransparency = 1
+instantRolePosRow.LayoutOrder = 720
+instantRolePosRow.Parent = categoryFrames["Settings"]
+
+instantRolePosLabel = Instance.new("TextLabel")
+instantRolePosLabel.Size = UDim2.new(1, -160, 1, 0)
+instantRolePosLabel.BackgroundTransparency = 1
+instantRolePosLabel.Text = "Role Notify Position (X% / Y%)"
+instantRolePosLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+instantRolePosLabel.Font = Enum.Font.SourceSansBold
+instantRolePosLabel.TextSize = 16
+instantRolePosLabel.TextXAlignment = Enum.TextXAlignment.Left
+instantRolePosLabel.Parent = instantRolePosRow
+
+instantRolePosXInput = Instance.new("TextBox")
+instantRolePosXInput.Size = UDim2.new(0, 68, 1, 0)
+instantRolePosXInput.Position = UDim2.new(1, -146, 0, 0)
+instantRolePosXInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+instantRolePosXInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+instantRolePosXInput.Text = tostring(math.floor(instantRolePosXScale * 100))
+instantRolePosXInput.PlaceholderText = "X%"
+instantRolePosXInput.Font = Enum.Font.SourceSansBold
+instantRolePosXInput.TextSize = 15
+instantRolePosXInput.ClearTextOnFocus = false
+instantRolePosXInput.Parent = instantRolePosRow
+
+instantRolePosXInputCorner = Instance.new("UICorner")
+instantRolePosXInputCorner.CornerRadius = UDim.new(0, 6)
+instantRolePosXInputCorner.Parent = instantRolePosXInput
+
+instantRolePosYInput = Instance.new("TextBox")
+instantRolePosYInput.Size = UDim2.new(0, 68, 1, 0)
+instantRolePosYInput.Position = UDim2.new(1, -74, 0, 0)
+instantRolePosYInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+instantRolePosYInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+instantRolePosYInput.Text = tostring(math.floor(instantRolePosYScale * 100))
+instantRolePosYInput.PlaceholderText = "Y%"
+instantRolePosYInput.Font = Enum.Font.SourceSansBold
+instantRolePosYInput.TextSize = 15
+instantRolePosYInput.ClearTextOnFocus = false
+instantRolePosYInput.Parent = instantRolePosRow
+
+instantRolePosYInputCorner = Instance.new("UICorner")
+instantRolePosYInputCorner.CornerRadius = UDim.new(0, 6)
+instantRolePosYInputCorner.Parent = instantRolePosYInput
+
+instantRolePosXInput.FocusLost:Connect(function()
+	local val = tonumber(instantRolePosXInput.Text)
+	if val and val >= 0 and val <= 100 then
+		instantRolePosXScale = val / 100
+	else
+		instantRolePosXInput.Text = tostring(math.floor(instantRolePosXScale * 100))
+	end
+	saveConfig()
+end)
+
+instantRolePosYInput.FocusLost:Connect(function()
+	local val = tonumber(instantRolePosYInput.Text)
+	if val and val >= 0 and val <= 100 then
+		instantRolePosYScale = val / 100
+	else
+		instantRolePosYInput.Text = tostring(math.floor(instantRolePosYScale * 100))
+	end
+	saveConfig()
+end)
+
+instantRoleSizeRow = Instance.new("Frame")
+instantRoleSizeRow.Size = UDim2.new(1, 0, 0, 42)
+instantRoleSizeRow.BackgroundTransparency = 1
+instantRoleSizeRow.LayoutOrder = 720.5
+instantRoleSizeRow.Parent = categoryFrames["Settings"]
+
+instantRoleSizeLabel = Instance.new("TextLabel")
+instantRoleSizeLabel.Size = UDim2.new(1, -160, 1, 0)
+instantRoleSizeLabel.BackgroundTransparency = 1
+instantRoleSizeLabel.Text = "Role Notify Size (W% / H%)"
+instantRoleSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+instantRoleSizeLabel.Font = Enum.Font.SourceSansBold
+instantRoleSizeLabel.TextSize = 16
+instantRoleSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+instantRoleSizeLabel.Parent = instantRoleSizeRow
+
+instantRoleSizeWInput = Instance.new("TextBox")
+instantRoleSizeWInput.Size = UDim2.new(0, 68, 1, 0)
+instantRoleSizeWInput.Position = UDim2.new(1, -146, 0, 0)
+instantRoleSizeWInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+instantRoleSizeWInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+instantRoleSizeWInput.Text = tostring(math.floor(instantRoleSizeXScale * 100))
+instantRoleSizeWInput.PlaceholderText = "W%"
+instantRoleSizeWInput.Font = Enum.Font.SourceSansBold
+instantRoleSizeWInput.TextSize = 15
+instantRoleSizeWInput.ClearTextOnFocus = false
+instantRoleSizeWInput.Parent = instantRoleSizeRow
+
+instantRoleSizeWInputCorner = Instance.new("UICorner")
+instantRoleSizeWInputCorner.CornerRadius = UDim.new(0, 6)
+instantRoleSizeWInputCorner.Parent = instantRoleSizeWInput
+
+instantRoleSizeHInput = Instance.new("TextBox")
+instantRoleSizeHInput.Size = UDim2.new(0, 68, 1, 0)
+instantRoleSizeHInput.Position = UDim2.new(1, -74, 0, 0)
+instantRoleSizeHInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+instantRoleSizeHInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+instantRoleSizeHInput.Text = tostring(math.floor(instantRoleSizeYScale * 100))
+instantRoleSizeHInput.PlaceholderText = "H%"
+instantRoleSizeHInput.Font = Enum.Font.SourceSansBold
+instantRoleSizeHInput.TextSize = 15
+instantRoleSizeHInput.ClearTextOnFocus = false
+instantRoleSizeHInput.Parent = instantRoleSizeRow
+
+instantRoleSizeHInputCorner = Instance.new("UICorner")
+instantRoleSizeHInputCorner.CornerRadius = UDim.new(0, 6)
+instantRoleSizeHInputCorner.Parent = instantRoleSizeHInput
+
+instantRoleSizeWInput.FocusLost:Connect(function()
+	local val = tonumber(instantRoleSizeWInput.Text)
+	if val and val >= 5 and val <= 100 then
+		instantRoleSizeXScale = val / 100
+	else
+		instantRoleSizeWInput.Text = tostring(math.floor(instantRoleSizeXScale * 100))
+	end
+	saveConfig()
+end)
+
+instantRoleSizeHInput.FocusLost:Connect(function()
+	local val = tonumber(instantRoleSizeHInput.Text)
+	if val and val >= 2 and val <= 50 then
+		instantRoleSizeYScale = val / 100
+	else
+		instantRoleSizeHInput.Text = tostring(math.floor(instantRoleSizeYScale * 100))
+	end
+	saveConfig()
+end)
+
+-- ============== Show Round Timer Settings ==============
+roundTimerPosRow = Instance.new("Frame")
+roundTimerPosRow.Size = UDim2.new(1, 0, 0, 42)
+roundTimerPosRow.BackgroundTransparency = 1
+roundTimerPosRow.LayoutOrder = 720.6
+roundTimerPosRow.Parent = categoryFrames["Settings"]
+
+roundTimerPosLabel = Instance.new("TextLabel")
+roundTimerPosLabel.Size = UDim2.new(1, -160, 1, 0)
+roundTimerPosLabel.BackgroundTransparency = 1
+roundTimerPosLabel.Text = "Round Timer Position (X% / Y%)"
+roundTimerPosLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+roundTimerPosLabel.Font = Enum.Font.SourceSansBold
+roundTimerPosLabel.TextSize = 16
+roundTimerPosLabel.TextXAlignment = Enum.TextXAlignment.Left
+roundTimerPosLabel.Parent = roundTimerPosRow
+
+roundTimerPosXInput = Instance.new("TextBox")
+roundTimerPosXInput.Size = UDim2.new(0, 68, 1, 0)
+roundTimerPosXInput.Position = UDim2.new(1, -146, 0, 0)
+roundTimerPosXInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+roundTimerPosXInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+roundTimerPosXInput.Text = tostring(math.floor(roundTimerPosXScale * 100))
+roundTimerPosXInput.PlaceholderText = "X%"
+roundTimerPosXInput.Font = Enum.Font.SourceSansBold
+roundTimerPosXInput.TextSize = 15
+roundTimerPosXInput.ClearTextOnFocus = false
+roundTimerPosXInput.Parent = roundTimerPosRow
+
+roundTimerPosXInputCorner = Instance.new("UICorner")
+roundTimerPosXInputCorner.CornerRadius = UDim.new(0, 6)
+roundTimerPosXInputCorner.Parent = roundTimerPosXInput
+
+roundTimerPosYInput = Instance.new("TextBox")
+roundTimerPosYInput.Size = UDim2.new(0, 68, 1, 0)
+roundTimerPosYInput.Position = UDim2.new(1, -74, 0, 0)
+roundTimerPosYInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+roundTimerPosYInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+roundTimerPosYInput.Text = tostring(math.floor(roundTimerPosYScale * 100))
+roundTimerPosYInput.PlaceholderText = "Y%"
+roundTimerPosYInput.Font = Enum.Font.SourceSansBold
+roundTimerPosYInput.TextSize = 15
+roundTimerPosYInput.ClearTextOnFocus = false
+roundTimerPosYInput.Parent = roundTimerPosRow
+
+roundTimerPosYInputCorner = Instance.new("UICorner")
+roundTimerPosYInputCorner.CornerRadius = UDim.new(0, 6)
+roundTimerPosYInputCorner.Parent = roundTimerPosYInput
+
+roundTimerPosXInput.FocusLost:Connect(function()
+	local val = tonumber(roundTimerPosXInput.Text)
+	if val and val >= 0 and val <= 100 then
+		roundTimerPosXScale = val / 100
+	else
+		roundTimerPosXInput.Text = tostring(math.floor(roundTimerPosXScale * 100))
+	end
+	saveConfig()
+end)
+
+roundTimerPosYInput.FocusLost:Connect(function()
+	local val = tonumber(roundTimerPosYInput.Text)
+	if val and val >= 0 and val <= 100 then
+		roundTimerPosYScale = val / 100
+	else
+		roundTimerPosYInput.Text = tostring(math.floor(roundTimerPosYScale * 100))
+	end
+	saveConfig()
+end)
+
+roundTimerSizeRow = Instance.new("Frame")
+roundTimerSizeRow.Size = UDim2.new(1, 0, 0, 42)
+roundTimerSizeRow.BackgroundTransparency = 1
+roundTimerSizeRow.LayoutOrder = 720.7
+roundTimerSizeRow.Parent = categoryFrames["Settings"]
+
+roundTimerSizeLabel = Instance.new("TextLabel")
+roundTimerSizeLabel.Size = UDim2.new(1, -160, 1, 0)
+roundTimerSizeLabel.BackgroundTransparency = 1
+roundTimerSizeLabel.Text = "Round Timer Size (W% / H%)"
+roundTimerSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+roundTimerSizeLabel.Font = Enum.Font.SourceSansBold
+roundTimerSizeLabel.TextSize = 16
+roundTimerSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+roundTimerSizeLabel.Parent = roundTimerSizeRow
+
+roundTimerSizeWInput = Instance.new("TextBox")
+roundTimerSizeWInput.Size = UDim2.new(0, 68, 1, 0)
+roundTimerSizeWInput.Position = UDim2.new(1, -146, 0, 0)
+roundTimerSizeWInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+roundTimerSizeWInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+roundTimerSizeWInput.Text = tostring(math.floor(roundTimerSizeXScale * 100))
+roundTimerSizeWInput.PlaceholderText = "W%"
+roundTimerSizeWInput.Font = Enum.Font.SourceSansBold
+roundTimerSizeWInput.TextSize = 15
+roundTimerSizeWInput.ClearTextOnFocus = false
+roundTimerSizeWInput.Parent = roundTimerSizeRow
+
+roundTimerSizeWInputCorner = Instance.new("UICorner")
+roundTimerSizeWInputCorner.CornerRadius = UDim.new(0, 6)
+roundTimerSizeWInputCorner.Parent = roundTimerSizeWInput
+
+roundTimerSizeHInput = Instance.new("TextBox")
+roundTimerSizeHInput.Size = UDim2.new(0, 68, 1, 0)
+roundTimerSizeHInput.Position = UDim2.new(1, -74, 0, 0)
+roundTimerSizeHInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+roundTimerSizeHInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+roundTimerSizeHInput.Text = tostring(math.floor(roundTimerSizeYScale * 100))
+roundTimerSizeHInput.PlaceholderText = "H%"
+roundTimerSizeHInput.Font = Enum.Font.SourceSansBold
+roundTimerSizeHInput.TextSize = 15
+roundTimerSizeHInput.ClearTextOnFocus = false
+roundTimerSizeHInput.Parent = roundTimerSizeRow
+
+roundTimerSizeHInputCorner = Instance.new("UICorner")
+roundTimerSizeHInputCorner.CornerRadius = UDim.new(0, 6)
+roundTimerSizeHInputCorner.Parent = roundTimerSizeHInput
+
+roundTimerSizeWInput.FocusLost:Connect(function()
+	local val = tonumber(roundTimerSizeWInput.Text)
+	if val and val >= 5 and val <= 100 then
+		roundTimerSizeXScale = val / 100
+	else
+		roundTimerSizeWInput.Text = tostring(math.floor(roundTimerSizeXScale * 100))
+	end
+	saveConfig()
+end)
+
+roundTimerSizeHInput.FocusLost:Connect(function()
+	local val = tonumber(roundTimerSizeHInput.Text)
+	if val and val >= 2 and val <= 50 then
+		roundTimerSizeYScale = val / 100
+	else
+		roundTimerSizeHInput.Text = tostring(math.floor(roundTimerSizeYScale * 100))
+	end
+	saveConfig()
+end)
 
 -- ============== Tab Colors ==============
 local function updateTabColors()
@@ -21575,14 +22296,20 @@ function buildConfigData()
 	config.toggles.autofarmResetSheriffEnabled = autofarmResetSheriffEnabled; config.toggles.autofarmResetMurdererEnabled = autofarmResetMurdererEnabled
 	config.toggles.autofarmKillAllEnabled = autofarmKillAllEnabled; config.toggles.autofarmShootPiercerEnabled = autofarmShootPiercerEnabled
 	config.toggles.autofarmWebhookEnabled = autofarmWebhookEnabled; config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
+	config.toggles.instantRoleNotifyEnabled = instantRoleNotifyEnabled
+	config.toggles.showRoundTimerEnabled = showRoundTimerEnabled
 	if keystrokeSavedPos then config.keystrokePos = {X = {Scale = keystrokeSavedPos.X.Scale, Offset = keystrokeSavedPos.X.Offset}, Y = {Scale = keystrokeSavedPos.Y.Scale, Offset = keystrokeSavedPos.Y.Offset}} end
 	config.values.JUMP_BOOST_POWER = JUMP_BOOST_POWER; config.values.FAKE_SPEED_CFRAME_SPEED = FAKE_SPEED_CFRAME_SPEED
+	config.values.instantRolePosXScale = instantRolePosXScale; config.values.instantRolePosYScale = instantRolePosYScale
+	config.values.instantRoleSizeXScale = instantRoleSizeXScale; config.values.instantRoleSizeYScale = instantRoleSizeYScale
+	config.values.roundTimerPosXScale = roundTimerPosXScale; config.values.roundTimerPosYScale = roundTimerPosYScale
+	config.values.roundTimerSizeXScale = roundTimerSizeXScale; config.values.roundTimerSizeYScale = roundTimerSizeYScale
 	config.values.range = range; config.values.autoInvisActivateDist = autoInvisActivateDist
 	config.toggles.throwingKnifeAuraEnabled = throwingKnifeAuraEnabled; config.values.throwingKnifeAuraRadius = throwingKnifeAuraRadius
 	config.values.autoInvisDeactivateDist = autoInvisDeactivateDist; config.values.autoTpDist = autoTpDist
 	config.values.autoTpTarget = autoTpTarget; config.values.MAGNET_DISTANCE = MAGNET_DISTANCE
 	config.values.DesyncOffsetRange = DesyncOffsetRange; config.values.antiAimSpeed = antiAimSpeed
-	config.values.loopSpeedValue = loopSpeedValue; config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
+	config.values.loopSpeedValue = loopSpeedValue; config.values.customJumpPowerValue = customJumpPowerValue; config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
 	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed; config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
 	config.values.multiFlingCollapsed = multiFlingCollapsed or false; config.values.airStrafeMultiplier = airStrafeMultiplier
 	config.values.toggleBgTransparency = toggleBgTransparency; config.values.mainBgTransparency = mainBgTransparency
@@ -23150,7 +23877,10 @@ function restoreFullConfig()
 	currentMode = 0
 	fakeDuckEnabled = T.fakeDuckEnabled or false
 	loopSpeedEnabled = T.loopSpeedEnabled or false
+	customJumpPowerEnabled = T.customJumpPowerEnabled or false
 	gameNotifEnabled = T.gameNotifEnabled or false
+	instantRoleNotifyEnabled = T.instantRoleNotifyEnabled or false
+	showRoundTimerEnabled = T.showRoundTimerEnabled or false
 	notifyOnExploiters = T.notifyOnExploiters or false
 	notifyOnTeamers = T.notifyOnTeamers or false
 	notifyOnScammers = T.notifyOnScammers or false
@@ -23188,12 +23918,21 @@ function restoreFullConfig()
 		if c.values.antiAimSpeed then antiAimSpeed = c.values.antiAimSpeed; if antiAimSpeedInput then antiAimSpeedInput.Text = tostring(antiAimSpeed) end end
 		if c.values.antiAimSpeedGlitchValue then antiAimSpeedGlitchValue = c.values.antiAimSpeedGlitchValue; if antiAimSpeedGlitchSpdInput then antiAimSpeedGlitchSpdInput.Text = tostring(antiAimSpeedGlitchValue) end end
 		if c.values.loopSpeedValue then loopSpeedValue = c.values.loopSpeedValue; if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end end
+		if c.values.customJumpPowerValue then customJumpPowerValue = c.values.customJumpPowerValue; if customJumpPowerInput then customJumpPowerInput.Text = tostring(customJumpPowerValue) end end
 		if c.values.fakeDuckAntiAimSpeed then fakeDuckAntiAimSpeed = c.values.fakeDuckAntiAimSpeed; if fakeDuckAimInput then fakeDuckAimInput.Text = tostring(fakeDuckAntiAimSpeed) end end
 		if c.values.fakeDuckSpeedValue then fakeDuckSpeedValue = c.values.fakeDuckSpeedValue; if fakeDuckSpdInput then fakeDuckSpdInput.Text = tostring(fakeDuckSpeedValue) end end
 		if c.values.toggleBgTransparency ~= nil then toggleBgTransparency = c.values.toggleBgTransparency end
 		if c.values.mainBgTransparency ~= nil then mainBgTransparency = c.values.mainBgTransparency end
 		if c.values.popupBgTransparency ~= nil then popupBgTransparency = c.values.popupBgTransparency end
 		if c.values.toggleButtonSize ~= nil then toggleButtonSize = c.values.toggleButtonSize end
+		if c.values.instantRolePosXScale ~= nil then instantRolePosXScale = c.values.instantRolePosXScale end
+		if c.values.instantRolePosYScale ~= nil then instantRolePosYScale = c.values.instantRolePosYScale end
+		if c.values.instantRoleSizeXScale ~= nil then instantRoleSizeXScale = c.values.instantRoleSizeXScale end
+		if c.values.instantRoleSizeYScale ~= nil then instantRoleSizeYScale = c.values.instantRoleSizeYScale end
+		if c.values.roundTimerPosXScale ~= nil then roundTimerPosXScale = c.values.roundTimerPosXScale end
+		if c.values.roundTimerPosYScale ~= nil then roundTimerPosYScale = c.values.roundTimerPosYScale end
+		if c.values.roundTimerSizeXScale ~= nil then roundTimerSizeXScale = c.values.roundTimerSizeXScale end
+		if c.values.roundTimerSizeYScale ~= nil then roundTimerSizeYScale = c.values.roundTimerSizeYScale end
 		if c.values.mainMenuWidth ~= nil then mainMenuWidth = c.values.mainMenuWidth end
 		if c.values.mainMenuHeight ~= nil then mainMenuHeight = c.values.mainMenuHeight end
 		if c.values.popupBtnWidth ~= nil then popupBtnWidth = c.values.popupBtnWidth end
@@ -23518,6 +24257,36 @@ function restoreFullConfig()
 	if fovInputBox and c.values and c.values.customFov then
 		fovInputBox.Text = tostring(c.values.customFov)
 	end
+	if instantRoleNotifyBtn then
+		setToggleState(instantRoleNotifyBtn, instantRoleNotifyEnabled, "Instant Role Notify: ON", "Instant Role Notify: OFF")
+	end
+	if instantRolePosXInput and c.values and c.values.instantRolePosXScale ~= nil then
+		instantRolePosXInput.Text = tostring(math.floor(c.values.instantRolePosXScale * 100))
+	end
+	if instantRolePosYInput and c.values and c.values.instantRolePosYScale ~= nil then
+		instantRolePosYInput.Text = tostring(math.floor(c.values.instantRolePosYScale * 100))
+	end
+	if instantRoleSizeWInput and c.values and c.values.instantRoleSizeXScale ~= nil then
+		instantRoleSizeWInput.Text = tostring(math.floor(c.values.instantRoleSizeXScale * 100))
+	end
+	if instantRoleSizeHInput and c.values and c.values.instantRoleSizeYScale ~= nil then
+		instantRoleSizeHInput.Text = tostring(math.floor(c.values.instantRoleSizeYScale * 100))
+	end
+	if showRoundTimerBtn then
+		setToggleState(showRoundTimerBtn, showRoundTimerEnabled, "Show Round Timer: ON", "Show Round Timer: OFF")
+	end
+	if roundTimerPosXInput and c.values and c.values.roundTimerPosXScale ~= nil then
+		roundTimerPosXInput.Text = tostring(math.floor(c.values.roundTimerPosXScale * 100))
+	end
+	if roundTimerPosYInput and c.values and c.values.roundTimerPosYScale ~= nil then
+		roundTimerPosYInput.Text = tostring(math.floor(c.values.roundTimerPosYScale * 100))
+	end
+	if roundTimerSizeWInput and c.values and c.values.roundTimerSizeXScale ~= nil then
+		roundTimerSizeWInput.Text = tostring(math.floor(c.values.roundTimerSizeXScale * 100))
+	end
+	if roundTimerSizeHInput and c.values and c.values.roundTimerSizeYScale ~= nil then
+		roundTimerSizeHInput.Text = tostring(math.floor(c.values.roundTimerSizeYScale * 100))
+	end
 
 	-- Restore binds UI FIRST (before toggles, so saveConfig sees them)
 	if c.binds then
@@ -23681,6 +24450,11 @@ function restoreFullConfig()
 	if T.loopSpeedEnabled then
 		loopSpeedEnabled = false
 		toggleLoopSpeed()
+	end
+	if T.customJumpPowerEnabled then
+		customJumpPowerEnabled = false
+		toggleCustomJumpPower()
+		if customJumpPowerButton then setToggleState(customJumpPowerButton, true, "Jump Power: ON", "Jump Power: OFF") end
 	end
 	if T.gameNotifEnabled then
 		if btn.gameNotif then setToggleState(btn.gameNotif, true, "Notifications: ON", "Notifications: OFF") end
@@ -24153,6 +24927,7 @@ do
 	if mvmtFrame then
 		local lsRow = loopSpeedButton and loopSpeedButton.Parent
 		if lsRow then lsRow.Parent = mvmtFrame; lsRow.LayoutOrder = 100.1 end
+		if customJumpPowerRow then customJumpPowerRow.Parent = mvmtFrame; customJumpPowerRow.LayoutOrder = 100.15 end
 		-- Move AirStrafe to Movement 2nd place (LayoutOrder 100.2)
 		-- Wrap AirStrafe in a dual row with value input
 		if airStrafeButton then
