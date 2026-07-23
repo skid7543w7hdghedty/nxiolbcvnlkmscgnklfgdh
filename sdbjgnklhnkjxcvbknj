@@ -237,6 +237,7 @@ function saveConfig()
 	config.toggles.notifyOnTeamers = notifyOnTeamers
 	config.toggles.notifyOnScammers = notifyOnScammers
 	config.toggles.hideButtonsEnabled = hideButtonsEnabled
+	config.toggles.hideMiniButtonsEnabled = hideMiniButtonsEnabled
 	config.toggles.notifyOnVoteStart = notifyOnVoteStart
 	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled
 	config.toggles.tryhardAnimEnabled = tryhardAnimEnabled
@@ -2281,7 +2282,7 @@ end
 ESP_MAP_NAMES = {
 	"Hotel", "Factory", "BioLab", "Mansion2", "House2",
 	"Workplace", "Hospital3", "MilBase", "Bank2", "Office3",
-	"ResearchFacility"
+	"ResearchFacility", "Pier", "Yacht", "BeachResort"
 }
 
 function espGetRoleColor(plr)
@@ -3028,7 +3029,7 @@ animationButtons = {
 	121368513461476, "Six Seven dance", 120852662885277, "Six Seven emote", 92618727772186, "IShowSpeed Dance", 122840737847239, "Man Squat",
 	98974619620224, "Laugh Ragebait", 127118661424463, "Caramell Dance", 139395178419877, "Burmaldance",
 	125329959146841, "Massive Poop", 72007752012770, "Poop sniff", 90333292347820, "The Worm",
-	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 127510180058463, "Hide Inside",
+	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 112878048586682, "Hide Inside",
 	108747312576405, "Les goooo", 108242544356577, "Shake Dance",
 	99499783161907, "Aura farm", 114400428765989, "180° Flip", 70432904702322, "Get skinwalked", 109873544976020, "Weird Spin",
 	126264342780589, "Punch Anim"
@@ -3641,6 +3642,7 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 	lockBtn.AutoButtonColor = false
 	lockBtn.BorderSizePixel = 0
 	lockBtn.Parent = frame
+	lockBtn.Visible = not hideMiniButtonsEnabled
 
 	local lockCorner = Instance.new("UICorner")
 	lockCorner.CornerRadius = UDim.new(0, 4)
@@ -6176,7 +6178,8 @@ autoGrabGunMagnets = {}
 autoGrabGunTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
+	Pier = true, Yacht = true, BeachResort = true
 }
 
 function autoGrabGetRoot()
@@ -7659,9 +7662,9 @@ end)
 -- Map Vote Dupe (3 buttons) — Utilities tab
 -- ============================================
 voteMapCoords = {
-	CFrame.new(25, 507, 49),  -- Map 1
-	CFrame.new(14, 507, 52),  -- Map 2
-	CFrame.new(2, 507, 49),   -- Map 3
+	CFrame.new(-10, -64, -94),  -- Map 1
+	CFrame.new(-1, -64, -95),  -- Map 2
+	CFrame.new(10, -64, -94),   -- Map 3
 }
 
 voteDupeActive = false
@@ -7801,7 +7804,8 @@ MAGNET_DISTANCE = 15
 gunAuraTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
+	Pier = true, Yacht = true, BeachResort = true
 }
 
 function gunAuraGetRoot()
@@ -8218,7 +8222,8 @@ autoDeleteCoinsConnections = {}
 autoDeleteCoinsTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
+	Pier = true, Yacht = true, BeachResort = true
 }
 
 function isInsideTargetModel(instance)
@@ -8403,7 +8408,7 @@ btn.tpLobby.MouseButton1Click:Connect(function()
 	local myChar = player.Character
 	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	if myHrp then
-		myHrp.CFrame = CFrame.new(23, 505, -34)
+		myHrp.CFrame = CFrame.new(-12, -67, -11)
 		notify("Teleported", "Teleported to Lobby", 2)
 	else
 		notify("Error", "Character not found", 2)
@@ -8415,7 +8420,7 @@ btn.tpVoteMap.MouseButton1Click:Connect(function()
 	local myChar = player.Character
 	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	if myHrp then
-		myHrp.CFrame = CFrame.new(14, 507, 35)
+		myHrp.CFrame = CFrame.new(-1, -65, -79)
 		notify("Teleported", "Teleported to VoteMap", 2)
 	else
 		notify("Error", "Character not found", 2)
@@ -8539,7 +8544,10 @@ tpMapCoords = {
 	House2 = Vector3.new(49, 265, 9057),
 	MilBase = Vector3.new(85, 202, 9195),
 	Workplace = Vector3.new(19, 292, 8936),
-	PoliceStation = Vector3.new(-31, 289, 8927)
+	PoliceStation = Vector3.new(-31, 289, 8927),
+	Pier = Vector3.new(-716, 107, -2496),
+	Yacht = Vector3.new(-28, 220, 9175),
+	BeachResort = Vector3.new(33, 254, 9107)
 }
 
 function tpToMap()
@@ -8593,7 +8601,10 @@ tpAboveMapCoords = {
 	Workplace = Vector3.new(-3, 319, 9002),
 	PoliceStation = Vector3.new(-14, 307, 8934),
 	Bank2 = Vector3.new(-5, 328, 9008),
-	BioLab = Vector3.new(539, 322, 9856)
+	BioLab = Vector3.new(539, 322, 9856),
+	Pier = Vector3.new(-738, 267, -2189),
+	Yacht = Vector3.new(0, 313, 9004),
+	BeachResort = Vector3.new(42, 419, 9121)
 }
 
 function tpAboveMap()
@@ -8755,10 +8766,10 @@ function autoTpToTarget()
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not hrp then return end
 	if autoTpTarget == 1 then
-		hrp.CFrame = CFrame.new(23, 505, -34)
+		hrp.CFrame = CFrame.new(-12, -67, -11)
 		notify("Auto TP", "Teleported to Lobby", 2)
 	elseif autoTpTarget == 2 then
-		hrp.CFrame = CFrame.new(14, 507, 35)
+		hrp.CFrame = CFrame.new(-1, -65, -79)
 		notify("Auto TP", "Teleported to VoteMap", 2)
 	elseif autoTpTarget == 3 then
 		for mapName, coords in pairs(tpAboveMapCoords) do
@@ -9324,7 +9335,8 @@ autoDeleteCorpsesConnections = {}
 autoDeleteCorpsesTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, ResearchFacility = true
+	Bank2 = true, Office3 = true, ResearchFacility = true,
+	Pier = true, Yacht = true, BeachResort = true
 }
 
 function neutralizeCorpsePart(part)
@@ -14731,9 +14743,9 @@ function autofarmDoEndTeleport()
 	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	if not myHrp then return end
 	if mode == "Lobby" then
-		pcall(doInstantTp, myHrp, myChar, CFrame.new(23, 505, -34))
+		pcall(doInstantTp, myHrp, myChar, CFrame.new(-12, -67, -11))
 	elseif mode == "VoteMap" then
-		pcall(doInstantTp, myHrp, myChar, CFrame.new(14, 507, 35))
+		pcall(doInstantTp, myHrp, myChar, CFrame.new(-1, -65, -79))
 	elseif mode == "Map" then
 		pcall(tpToMap)
 	elseif mode == "Above Map" then
@@ -14818,9 +14830,9 @@ function autofarmDoAvoidMurdererTp()
 	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	if not myHrp then return end
 	if mode == "Lobby" then
-		pcall(doInstantTp, myHrp, myChar, CFrame.new(23, 505, -34))
+		pcall(doInstantTp, myHrp, myChar, CFrame.new(-12, -67, -11))
 	elseif mode == "VoteMap" then
-		pcall(doInstantTp, myHrp, myChar, CFrame.new(14, 507, 35))
+		pcall(doInstantTp, myHrp, myChar, CFrame.new(-1, -65, -79))
 	elseif mode == "Map" then
 		pcall(tpToMap)
 	elseif mode == "Above Map" then
@@ -15147,7 +15159,7 @@ function setAutofarmEnabled(state, target, silent)
 			local char = player.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart")
 			if hrp then
-				pcall(doInstantTp, hrp, char, CFrame.new(23, 505, -34))
+				pcall(doInstantTp, hrp, char, CFrame.new(-12, -67, -11))
 			end
 		end
 	end
@@ -15172,9 +15184,9 @@ function autofarmDoPreTp()
 	autofarmPreTpHold = true
 	local fixedCF = nil
 	if mode == "Lobby" then
-		fixedCF = CFrame.new(23, 505, -34)
+		fixedCF = CFrame.new(-12, -67, -11)
 	elseif mode == "VoteMap" then
-		fixedCF = CFrame.new(14, 507, 35)
+		fixedCF = CFrame.new(-1, -65, -79)
 	elseif mode == "Map" then
 		pcall(tpToMap)
 	elseif mode == "Above Map" then
@@ -15296,6 +15308,9 @@ function autofarmSetupAutoKillSheriff()
 		if not autofarmAutoKillSheriffEnabled then return end
 		if not autofarmEnabled then return end
 		if not isPlayerMurderer() then return end
+		-- Do nothing when only 2 players are on the server (you + one other):
+		-- killing the only other player would instantly end the round.
+		if #Players:GetPlayers() <= 2 then return end
 		-- Check every player for a gun
 		for _, plr in ipairs(Players:GetPlayers()) do
 			if plr ~= player then
@@ -17629,11 +17644,11 @@ bindableFeatures = {
 	end},
 	{name = "TP to Lobby", defaultKey = nil, getState = function() return false end, callback = function()
 		local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
-		if h then h.CFrame = CFrame.new(23, 505, -34); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end
+		if h then h.CFrame = CFrame.new(-12, -67, -11); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end
 	end},
 	{name = "TP to VoteMap", defaultKey = nil, getState = function() return false end, callback = function()
 		local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
-		if h then h.CFrame = CFrame.new(14, 507, 35); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end
+		if h then h.CFrame = CFrame.new(-1, -65, -79); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end
 	end},
 	{name = "TP to Map", defaultKey = nil, getState = function() return false end, callback = function()
 		tpToMap()
@@ -20037,6 +20052,36 @@ hideButtonsBtn.MouseButton1Click:Connect(function()
 	saveConfig()
 end)
 
+-- Hide Mini Buttons (small U/L lock buttons on extracted buttons)
+hideMiniButtonsEnabled = false
+
+hideMiniButtonsBtn = createButton("HideMiniButtonsButton", "Hide Mini Buttons: OFF", 714.1)
+hideMiniButtonsBtn.MouseButton1Click:Connect(function()
+	hideMiniButtonsEnabled = not hideMiniButtonsEnabled
+	if hideMiniButtonsEnabled then
+		hideMiniButtonsBtn.Text = "Hide Mini Buttons: ON"
+		hideMiniButtonsBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+		hideMiniButtonsBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+	else
+		hideMiniButtonsBtn.Text = "Hide Mini Buttons: OFF"
+		hideMiniButtonsBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		hideMiniButtonsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	end
+	for name, data in pairs(extractedButtons) do
+		if data.popupLockBtn then
+			data.popupLockBtn.Visible = not hideMiniButtonsEnabled
+		end
+	end
+	if detachedEmotes then
+		for id, d in pairs(detachedEmotes) do
+			if d.popupLockBtn then
+				d.popupLockBtn.Visible = not hideMiniButtonsEnabled
+			end
+		end
+	end
+	saveConfig()
+end)
+
 -- ============== Main Menu Color ==============
 menuColorRow = Instance.new("Frame")
 menuColorRow.Size = UDim2.new(1, 0, 0, 42)
@@ -22287,7 +22332,7 @@ function buildConfigData()
 	config.toggles.fakeDuckEnabled = fakeDuckEnabled; config.toggles.loopSpeedEnabled = loopSpeedEnabled
 	config.toggles.antiAimMode = currentMode; config.toggles.gameNotifEnabled = gameNotifEnabled
 	config.toggles.notifyOnExploiters = notifyOnExploiters; config.toggles.notifyOnTeamers = notifyOnTeamers
-	config.toggles.notifyOnScammers = notifyOnScammers; config.toggles.hideButtonsEnabled = hideButtonsEnabled
+	config.toggles.notifyOnScammers = notifyOnScammers; config.toggles.hideButtonsEnabled = hideButtonsEnabled; config.toggles.hideMiniButtonsEnabled = hideMiniButtonsEnabled
 	config.toggles.notifyOnVoteStart = notifyOnVoteStart
 	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled; config.toggles.tryhardAnimEnabled = tryhardAnimEnabled; config.toggles.headlessKorbloxEnabled = headlessKorbloxEnabled
 	config.toggles.crosshairEnabled = crosshairEnabled; config.toggles.keystrokeEnabled = keystrokeEnabled
@@ -22686,9 +22731,9 @@ btnFeatures = {
 	 toggle = function() toggleLoopSpeed() end,
 	 getState = function() return loopSpeedEnabled end},
 	{name = "TP to Lobby",
-	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(23, 505, -34); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end end},
+	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(-12, -67, -11); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end end},
 	{name = "TP to VoteMap",
-	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(14, 507, 35); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end end},
+	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(-1, -65, -79); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end end},
 	{name = "TP to Map",
 	 toggle = function() tpToMap() end},
 	{name = "TP Above Map",
@@ -23310,6 +23355,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		popupLockBtn.AutoButtonColor = false
 		popupLockBtn.BorderSizePixel = 0
 		popupLockBtn.Parent = popupBorder
+		popupLockBtn.Visible = not hideMiniButtonsEnabled
 
 		local popupLockCorner = Instance.new("UICorner")
 		popupLockCorner.CornerRadius = UDim.new(0, 4)
@@ -23885,6 +23931,7 @@ function restoreFullConfig()
 	notifyOnTeamers = T.notifyOnTeamers or false
 	notifyOnScammers = T.notifyOnScammers or false
 	hideButtonsEnabled = T.hideButtonsEnabled or false
+	hideMiniButtonsEnabled = T.hideMiniButtonsEnabled or false
 	aimWallbangEnabled = T.aimWallbangEnabled or false
 	aimAutoShotEnabled = T.aimAutoShotEnabled or false
 	aimLmbShootEnabled = T.aimLmbShootEnabled or false
@@ -24476,6 +24523,11 @@ function restoreFullConfig()
 	if T.hideButtonsEnabled then
 		hideButtonsEnabled = false
 		hideButtonsBtn.MouseButton1Click:Fire()
+	end
+
+	if T.hideMiniButtonsEnabled then
+		hideMiniButtonsEnabled = false
+		hideMiniButtonsBtn.MouseButton1Click:Fire()
 	end
 
 	if T.autoInvisEnabled then
