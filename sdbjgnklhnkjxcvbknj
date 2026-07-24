@@ -242,6 +242,7 @@ function saveConfig()
 	config.toggles.notifyOnVoteStart = notifyOnVoteStart
 	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled
 	config.toggles.tryhardAnimEnabled = tryhardAnimEnabled
+	config.toggles.tryhardMainEnabled = tryhardMainEnabled
 	config.toggles.headlessKorbloxEnabled = headlessKorbloxEnabled
 	config.toggles.crosshairEnabled = crosshairEnabled
 	config.toggles.keystrokeEnabled = keystrokeEnabled
@@ -463,6 +464,15 @@ function saveConfig()
 					pos = {X = {Scale = p.X.Scale, Offset = p.X.Offset}, Y = {Scale = p.Y.Scale, Offset = p.Y.Offset}},
 					locked = (d.popupLockBtn and d.popupLockBtn.Text == "L") or false,
 				}
+			end
+		end
+	end
+	-- FIX: keep saved emote buttons that haven't been recreated yet. Early saves during
+	-- startup used to overwrite the file without them, so they sometimes vanished on rejoin.
+	if loadedConfig and loadedConfig.detachedEmotes then
+		for idStr, info in pairs(loadedConfig.detachedEmotes) do
+			if config.detachedEmotes[idStr] == nil then
+				config.detachedEmotes[idStr] = info
 			end
 		end
 	end
@@ -3572,6 +3582,9 @@ function removeDetachedEmote(animationId, skipSave)
 	end
 	if d.frame then d.frame:Destroy() end
 	detachedEmotes[animationId] = nil
+	-- Also drop it from the loaded config so the keep-saved-emotes merge in saveConfig
+	-- doesn't resurrect an intentionally removed button.
+	if loadedConfig and loadedConfig.detachedEmotes then loadedConfig.detachedEmotes[tostring(animationId)] = nil end
 	local ui = animationUiById[animationId]
 	if ui and ui.PopOut then ui.PopOut.Text = "☆" end
 	if not skipSave then pcall(saveConfig) end
@@ -3651,7 +3664,7 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 
 	local d = { frame = frame, btn = btn, popupBtn = btn, popupLockBtn = lockBtn, name = animationName, conns = {} }
 	detachedEmotes[animationId] = d
-	if hideMiniButtonsEnabled and lockBtn then lockBtn.Visible = false end
+	if hideMiniButtonsEnabled and lockBtn then lockBtn.Visible = false; btn.Size = UDim2.new(1, -4, 1, -4) end
 
 	if savedLocked then
 		lockBtn.Text = "L"
@@ -3697,23 +3710,25 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 	end))
 	table.insert(d.conns, btn.InputEnded:Connect(function(ipt)
 		if ipt.UserInputType == Enum.UserInputType.MouseButton1 or ipt.UserInputType == Enum.UserInputType.Touch then
-			local wasDragged = moved
+			local wasDragged = dragging and moved
 			dragging = false; moved = false; dragIpt = nil
-			justDragged = wasDragged
-			if wasDragged then pcall(saveConfig) end
+			if wasDragged then
+				pcall(saveConfig)
+			else
+				-- FIX: fire the emote on release, exactly like regular extracted buttons do.
+				-- The old MouseButton1Click handler could also fire during a drag (the pill
+				-- follows the pointer, so the release always lands on the button), which
+				-- made dragging involuntarily start the emote.
+				if playingAnimationId == animationId then
+					stopCurrentAnimation()
+				else
+					local spd = (animationUiById[animationId] and animationUiById[animationId].Box and animationUiById[animationId].Box.Text) or "1"
+					playAnimation(animationId, spd)
+				end
+				updateDetachedEmoteVisual(animationId)
+			end
 		end
 	end))
-
-	btn.MouseButton1Click:Connect(function()
-		if justDragged then justDragged = false; return end
-		if playingAnimationId == animationId then
-			stopCurrentAnimation()
-		else
-			local spd = (animationUiById[animationId] and animationUiById[animationId].Box and animationUiById[animationId].Box.Text) or "1"
-			playAnimation(animationId, spd)
-		end
-		updateDetachedEmoteVisual(animationId)
-	end)
 
 	if ui and ui.PopOut then ui.PopOut.Text = "★" end
 	updateDetachedEmoteVisual(animationId)
@@ -5025,9 +5040,17 @@ function createCategoryButton(shortName, layoutOrder)
 	btn.Size = UDim2.new(1, 0, 0, 36)
 	btn.BackgroundColor3 = tabBgColor
 	btn.TextColor3 = tabTextColor
-	btn.Text = fullName
+	btn.Text = (fullName == "Animations") and "Emotions" or fullName
 	btn.Font = Enum.Font.SourceSansBold
 	btn.TextSize = 10
+	-- Keep long tab names inside the button (like the mobile version): scaled text capped
+	-- at the normal size can only shrink, so it never spills out of the tab frame.
+	btn.TextScaled = true
+	btn.ClipsDescendants = true
+	local catBtnTSC = Instance.new("UITextSizeConstraint")
+	catBtnTSC.MaxTextSize = 10
+	catBtnTSC.MinTextSize = 6
+	catBtnTSC.Parent = btn
 	btn.AutoButtonColor = false
 	if layoutOrder then btn.LayoutOrder = layoutOrder end
 	btn.Parent = leftSidebar
@@ -8768,7 +8791,8 @@ autoTpTargetBtn.Size = UDim2.new(0, 72, 1, 0)
 autoTpTargetBtn.Position = UDim2.new(1, -68, 0, 0)
 autoTpTargetBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 autoTpTargetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-autoTpTargetBtn.Text = autoTpTargetNames[autoTpTarget]
+autoTpTargetBtn.Text = autoTpTargetNames[autoTpTarget] .. " ▼"
+autoTpTargetBtn.AutoButtonColor = false
 autoTpTargetBtn.Font = Enum.Font.SourceSansBold
 autoTpTargetBtn.TextSize = 13
 autoTpTargetBtn.Parent = autoTpRow
@@ -8868,9 +8892,43 @@ end
 
 autoTpBtn.MouseButton1Click:Connect(toggleAutoTp)
 
+-- Auto TP target: dropdown selection (same style as the Autofarm tab dropdowns)
+-- instead of the old click-to-cycle behavior.
+autoTpTargetDropdownFrame = Instance.new("Frame")
+autoTpTargetDropdownFrame.Name = "AutoTpTargetDropdown"
+autoTpTargetDropdownFrame.Size = UDim2.new(0, 110, 0, #autoTpTargetNames * 30)
+autoTpTargetDropdownFrame.Position = UDim2.new(1, -106, 0, 42)
+autoTpTargetDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autoTpTargetDropdownFrame.BorderSizePixel = 0
+autoTpTargetDropdownFrame.Visible = false
+autoTpTargetDropdownFrame.ZIndex = 10
+autoTpTargetDropdownFrame.Parent = autoTpRow
+Instance.new("UICorner", autoTpTargetDropdownFrame).CornerRadius = UDim.new(0, 6)
+
+for i, targetName in ipairs(autoTpTargetNames) do
+	local optBtn = Instance.new("TextButton")
+	optBtn.Size = UDim2.new(1, 0, 0, 30)
+	optBtn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+	optBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	optBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	optBtn.Text = targetName
+	optBtn.Font = Enum.Font.SourceSansBold
+	optBtn.TextSize = 14
+	optBtn.AutoButtonColor = false
+	optBtn.ZIndex = 10
+	optBtn.Parent = autoTpTargetDropdownFrame
+	optBtn.MouseButton1Click:Connect(function()
+		autoTpTarget = i
+		autoTpTargetBtn.Text = targetName .. " ▼"
+		autoTpTargetDropdownFrame.Visible = false
+		saveConfig()
+	end)
+	optBtn.MouseEnter:Connect(function() optBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+	optBtn.MouseLeave:Connect(function() optBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+end
+
 autoTpTargetBtn.MouseButton1Click:Connect(function()
-	autoTpTarget = autoTpTarget % #autoTpTargetNames + 1
-	autoTpTargetBtn.Text = autoTpTargetNames[autoTpTarget]
+	autoTpTargetDropdownFrame.Visible = not autoTpTargetDropdownFrame.Visible
 end)
 
 autoTpDistBox.FocusLost:Connect(function()
@@ -8984,6 +9042,10 @@ function applyTryhardAnim(char)
 end
 
 function enableTryhardAnim()
+	if tryhardMainEnabled then
+		disableTryhardMain()
+		if btn.tryhardMainBtn then setToggleState(btn.tryhardMainBtn, false, "Tryhard Main: ON", "Tryhard Main: OFF") end
+	end
 	tryhardAnimEnabled = true
 	if player.Character then applyTryhardAnim(player.Character) end
 	tryhardAnimConn = player.CharacterAdded:Connect(applyTryhardAnim)
@@ -8998,6 +9060,54 @@ btn.tryhardAnimBtn = createButton("TryhardAnimButton", "Tryhard Anim: OFF", 116.
 btn.tryhardAnimBtn.MouseButton1Click:Connect(function()
 	if tryhardAnimEnabled then disableTryhardAnim() else enableTryhardAnim() end
 	setToggleState(btn.tryhardAnimBtn, tryhardAnimEnabled, "Tryhard Anim: ON", "Tryhard Anim: OFF")
+end)
+
+-- Tryhard Main (toggleable) — animation set from Anim.lua (same tryhard set, classic run)
+tryhardMainEnabled = false
+local tryhardMainConn = nil
+
+function applyTryhardMain(char)
+	local animate = char:WaitForChild("Animate")
+	local humanoid = char:WaitForChild("Humanoid")
+	local animator = humanoid:WaitForChild("Animator")
+	for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end
+	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then return end
+	animate.idle.Animation1.AnimationId = "rbxassetid://782841498"
+	animate.idle.Animation2.AnimationId = "rbxassetid://782845736"
+	if animate.idle:FindFirstChild("Animation3") then
+		animate.idle.Animation3.AnimationId = "rbxassetid://980952228"
+	else
+		local pose = Instance.new("Animation"); pose.Name = "Animation3"
+		pose.AnimationId = "rbxassetid://980952228"; pose.Parent = animate.idle
+	end
+	animate.walk.WalkAnim.AnimationId = "rbxassetid://616122287"
+	animate.run.RunAnim.AnimationId = "rbxassetid://707861613"
+	animate.jump.JumpAnim.AnimationId = "rbxassetid://10921242013"
+	animate.climb.ClimbAnim.AnimationId = "rbxassetid://10921229866"
+	animate.fall.FallAnim.AnimationId = "rbxassetid://782846423"
+	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+	animate.Disabled = false
+end
+
+function enableTryhardMain()
+	if tryhardAnimEnabled then
+		disableTryhardAnim()
+		if btn.tryhardAnimBtn then setToggleState(btn.tryhardAnimBtn, false, "Tryhard Anim: ON", "Tryhard Anim: OFF") end
+	end
+	tryhardMainEnabled = true
+	if player.Character then applyTryhardMain(player.Character) end
+	tryhardMainConn = player.CharacterAdded:Connect(applyTryhardMain)
+end
+
+function disableTryhardMain()
+	tryhardMainEnabled = false
+	if tryhardMainConn then tryhardMainConn:Disconnect() tryhardMainConn = nil end
+end
+
+btn.tryhardMainBtn = createButton("TryhardMainButton", "Tryhard Main: OFF", 116.7)
+btn.tryhardMainBtn.MouseButton1Click:Connect(function()
+	if tryhardMainEnabled then disableTryhardMain() else enableTryhardMain() end
+	setToggleState(btn.tryhardMainBtn, tryhardMainEnabled, "Tryhard Main: ON", "Tryhard Main: OFF")
 end)
 
 -- Headless & Korblox (toggleable)
@@ -16156,7 +16266,7 @@ autofarmScriptUrlBox.FocusLost:Connect(function()
 end)
 
 currentCategory = "Animations"
-createSection("Animations", 400)
+createSection("Emotions", 400)
 
 animationSearchBox = Instance.new("TextBox")
 animationSearchBox.Name = "AnimationSearchBox"
@@ -20070,15 +20180,25 @@ end)
 hideMiniButtonsEnabled = false
 
 function applyHideMiniButtons()
+	-- When mini buttons are hidden, the inner text button expands over the freed space:
+	-- the text fills the whole pill and the whole area becomes a drag zone.
+	local fullSize = UDim2.new(1, -4, 1, -4)
+	local normalSize = UDim2.new(1, -30, 1, -4)
 	for _, data in pairs(extractedButtons) do
 		if data.popupLockBtn then
 			data.popupLockBtn.Visible = not hideMiniButtonsEnabled
+			if data.popupBtn then
+				data.popupBtn.Size = hideMiniButtonsEnabled and fullSize or normalSize
+			end
 		end
 	end
 	if detachedEmotes then
 		for _, d in pairs(detachedEmotes) do
 			if d.popupLockBtn then
 				d.popupLockBtn.Visible = not hideMiniButtonsEnabled
+				if d.popupBtn then
+					d.popupBtn.Size = hideMiniButtonsEnabled and fullSize or normalSize
+				end
 			end
 		end
 	end
@@ -23520,7 +23640,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 			dragConn = popupDragConn,
 			state = false,
 		}
-		if hideMiniButtonsEnabled and popupLockBtn then popupLockBtn.Visible = false end
+		if hideMiniButtonsEnabled and popupLockBtn then popupLockBtn.Visible = false; popupBtn.Size = UDim2.new(1, -4, 1, -4) end
 
 		if feature.getState and feature.getState() then
 			setExtractedBtnState(feature.name, true, feature.getStatusText and feature.getStatusText())
@@ -24216,7 +24336,7 @@ function restoreFullConfig()
 	end
 	if autoTpTargetBtn and c.values and c.values.autoTpTarget then
 		autoTpTarget = c.values.autoTpTarget
-		autoTpTargetBtn.Text = autoTpTargetNames[autoTpTarget]
+		autoTpTargetBtn.Text = autoTpTargetNames[autoTpTarget] .. " ▼"
 	end
 	if ui.magnetDistInput and c.values and c.values.MAGNET_DISTANCE then
 		ui.magnetDistInput.Text = tostring(c.values.MAGNET_DISTANCE)
@@ -24715,6 +24835,7 @@ function restoreFullConfig()
 	-- Restore utility toggles (re-enable if saved as on)
 	if T.zombieTryhardEnabled then zombieTryhardEnabled = false; enableZombieTryhard(); if btn.zombieBtn then setToggleState(btn.zombieBtn, true, "Zombie Tryhard: ON", "Zombie Tryhard: OFF") end end
 	if T.tryhardAnimEnabled then tryhardAnimEnabled = false; enableTryhardAnim(); if btn.tryhardAnimBtn then setToggleState(btn.tryhardAnimBtn, true, "Tryhard Anim: ON", "Tryhard Anim: OFF") end end
+	if T.tryhardMainEnabled then tryhardMainEnabled = false; enableTryhardMain(); if btn.tryhardMainBtn then setToggleState(btn.tryhardMainBtn, true, "Tryhard Main: ON", "Tryhard Main: OFF") end end
 	if T.headlessKorbloxEnabled then headlessKorbloxEnabled = false; enableHeadlessKorblox(); if btn.headlessBtn then setToggleState(btn.headlessBtn, true, "Headless & Korblox: ON", "Headless & Korblox: OFF") end end
 	if T.crosshairEnabled then crosshairEnabled = false; enableCrosshair(); if btn.crosshairBtn then setToggleState(btn.crosshairBtn, true, "Adrenalin.win Crosshair: ON", "Adrenalin.win Crosshair: OFF") end end
 	-- Always restore the last keyboard position from config, even when Keystroke is currently
