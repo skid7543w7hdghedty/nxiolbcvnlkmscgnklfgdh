@@ -5048,8 +5048,8 @@ function createCategoryButton(shortName, layoutOrder)
 	btn.TextScaled = true
 	btn.ClipsDescendants = true
 	local catBtnTSC = Instance.new("UITextSizeConstraint")
-	catBtnTSC.MaxTextSize = 10
-	catBtnTSC.MinTextSize = 6
+	catBtnTSC.MaxTextSize = 12
+	catBtnTSC.MinTextSize = 9
 	catBtnTSC.Parent = btn
 	btn.AutoButtonColor = false
 	if layoutOrder then btn.LayoutOrder = layoutOrder end
