@@ -238,6 +238,7 @@ function saveConfig()
 	config.toggles.notifyOnScammers = notifyOnScammers
 	config.toggles.hideButtonsEnabled = hideButtonsEnabled
 	config.toggles.hideMiniButtonsEnabled = hideMiniButtonsEnabled
+	config.toggles.skipLoadingScreenEnabled = skipLoadingScreenEnabled
 	config.toggles.notifyOnVoteStart = notifyOnVoteStart
 	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled
 	config.toggles.tryhardAnimEnabled = tryhardAnimEnabled
@@ -329,6 +330,7 @@ function saveConfig()
 	config.values.btnPressAnimationEnabled = btnPressAnimationEnabled
 	config.values.animationStyle = animationStyle
 	config.values.loadingAnimStyle = loadingAnimStyle
+	config.values.loadingScreenTime = loadingScreenTime
 	config.values.menuAppearStyle = menuAppearStyle
 	config.values.mainBgImageUrl = mainBgImageUrl
 	config.values.clickSoundPath = clickSoundPath
@@ -3642,7 +3644,6 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 	lockBtn.AutoButtonColor = false
 	lockBtn.BorderSizePixel = 0
 	lockBtn.Parent = frame
-	lockBtn.Visible = not hideMiniButtonsEnabled
 
 	local lockCorner = Instance.new("UICorner")
 	lockCorner.CornerRadius = UDim.new(0, 4)
@@ -3650,6 +3651,7 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 
 	local d = { frame = frame, btn = btn, popupBtn = btn, popupLockBtn = lockBtn, name = animationName, conns = {} }
 	detachedEmotes[animationId] = d
+	if hideMiniButtonsEnabled and lockBtn then lockBtn.Visible = false end
 
 	if savedLocked then
 		lockBtn.Text = "L"
@@ -4175,6 +4177,8 @@ animationStyle = 1
 animStyles = {"Scale", "Fade Only", "Slide Left", "Slide Right", "Slide Up", "Bounce", "Scale+Fade"}
 loadingAnimStyle = 1
 loadingAnimStyles = {"Letter by Letter", "Fade In", "Scale Up", "Slide Up"}
+loadingScreenTime = 2.4 -- total splash duration in seconds (Settings tab; ported from mobile)
+skipLoadingScreenEnabled = false -- Instant Load: skip the splash entirely (Settings tab)
 menuAppearStyle = 1
 menuAppearStyles = {"None", "Fade In", "Scale Up", "Slide Down", "Bounce", "Blur Reveal"}
 mainBgImageUrl = ""
@@ -4229,7 +4233,19 @@ mainMenuHeight = 300
 -- Loading Screen
 -- ============================================
 function playLoadingScreen()
-	local LOADING_DURATION = 1.5
+	-- The splash plays BEFORE the config-apply step at the very end of the
+	-- script, so read the saved style/duration straight from the raw config.
+	if loadedConfig and loadedConfig.values then
+		loadingAnimStyle = tonumber(loadedConfig.values.loadingAnimStyle) or loadingAnimStyle
+		loadingScreenTime = tonumber(loadedConfig.values.loadingScreenTime) or loadingScreenTime
+	end
+	if loadedConfig and loadedConfig.toggles and loadedConfig.toggles.skipLoadingScreenEnabled then
+		skipLoadingScreenEnabled = true
+	end
+	-- Instant Load: skip the whole splash so the script is usable immediately
+	if skipLoadingScreenEnabled then return end
+	-- Editable splash duration (ported from mobile): hold = total - intro/outro
+	local LOADING_DURATION = math.max(0.05, (tonumber(loadingScreenTime) or 2.4) - 0.9)
 	local style = loadingAnimStyles[loadingAnimStyle] or "Letter by Letter"
 
 	local blur = Instance.new("BlurEffect")
@@ -6344,7 +6360,7 @@ function autoGrabConnectModel(model)
 	if autoGrabGunConnectedModels[model] then return end
 	autoGrabGunConnectedModels[model] = true
 
-	-- РњРіРЅРѕРІРµРЅРЅР°СЏ РїСЂРѕРІРµСЂРєР° СЃСѓС‰РµСЃС‚РІСѓСЋС‰РёС…
+	-- РњРіРЅРѕРІРµРЅРЅР°СЏ РїСЂРѕРІРµСЂРєР° СЃСѓС‰РµСЃС‚РІСѓСЋС��РёС…
 	for _, child in ipairs(model:GetDescendants()) do
 		if child.Name == "GunDrop" then
 			autoGrabClaimDrop(child)
@@ -7663,7 +7679,7 @@ end)
 -- ============================================
 voteMapCoords = {
 	CFrame.new(-10, -64, -94),  -- Map 1
-	CFrame.new(-1, -64, -95),  -- Map 2
+	CFrame.new(-1, -64, -95),   -- Map 2
 	CFrame.new(10, -64, -94),   -- Map 3
 }
 
@@ -9335,8 +9351,7 @@ autoDeleteCorpsesConnections = {}
 autoDeleteCorpsesTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, ResearchFacility = true,
-	Pier = true, Yacht = true, BeachResort = true
+	Bank2 = true, Office3 = true, ResearchFacility = true
 }
 
 function neutralizeCorpsePart(part)
@@ -15308,8 +15323,7 @@ function autofarmSetupAutoKillSheriff()
 		if not autofarmAutoKillSheriffEnabled then return end
 		if not autofarmEnabled then return end
 		if not isPlayerMurderer() then return end
-		-- Do nothing when only 2 players are on the server (you + one other):
-		-- killing the only other player would instantly end the round.
+		-- Do nothing when only 2 players are on the server (you + one other)
 		if #Players:GetPlayers() <= 2 then return end
 		-- Check every player for a gun
 		for _, plr in ipairs(Players:GetPlayers()) do
@@ -20052,8 +20066,23 @@ hideButtonsBtn.MouseButton1Click:Connect(function()
 	saveConfig()
 end)
 
--- Hide Mini Buttons (small U/L lock buttons on extracted buttons)
+-- Hide Mini Buttons: hides the small lock buttons shown on extracted buttons
 hideMiniButtonsEnabled = false
+
+function applyHideMiniButtons()
+	for _, data in pairs(extractedButtons) do
+		if data.popupLockBtn then
+			data.popupLockBtn.Visible = not hideMiniButtonsEnabled
+		end
+	end
+	if detachedEmotes then
+		for _, d in pairs(detachedEmotes) do
+			if d.popupLockBtn then
+				d.popupLockBtn.Visible = not hideMiniButtonsEnabled
+			end
+		end
+	end
+end
 
 hideMiniButtonsBtn = createButton("HideMiniButtonsButton", "Hide Mini Buttons: OFF", 714.1)
 hideMiniButtonsBtn.MouseButton1Click:Connect(function()
@@ -20067,18 +20096,7 @@ hideMiniButtonsBtn.MouseButton1Click:Connect(function()
 		hideMiniButtonsBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		hideMiniButtonsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 	end
-	for name, data in pairs(extractedButtons) do
-		if data.popupLockBtn then
-			data.popupLockBtn.Visible = not hideMiniButtonsEnabled
-		end
-	end
-	if detachedEmotes then
-		for id, d in pairs(detachedEmotes) do
-			if d.popupLockBtn then
-				d.popupLockBtn.Visible = not hideMiniButtonsEnabled
-			end
-		end
-	end
+	applyHideMiniButtons()
 	saveConfig()
 end)
 
@@ -20895,6 +20913,75 @@ styleArrowR.MouseButton1Click:Connect(function()
 	styleOffset = styleOffset + styleBtnW + styleBtnGap
 	updateStylePositions()
 	clampStyleOffset()
+end)
+
+-- Instant Load: skip the splash entirely for an instant script start
+skipLoadingRow = Instance.new("Frame")
+skipLoadingRow.Size = UDim2.new(1, 0, 0, 42)
+skipLoadingRow.BackgroundTransparency = 1
+skipLoadingRow.LayoutOrder = 715.35
+skipLoadingRow.Parent = categoryFrames["Settings"]
+
+skipLoadingBtn = Instance.new("TextButton")
+skipLoadingBtn.Size = UDim2.new(1, 0, 1, 0)
+skipLoadingBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+skipLoadingBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+skipLoadingBtn.Text = "Instant Load (Skip Intro): OFF"
+skipLoadingBtn.Font = Enum.Font.SourceSansBold
+skipLoadingBtn.TextSize = 16
+skipLoadingBtn.Parent = skipLoadingRow
+
+skipLoadingBtnCorner = Instance.new("UICorner")
+skipLoadingBtnCorner.CornerRadius = UDim.new(0, 6)
+skipLoadingBtnCorner.Parent = skipLoadingBtn
+
+skipLoadingBtn.MouseButton1Click:Connect(function()
+	skipLoadingScreenEnabled = not skipLoadingScreenEnabled
+	setToggleState(skipLoadingBtn, skipLoadingScreenEnabled, "Instant Load (Skip Intro): ON", "Instant Load (Skip Intro): OFF")
+	saveConfig()
+end)
+
+-- Loading Screen Time (seconds) (ported from mobile)
+loadingTimeRow = Instance.new("Frame")
+loadingTimeRow.Size = UDim2.new(1, 0, 0, 42)
+loadingTimeRow.BackgroundTransparency = 1
+loadingTimeRow.LayoutOrder = 715.4
+loadingTimeRow.Parent = categoryFrames["Settings"]
+
+loadingTimeLabel = Instance.new("TextLabel")
+loadingTimeLabel.Size = UDim2.new(1, -82, 1, 0)
+loadingTimeLabel.BackgroundTransparency = 1
+loadingTimeLabel.Text = "Loading Screen Time (s)"
+loadingTimeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+loadingTimeLabel.Font = Enum.Font.SourceSansBold
+loadingTimeLabel.TextSize = 16
+loadingTimeLabel.TextXAlignment = Enum.TextXAlignment.Left
+loadingTimeLabel.Parent = loadingTimeRow
+
+loadingTimeInput = Instance.new("TextBox")
+loadingTimeInput.Size = UDim2.new(0, 74, 1, 0)
+loadingTimeInput.Position = UDim2.new(1, -78, 0, 0)
+loadingTimeInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+loadingTimeInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+loadingTimeInput.Text = tostring(loadingScreenTime)
+loadingTimeInput.PlaceholderText = "2.4"
+loadingTimeInput.Font = Enum.Font.SourceSansBold
+loadingTimeInput.TextSize = 15
+loadingTimeInput.ClearTextOnFocus = false
+loadingTimeInput.Parent = loadingTimeRow
+
+loadingTimeInputCorner = Instance.new("UICorner")
+loadingTimeInputCorner.CornerRadius = UDim.new(0, 6)
+loadingTimeInputCorner.Parent = loadingTimeInput
+
+loadingTimeInput.FocusLost:Connect(function()
+	local val = tonumber(loadingTimeInput.Text)
+	if val and val >= 0.5 and val <= 10 then
+		loadingScreenTime = val
+	else
+		loadingTimeInput.Text = tostring(loadingScreenTime)
+	end
+	saveConfig()
 end)
 
 -- ============== Loading Animation Style ==============
@@ -22332,7 +22419,7 @@ function buildConfigData()
 	config.toggles.fakeDuckEnabled = fakeDuckEnabled; config.toggles.loopSpeedEnabled = loopSpeedEnabled
 	config.toggles.antiAimMode = currentMode; config.toggles.gameNotifEnabled = gameNotifEnabled
 	config.toggles.notifyOnExploiters = notifyOnExploiters; config.toggles.notifyOnTeamers = notifyOnTeamers
-	config.toggles.notifyOnScammers = notifyOnScammers; config.toggles.hideButtonsEnabled = hideButtonsEnabled; config.toggles.hideMiniButtonsEnabled = hideMiniButtonsEnabled
+	config.toggles.notifyOnScammers = notifyOnScammers; config.toggles.hideButtonsEnabled = hideButtonsEnabled; config.toggles.hideMiniButtonsEnabled = hideMiniButtonsEnabled; config.toggles.skipLoadingScreenEnabled = skipLoadingScreenEnabled
 	config.toggles.notifyOnVoteStart = notifyOnVoteStart
 	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled; config.toggles.tryhardAnimEnabled = tryhardAnimEnabled; config.toggles.headlessKorbloxEnabled = headlessKorbloxEnabled
 	config.toggles.crosshairEnabled = crosshairEnabled; config.toggles.keystrokeEnabled = keystrokeEnabled
@@ -22364,7 +22451,7 @@ function buildConfigData()
 	config.values.fpsPingBtnWidth = fpsPingBtnWidth; config.values.fpsPingBtnHeight = fpsPingBtnHeight
 	config.values.customFov = customFov; config.values.animationEnabled = animationEnabled
 	config.values.btnPressAnimationEnabled = btnPressAnimationEnabled; config.values.animationStyle = animationStyle
-	config.values.loadingAnimStyle = loadingAnimStyle; config.values.menuAppearStyle = menuAppearStyle
+	config.values.loadingAnimStyle = loadingAnimStyle; config.values.menuAppearStyle = menuAppearStyle; config.values.loadingScreenTime = loadingScreenTime
 	config.values.mainBgImageUrl = mainBgImageUrl; config.values.clickSoundPath = clickSoundPath
 	config.values.toggleSoundPath = toggleSoundPath; config.values.startupSoundPath = startupSoundPath
 	config.values.sheriffDieSoundPath = sheriffDieSoundPath; config.values.murdererDieSoundPath = murdererDieSoundPath
@@ -23355,7 +23442,6 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		popupLockBtn.AutoButtonColor = false
 		popupLockBtn.BorderSizePixel = 0
 		popupLockBtn.Parent = popupBorder
-		popupLockBtn.Visible = not hideMiniButtonsEnabled
 
 		local popupLockCorner = Instance.new("UICorner")
 		popupLockCorner.CornerRadius = UDim.new(0, 4)
@@ -23434,6 +23520,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 			dragConn = popupDragConn,
 			state = false,
 		}
+		if hideMiniButtonsEnabled and popupLockBtn then popupLockBtn.Visible = false end
 
 		if feature.getState and feature.getState() then
 			setExtractedBtnState(feature.name, true, feature.getStatusText and feature.getStatusText())
@@ -23879,7 +23966,7 @@ if existingMansion then
 	end)
 end
 
--- РџРµСЂРёРѕРґРёС‡РµСЃРєР°СЏ РїСЂРѕРІРµСЂРєР° РЅР° РІСЃСЏРєРёР№ СЃР»СѓС‡Р°Р№
+-- РџРµСЂРёРѕРґРёС‡РµСЃРєР°СЏ РїСЂР��РІРµСЂРєР° РЅР° РІСЃСЏРєРёР№ СЃР»СѓС‡Р°Р№
 task.spawn(function()
 	while true do
 		task.wait(10)
@@ -23932,6 +24019,7 @@ function restoreFullConfig()
 	notifyOnScammers = T.notifyOnScammers or false
 	hideButtonsEnabled = T.hideButtonsEnabled or false
 	hideMiniButtonsEnabled = T.hideMiniButtonsEnabled or false
+	skipLoadingScreenEnabled = T.skipLoadingScreenEnabled or false
 	aimWallbangEnabled = T.aimWallbangEnabled or false
 	aimAutoShotEnabled = T.aimAutoShotEnabled or false
 	aimLmbShootEnabled = T.aimLmbShootEnabled or false
@@ -24016,6 +24104,7 @@ function restoreFullConfig()
 		if c.values.btnPressAnimationEnabled ~= nil then btnPressAnimationEnabled = c.values.btnPressAnimationEnabled end
 		if c.values.animationStyle ~= nil then animationStyle = c.values.animationStyle end
 		if c.values.loadingAnimStyle ~= nil then loadingAnimStyle = c.values.loadingAnimStyle end
+		if c.values.loadingScreenTime ~= nil then loadingScreenTime = c.values.loadingScreenTime; if loadingTimeInput then loadingTimeInput.Text = tostring(loadingScreenTime) end end
 		if c.values.menuAppearStyle ~= nil then menuAppearStyle = c.values.menuAppearStyle end
 		if c.values.mainBgImageUrl ~= nil then mainBgImageUrl = c.values.mainBgImageUrl end
 		if c.values.clickSoundPath ~= nil then clickSoundPath = c.values.clickSoundPath end
@@ -24525,9 +24614,13 @@ function restoreFullConfig()
 		hideButtonsBtn.MouseButton1Click:Fire()
 	end
 
-	if T.hideMiniButtonsEnabled then
+	if hideMiniButtonsEnabled and hideMiniButtonsBtn then
 		hideMiniButtonsEnabled = false
 		hideMiniButtonsBtn.MouseButton1Click:Fire()
+	end
+
+	if skipLoadingScreenEnabled and skipLoadingBtn then
+		setToggleState(skipLoadingBtn, true, "Instant Load (Skip Intro): ON", "Instant Load (Skip Intro): OFF")
 	end
 
 	if T.autoInvisEnabled then
