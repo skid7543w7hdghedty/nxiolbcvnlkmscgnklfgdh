@@ -158,6 +158,28 @@ VOTE_START_SOUND_DIR = SOUNDS_DIR .. "/VoteStart"
 CONFIG_PATH = MAIN_DIR .. "/config.json"
 loadedConfig = {}
 isApplyingConfig = false
+-- When true, image/sound paths are treated as FULL local device paths (e.g.
+-- C:\Users\...\Adrenalin.win\file.jpg / file.mp3) instead of workspace-relative
+-- paths. Configurable from the Settings tab.
+useDevicePaths = false
+
+-- Returns candidate asset path forms to try when resolving an asset. In default
+-- (relative) mode only the given path is tried. In device-path mode, an absolute
+-- Windows path (C:\...) is used as-is and ALSO tried as a workspace-relative path
+-- (the part starting at the CONFIG_FOLDER) — covering executors that require
+-- workspace-relative arguments for getcustomasset/syn.asset.
+function assetPathCandidates(path)
+	if not path or path == "" then return {} end
+	local c = { path }
+	if useDevicePaths and path:match("^[A-Za-z]:[\\/]") then
+		local idx = path:find(CONFIG_FOLDER, 1, true)
+		if idx and idx > 1 then
+			local rel = path:sub(idx)
+			if rel ~= path then table.insert(c, rel) end
+		end
+	end
+	return c
+end
 
 function ensureFolder()
 	pcall(function() makefolder(CONFIG_FOLDER) end)
@@ -343,7 +365,8 @@ function saveConfig()
 	config.values.loadingAnimStyle = loadingAnimStyle
 	config.values.loadingScreenTime = loadingScreenTime
 	config.values.menuAppearStyle = menuAppearStyle
-	config.values.mainBgImageUrl = mainBgImageUrl
+config.values.mainBgImageUrl = mainBgImageUrl
+	config.values.useDevicePaths = useDevicePaths
 	config.values.clickSoundPath = clickSoundPath
 	config.values.toggleSoundPath = toggleSoundPath
 	config.values.startupSoundPath = startupSoundPath
@@ -2079,10 +2102,12 @@ function resolveSoundAsset(filePath)
 		function(p) if getcustomasset then return getcustomasset(p) end end,
 		function(p) if getsynasset then return getsynasset(p) end end,
 	}
-	for _, fn in ipairs(funcs) do
-		local ok, result = pcall(fn, filePath)
-		if ok and result then
-			return result
+	for _, cand in ipairs(assetPathCandidates(filePath)) do
+		for _, fn in ipairs(funcs) do
+			local ok, result = pcall(fn, cand)
+			if ok and result then
+				return result
+			end
 		end
 	end
 	return filePath
@@ -2136,6 +2161,7 @@ if loadedConfig and loadedConfig.values then
 	if c.roundStartSoundPath ~= nil then roundStartSoundPath = c.roundStartSoundPath end
 	if c.voteStartSoundPath ~= nil then voteStartSoundPath = c.voteStartSoundPath end
 	if c.explicitlyClearedSoundPaths ~= nil then explicitlyClearedSoundPaths = c.explicitlyClearedSoundPaths end
+	if c.useDevicePaths ~= nil then useDevicePaths = c.useDevicePaths end
 	if c.fakeKnifeSlot ~= nil then fakeKnifeSlot = c.fakeKnifeSlot end
 end
 
@@ -4182,7 +4208,7 @@ markSoundPath = ""
 unmarkSoundPath = ""
 roundStartSoundPath = ""
 voteStartSoundPath = ""
-explicitlyClearedSoundPaths = {}
+if explicitlyClearedSoundPaths == nil then explicitlyClearedSoundPaths = {} end
 notifyOnVoteStart = false
 voteNotifLastState = false
 sheriffDieSoundFiles = {}
@@ -4744,10 +4770,12 @@ local function resolveImageAsset(filePath)
 		function(p) if getcustomasset then return getcustomasset(p) end end,
 		function(p) if getsynasset then return getsynasset(p) end end,
 	}
-	for _, fn in ipairs(funcs) do
-		local ok, result = pcall(fn, filePath)
-		if ok and result then
-			return result
+	for _, cand in ipairs(assetPathCandidates(filePath)) do
+		for _, fn in ipairs(funcs) do
+			local ok, result = pcall(fn, cand)
+			if ok and result then
+				return result
+			end
 		end
 	end
 	return nil
@@ -4835,6 +4863,10 @@ task.defer(function()
 	roundStartSoundFiles = findRoundStartSoundFiles()
 	voteStartSoundFiles = findVoteStartSoundFiles()
 	bgImageFiles = findBgFiles()
+	-- In device-path mode we skip local auto-detect entirely: the user is pointing
+	-- at full absolute paths, and scanning the workspace-relative folders would
+	-- only produce relative entries / could override cleared values.
+	if not useDevicePaths then
 	-- Auto-detect local image if no URL configured
 	if mainBgImageUrl == "" and #bgImageFiles > 0 then
 		mainBgImageUrl = bgImageFiles[1]
@@ -4892,6 +4924,7 @@ task.defer(function()
 	if voteStartSoundPath == "" and not explicitlyClearedSoundPaths.voteStartSoundPath and #voteStartSoundFiles > 0 then
 		voteStartSoundPath = voteStartSoundFiles[1]
 	end
+	end -- not useDevicePaths
 end)
 
 task.spawn(function()
@@ -7895,21 +7928,29 @@ task.spawn(function()
 		for _, watchName in ipairs(watchNamesM) do
 			if curMurderer == watchName and not watchRoleTrackedMurderers[watchName] and not watchRoleLoopingSheriff then
 				watchRoleTrackedMurderers[watchName] = true
-				notify("Watch Role", watchName .. " became Murderer — loop resetting Sheriff!", 3)
+				notify("Watch Role", watchName .. " became Murderer — resetting Sheriff!", 3)
 				watchRoleLoopingSheriff = true
 				task.spawn(function()
-					while watchRoleLoopingSheriff do
-						executeNanFlingByRole("Sheriff")
-						for _waitI = 1, 5 do
-							task.wait(0.5)
-							if not watchRoleIsTargetAlive("Sheriff") and not watchRoleIsTargetAlive("Hero") then
-								watchRoleLoopingSheriff = false
-								notify("Watch Role", "Sheriff/Hero is dead — stopped", 2)
-								break
-							end
-						end
-						if not watchRoleLoopingSheriff then break end
+					-- Force Touch Fling ON before resetting so the target flings and
+					-- the reset actually lands, then run 2 reset attempts 1.5s apart.
+					hiddenfling = true
+					setToggleState(touchFlingButton, true, "Touch Fling: ON", "Touch Fling: OFF")
+					setExtractedBtnState("Touch Fling", true)
+					if not flingThread or coroutine.status(flingThread) == "dead" then
+						flingThread = coroutine.create(fling)
+						coroutine.resume(flingThread)
 					end
+					local watchAttempts = 2
+					for _ri = 1, watchAttempts do
+						pcall(executeNanFlingByRole, "Sheriff")
+						if _ri < watchAttempts then task.wait(1.5) end
+					end
+					-- Touch Fling OFF after the sequence
+					task.wait(1.5)
+					hiddenfling = false
+					setToggleState(touchFlingButton, false, "Touch Fling: ON", "Touch Fling: OFF")
+					setExtractedBtnState("Touch Fling", false)
+					watchRoleLoopingSheriff = false
 				end)
 			end
 		end
@@ -7921,21 +7962,29 @@ task.spawn(function()
 		for _, watchName in ipairs(watchNamesS) do
 			if curSheriff == watchName and not watchRoleTrackedSheriffs[watchName] and not watchRoleLoopingMurderer then
 				watchRoleTrackedSheriffs[watchName] = true
-				notify("Watch Role", watchName .. " became Sheriff — loop resetting Murderer!", 3)
+				notify("Watch Role", watchName .. " became Sheriff — resetting Murderer!", 3)
 				watchRoleLoopingMurderer = true
 				task.spawn(function()
-					while watchRoleLoopingMurderer do
-						executeNanFlingByRole("Murderer")
-						for _waitI = 1, 5 do
-							task.wait(0.5)
-							if not watchRoleIsTargetAlive("Murderer") then
-								watchRoleLoopingMurderer = false
-								notify("Watch Role", "Murderer is dead — stopped", 2)
-								break
-							end
-						end
-						if not watchRoleLoopingMurderer then break end
+					-- Force Touch Fling ON before resetting, then run 2 reset
+					-- attempts 1.5s apart.
+					hiddenfling = true
+					setToggleState(touchFlingButton, true, "Touch Fling: ON", "Touch Fling: OFF")
+					setExtractedBtnState("Touch Fling", true)
+					if not flingThread or coroutine.status(flingThread) == "dead" then
+						flingThread = coroutine.create(fling)
+						coroutine.resume(flingThread)
 					end
+					local watchAttempts = 2
+					for _ri = 1, watchAttempts do
+						pcall(executeNanFlingByRole, "Murderer")
+						if _ri < watchAttempts then task.wait(1.5) end
+					end
+					-- Touch Fling OFF after the sequence
+					task.wait(1.5)
+					hiddenfling = false
+					setToggleState(touchFlingButton, false, "Touch Fling: ON", "Touch Fling: OFF")
+					setExtractedBtnState("Touch Fling", false)
+					watchRoleLoopingMurderer = false
 				end)
 			end
 		end
@@ -9887,14 +9936,14 @@ function enableShaders()
 		if origSky then shadersLightingState.Sky = origSky:Clone() end
 		shadersLightingSaved = true
 	end
-	local bloom = Instance.new("BloomEffect"); bloom.Intensity = 0.02; bloom.Threshold = 0; bloom.Size = 100; bloom.Parent = Lighting
+	local bloom = Instance.new("BloomEffect"); bloom.Name = "ShadersBloom"; bloom.Intensity = 0.02; bloom.Threshold = 0; bloom.Size = 100; bloom.Parent = Lighting
 	table.insert(shadersInstances, bloom)
 	local sky = Instance.new("Sky"); sky.Name = "ShadersSky"; sky.SkyboxUp = "http://www.roblox.com/asset/?id=169210149"; sky.SkyboxLf = "http://www.roblox.com/asset/?id=169210133"; sky.SkyboxBk = "http://www.roblox.com/asset/?id=169210090"; sky.SkyboxFt = "http://www.roblox.com/asset/?id=169210121"; sky.StarCount = 100; sky.SkyboxDn = "http://www.roblox.com/asset/?id=169210108"; sky.SkyboxRt = "http://www.roblox.com/asset/?id=169210143"; sky.Parent = bloom
-	local cc1 = Instance.new("ColorCorrectionEffect"); cc1.Saturation = 0.05; cc1.TintColor = Color3.fromRGB(255, 224, 219); cc1.Parent = Lighting
+	local cc1 = Instance.new("ColorCorrectionEffect"); cc1.Name = "ShadersCC1"; cc1.Saturation = 0.05; cc1.TintColor = Color3.fromRGB(255, 224, 219); cc1.Parent = Lighting
 	table.insert(shadersInstances, cc1)
 	local cc2 = Instance.new("ColorCorrectionEffect"); cc2.Name = "ShadersNormal"; cc2.Enabled = false; cc2.Saturation = -0.2; cc2.TintColor = Color3.fromRGB(255, 232, 215); cc2.Parent = Lighting
 	table.insert(shadersInstances, cc2)
-	local sun = Instance.new("SunRaysEffect"); sun.Intensity = 0.01; sun.Parent = Lighting
+	local sun = Instance.new("SunRaysEffect"); sun.Name = "ShadersSun"; sun.Intensity = 0.01; sun.Parent = Lighting
 	table.insert(shadersInstances, sun)
 	local cc3 = Instance.new("ColorCorrectionEffect"); cc3.Name = "ShadersTakayama"; cc3.Enabled = false; cc3.Saturation = -0.3; cc3.Contrast = 0.1; cc3.TintColor = Color3.fromRGB(235, 214, 204); cc3.Parent = Lighting
 	table.insert(shadersInstances, cc3)
@@ -9905,6 +9954,18 @@ function disableShaders()
 	shadersEnabled = false
 	for _, obj in ipairs(shadersInstances) do pcall(function() obj:Destroy() end) end
 	shadersInstances = {}
+	-- Defensive cleanup: destroy any remaining shader effects we may have created
+	-- (covers an edge case where an effect didn't end up in shadersInstances). The
+	-- "Shaders" name prefix lets us find our own effects without touching any the
+	-- game itself created (e.g. a BlurEffect from the "Blur Reveal" menu style).
+	pcall(function()
+		local Lighting = game:GetService("Lighting")
+		for _, child in ipairs(Lighting:GetChildren()) do
+			if child:IsA("BloomEffect") or child:IsA("ColorCorrectionEffect") or child:IsA("SunRaysEffect") then
+				if child.Name:sub(1, 6) == "Shaders" then pcall(function() child:Destroy() end) end
+			end
+		end
+	end)
 	-- Restore the ORIGINAL lighting. Destroying the effects does NOT revert the
 	-- Lighting properties the shaders changed, which left the scene tinted/dark
 	-- after disabling — so every saved value is written back exactly.
@@ -9933,6 +9994,7 @@ btn.shadersBtn = createButton("ShadersButton", "Shaders: OFF", 119.5)
 btn.shadersBtn.MouseButton1Click:Connect(function()
 	if shadersEnabled then disableShaders() else enableShaders() end
 	setToggleState(btn.shadersBtn, shadersEnabled, "Shaders: ON", "Shaders: OFF")
+	saveConfig()
 end)
 
 -- Auto Delete Corpses
@@ -10108,6 +10170,7 @@ gameNotifLastRound = ""
 gameNotifPrevRoles = nil
 gameNotifPrevMurdererAlive = true
 gameNotifPrevMurdererName = nil
+gameNotifOutcomeHandled = nil
 gameNotifGunDrops = {}
 gameNotifGunDropPos = {}
 gameNotifActiveNotifs = {}
@@ -10616,11 +10679,17 @@ task.spawn(function()
 					-- (a death keeps them around as a spectator, so the live Player
 					-- object is what separates "left" from "killed" mid-round).
 					if not murdererPlayer then
-						gameNotifSend("Murderer Left", currentMurderer .. " left the game!", Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 255, 255))
-						playSoundFile(murdererLeftSoundPath)
+						if gameNotifOutcomeHandled ~= currentMurderer then
+							gameNotifOutcomeHandled = currentMurderer
+							gameNotifSend("Murderer Left", currentMurderer .. " left the game!", Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 255, 255))
+							playSoundFile(murdererLeftSoundPath)
+						end
 					else
-						gameNotifSend("Murderer Died", currentMurderer .. " has been killed!", Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 255, 255), murdererPlayer, murdererUserId)
-						playSoundFile(murdererDieSoundPath)
+						if gameNotifOutcomeHandled ~= currentMurderer then
+							gameNotifOutcomeHandled = currentMurderer
+							gameNotifSend("Murderer Died", currentMurderer .. " has been killed!", Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 255, 255), murdererPlayer, murdererUserId)
+							playSoundFile(murdererDieSoundPath)
+						end
 					end
 				end
 				gameNotifPrevMurdererAlive = isAliveNow
@@ -10635,14 +10704,32 @@ task.spawn(function()
 				and gameNotifPrevMurdererName ~= currentMurderer
 				and not Players:FindFirstChild(gameNotifPrevMurdererName) then
 				local leftName = gameNotifPrevMurdererName
-				gameNotifSend("Murderer Left", leftName .. " left the game!", Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 255, 255), nil, nil)
-				playSoundFile(murdererLeftSoundPath)
+				if gameNotifOutcomeHandled ~= leftName then
+					gameNotifOutcomeHandled = leftName
+					gameNotifSend("Murderer Left", leftName .. " left the game!", Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 255, 255), nil, nil)
+					playSoundFile(murdererLeftSoundPath)
+				end
 				gameNotifPrevMurdererAlive = false
 			end
 			gameNotifPrevMurdererName = currentMurderer
 
 			gameNotifPrevRoles = result
 		end
+	end
+end)
+
+-- Instant murderer-leave detection: fires the moment a player who was the
+-- current murderer leaves the server, without waiting for the round to end.
+Players.PlayerRemoving:Connect(function(plr)
+	if not gameNotifEnabled then return end
+	local name = plr.Name
+	if gameNotifPrevMurdererName and gameNotifPrevMurdererName == name and gameNotifPrevMurdererAlive then
+		if gameNotifOutcomeHandled ~= name then
+			gameNotifOutcomeHandled = name
+			gameNotifSend("Murderer Left", name .. " left the game!", Color3.fromRGB(255, 0, 0), Color3.fromRGB(255, 255, 255), nil, nil)
+			playSoundFile(murdererLeftSoundPath)
+		end
+		gameNotifPrevMurdererAlive = false
 	end
 end)
 
@@ -10751,76 +10838,51 @@ end)
 local pickedByName = nil
 				local pickedByUserId = nil
 
-				-- POSITION-BASED (primary): the picker is the ALIVE player whose
-				-- HumanoidRootPart was nearest to where the GunDrop last stood when it
-				-- vanished. The tool-replication scan below is unreliable right after a
-				-- pick-up (the "Gun" tool may not yet be visible in the target's hand /
-				-- Backpack on our client), which is why the GunDrop position — which we
-				-- know precisely and updated every tick while it existed — is the most
-				-- robust source of "who took it".
-				if lastPos then
-					local bestName, bestUserId = nil, nil
-					local bestDist = math.huge
-					for _, p in ipairs(Players:GetPlayers()) do
-						if p ~= player then
-							local pChar = p.Character
-							local pHum = pChar and pChar:FindFirstChildOfClass("Humanoid")
-							local pRoot = pChar and pChar:FindFirstChild("HumanoidRootPart")
-							if pChar and pHum and pHum.Health > 0 and pRoot then
-								local d = (pRoot.Position - lastPos).Magnitude
-								if d < bestDist then
-									bestDist = d
-									bestName = p.Name
-									bestUserId = p.UserId
-								end
-							end
-						end
-					end
-					if bestName then
-						pickedByName = bestName
-						pickedByUserId = bestUserId
-					end
-				end
-
-				-- TOOL-BASED: confirm/adjust via the physical Gun tool. A GunDrop just
-				-- disappeared because someone is holding the real "Gun" tool NOW (in arm
-				-- or Backpack). Only ALIVE characters count, so a dead hero's corpse or
-				-- a tool left in a dead player's Backpack is never the picker. This beats
-				-- server role flags, which can STILL report a dead hero that respawned
-				-- into a fresh alive body (their stale "HasGun" flag lingers one tick).
-				-- The tool replication + server role flag can lag a moment after the
-				-- pickup, so retry a few times before giving up on the picker's name.
+				-- WHO PICKED IT UP (authoritative = the real "Gun" tool). The ONLY
+				-- proof that the gun was actually taken is that some ALIVE player now
+				-- holds the physical "Gun" tool (in arm or Backpack), or the server
+				-- flags them as the gun holder. Position has NO vote — it just guesses
+				-- whoever happened to stand near the drop and was frequently wrong, so
+				-- the pickup name was unreliable. We scan A LOT because tool/role
+				-- replication can lag a few hundred ms after a genuine pickup and the
+				-- tracker loop runs every 0.5s — giving up too early produced the
+				-- generic "someone picked up the gun" message for two different reasons
+				-- (slow replication vs. nobody at all). These two are now told apart
+				-- below by whether any holder is ever observed.
+				local foundHolderPlayer = nil
 				local attempts = 0
-				local maxAttempts = 4
-				repeat
+				local maxAttempts = 10
+				while attempts < maxAttempts do
 					attempts = attempts + 1
+					-- Tool scan: an alive player holding the "Gun" tool is the picker.
 					for _, p in ipairs(Players:GetPlayers()) do
 						local char = p.Character
 						local hum = char and char:FindFirstChildOfClass("Humanoid")
 						if char and hum and hum.Health > 0 then
-							local found = false
+							local hasTool = false
 							for _, tool in ipairs(char:GetChildren()) do
-								if tool:IsA("Tool") and tool.Name:lower():find("gun") then found = true; break end
+								if tool:IsA("Tool") and tool.Name:lower():find("gun") then hasTool = true; break end
 							end
-							if not found then
+							if not hasTool then
 								local backpack = p:FindFirstChild("Backpack")
 								if backpack then
 									for _, tool in ipairs(backpack:GetChildren()) do
-										if tool:IsA("Tool") and tool.Name:lower():find("gun") then found = true; break end
+										if tool:IsA("Tool") and tool.Name:lower():find("gun") then hasTool = true; break end
 									end
 								end
 							end
-							if found then
-								pickedByName = p.Name
-								pickedByUserId = p.UserId
-								break
-							end
+							if hasTool then foundHolderPlayer = p; break end
 						end
 					end
-
-					-- FALLBACK: server-authoritative role flag (whoever is flagged as the
-					-- gun holder NOW). Only a LIVE character is accepted as the new holder.
-					if not pickedByName then
+					if foundHolderPlayer then
+						pickedByName = foundHolderPlayer.Name
+						pickedByUserId = foundHolderPlayer.UserId
+						break
+					end
+					-- Role-flag fallback: only consulted once in a while (it is a remote
+					-- call), and only for a LIVE non-murderer so a stale dead hero is
+					-- never mistaken for the picker.
+					if attempts % 3 == 0 then
 						local okRoles, rolesNow = pcall(function()
 							return invokePlayerData()
 						end)
@@ -10831,6 +10893,7 @@ local pickedByName = nil
 									local char = p.Character
 									local hum = char and char:FindFirstChildOfClass("Humanoid")
 									if char and hum and hum.Health > 0 then
+										foundHolderPlayer = p
 										pickedByName = p.Name
 										pickedByUserId = p.UserId
 										break
@@ -10839,10 +10902,9 @@ local pickedByName = nil
 							end
 						end
 					end
-					if not pickedByName and attempts < maxAttempts then
-						task.wait(0.4)
-					end
-				until pickedByName or attempts >= maxAttempts
+					if foundHolderPlayer then break end
+					task.wait(0.2)
+				end
 
 				if pickedByName then
 					local pickedByPlayer = nil
@@ -10875,7 +10937,52 @@ local pickedByName = nil
 						gameNotifSend("Gun Picked Up", pickedByName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
 					end
 				else
-					gameNotifSend("Gun Picked Up", "Someone picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+					-- After ~2s of scanning no ALIVE player holds the "Gun" tool and
+					-- no live server role flag names a holder. This means two very
+					-- different things, and we must tell them apart:
+					--   (A) The round ended and the gun simply vanished / reset  -> nobody.
+					--   (B) Someone picked it up but was killed INSTANTLY (e.g. the
+					--       hero grabbed the gun and got auto-killed a moment later,
+					--       as with Auto Kill Sheriff/Hero). By the time we scan, that
+					--       holder is no longer alive, but the round is STILL going, so
+					--       it WAS picked up -> we should still name the picker.
+					-- Distinguish (B) by checking whether the round is still active
+					-- (a Murderer/Sheriff role still exists). If so, fall back to the
+					-- position-based guess: whoever is nearest to where the gun last
+					-- stood is almost certainly the one who grabbed it and died.
+					local roundActive = false
+					pcall(function()
+						local r = getPlayerDataRemote()
+						if r then
+							local res = invokePlayerData()
+							if res then
+								for _, d in pairs(res) do
+									if d.Role == "Murderer" or d.Role == "Sheriff" then roundActive = true; break end
+								end
+							end
+						end
+					end)
+					if roundActive and lastPos then
+						local bestName, bestDist = nil, math.huge
+						for _, p in ipairs(Players:GetPlayers()) do
+							local pChar = p.Character
+							local pRoot = pChar and pChar:FindFirstChild("HumanoidRootPart")
+							if pRoot then
+								local d = (pRoot.Position - lastPos).Magnitude
+								if d < bestDist then
+									bestDist = d
+									bestName = p.Name
+								end
+							end
+						end
+						if bestName then
+							gameNotifSend("Gun Picked Up", bestName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+						else
+							gameNotifSend("Gun Picked Up", "No one picked up the gun — it disappeared.", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+						end
+					else
+						gameNotifSend("Gun Picked Up", "No one picked up the gun — it disappeared.", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+					end
 				end
 			end
 		end
@@ -11289,7 +11396,7 @@ AIM_CONFIG = {
 	shotsPerClick      = 1,                -- the gun fires ONE real bullet per shot; extra FireServer calls never spawn more bullets
 	shotSpacing        = 0.0,
 	wallbangOriginDist = 0.6,              -- very close origin = almost guaranteed piercer hit
-	autoShotCooldown   = 0.35,             -- min seconds between Auto Shot bursts (0.0 spammed 300+ remotes/sec and lagged the game)
+	autoShotCooldown   = 0.15,             -- min seconds between Auto Shot button-presses (fast enough for an instant kill, slow enough to avoid flooding the network)
 	autoShotBurst      = 1,                -- one real bullet per auto attempt too
 	scatterRadius      = 0.35,             -- scatter radius around the full-lead point (covers strafe direction changes)
 	scatterShots       = 2,
@@ -11909,13 +12016,32 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end)
 end)
 
--- Auto Shot loop: on gun pickup fires ONE instant full burst, then keeps firing
--- rate-limited bursts (autoShotCooldown between them, autoShotBurst shots each).
--- The old version fired a full 6-shot burst EVERY heartbeat (~300-400 FireServer
--- calls per second) which flooded the network queue and lagged the whole game.
+-- Auto Shot loop: uses the SAME technique as the Autofarm end-of-farm shot —
+-- predicted fire + unequip (aimFireGunAtOriginal does the full ping-prediction
+-- and fires the remote with NO waiting; all the extra latency lives only in the
+-- aimFireGunAt wrapper's stable-velocity flick/spin preamble, which we skip).
+-- On gun pickup it fires INSTANTLY (bypassing the cooldown) and then keeps
+-- spamming at autoShotCooldown so a miss (e.g. role cache still empty) retries
+-- on the very next heartbeat — no delay between grabbing the gun and shooting.
 local aimHadGunLast = false
-local aimLastRoleRefresh = 0
 local aimLastAutoShotAt = 0
+local function aimAutoShootFire(murderer)
+	-- Use the same shooting technique as the Autofarm tab (aimFireGunAt: velocity
+	-- priming + stable-read + full ping prediction), so the one auto-shot bullet
+	-- is as accurate as a farmed shot — but fire it the instant the gun appears,
+	-- with no pre-shot delay or cooldown before the first shot.
+	pcall(aimFireGunAt, murderer, AIM_CONFIG.autoShotBurst)
+	pcall(aimUnequipGun)
+end
+local function aimAutoShootSpam()
+	local char = player.Character
+	local bp = player:FindFirstChild("Backpack")
+	if not (char and (char:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")))) then return end
+	local murderer = aimFindMurderer() or aimFindNearestPlayer()
+	if not (murderer and murderer ~= player and murderer.Character) then return end
+	if not aimMurdererAlive(murderer) then return end
+	aimAutoShootFire(murderer)
+end
 task.spawn(function()
 	while true do
 		RunService.Heartbeat:Wait()
@@ -11924,47 +12050,17 @@ task.spawn(function()
 			local char = player.Character
 			local bp = player:FindFirstChild("Backpack")
 			local hasGun = (char and (char:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")))) and true or false
+			local now = os.clock()
 			if hasGun and not aimHadGunLast then
-				-- Gun just appeared: fire INSTANTLY with zero added latency.
-				-- No blocking role InvokeServer, no velocity-stability wait — go
-				-- straight to the raw single-bullet shot so the trigger matches the
-				-- frame the gun spawned. Role refresh is deferred async so the next
-				-- (rate-limited) burst still benefits from fresh data.
-				local m = aimFindMurderer()
-				if not (m and m ~= player and aimMurdererAlive(m)) then
-					-- Fresh gun but no cached role yet: pull the roles ONCE right
-					-- now so we can fire in this same frame instead of waiting for
-					-- the rate-limited branch (which would add a full cooldown).
-					pcall(aimRefreshRoleNow)
-					m = aimFindMurderer()
-				else
-					task.spawn(function() pcall(aimRefreshRoleNow) end)
-				end
-				if m and m ~= player and aimMurdererAlive(m) then
-					aimLastAutoShotAt = os.clock()
-					pcall(aimFireGunAtOriginal, m, AIM_CONFIG.autoShotBurst)
-				end
+				-- Gun just appeared: fire INSTANTLY, bypassing the cooldown.
+				aimLastAutoShotAt = now
+				aimAutoShootSpam()
 			end
 			aimHadGunLast = hasGun
 			if not hasGun then return end
-			local now = os.clock()
-			-- Rate limit: skip this heartbeat entirely while on cooldown (also skips
-			-- the murderer lookup, keeping the loop nearly free between bursts)
 			if (now - aimLastAutoShotAt) < (AIM_CONFIG.autoShotCooldown or 0.35) then return end
-			local murderer = aimFindMurderer()
-			if not murderer and (now - aimLastRoleRefresh) > 0.08 then
-				aimLastRoleRefresh = now
-				aimRefreshRoleNow()
-				murderer = aimFindMurderer()
-			end
-			if murderer and murderer ~= player and aimMurdererAlive(murderer) then
-				aimLastAutoShotAt = now
-				-- Fire with zero added latency (no stable-velocity hold): the
-				-- standalone Auto Shoot Murderer must respond instantly. The
-				-- configurable autofarmShootDelay only applies inside the
-				-- autofarm path and never affects this loop.
-				pcall(aimFireGunAtOriginal, murderer, AIM_CONFIG.autoShotBurst)
-			end
+			aimLastAutoShotAt = now
+			aimAutoShootSpam()
 		end)
 	end
 end)
@@ -15127,6 +15223,18 @@ autofarmLieCF = CFrame.Angles(math.rad(90), 0, 0)
 -- (much harder to be killed), staying as close to the coins as possible while
 -- never rising up onto them — Coin Aura pulls them in as we pass by.
 autofarmUnderFloorDepth = 1.25     -- how far below the floor surface we fly (studs) — hugs the floor, closer to the coins
+-- When Coin Aura is ON we fly closer to the coin (shallower under-floor depth,
+-- just a bit below the coin's hitbox). Keeps the character under the map (hard
+-- to be killed) while letting a small aura radius (1-2) reach the coin over the
+-- short vertical gap — a deep under-floor route would leave the coin ~1.75 studs
+-- away, out of reach for a 1-2 radius aura.
+autofarmAuraUnderFloorDepth = 0.4
+-- Fly to the next coin well BEFORE the aura radius is reached. If it were close
+-- to coinAuraRadius the retarget effectively waits for the aura to grab the coin
+-- (felt like stopping). A value clearly SMALLER than the aura means the character
+-- turns to the next coin well before the aura finishes this one — continuous
+-- movement, no pause. Keep it below coinAuraRadius.
+autofarmAuraRetargetDist = 0.8
 autofarmAscendDist = 1             -- horizontal distance at which we start rising to the coin
 autofarmAscentMultiplier = 1       -- DEPRECATED: the 3x ascent boost caused speed spikes ("jerks") when climbing to higher coins — flight now moves at ONE constant speed in all directions
 -- Coins currently being pulled in by Coin Aura: [coin] = os.clock() when we flew
@@ -16000,7 +16108,11 @@ function startAutofarm()
 						-- collects), but the full-body volley over all ~15 parts is now
 						-- throttled to every 0.15s per coin — the old every-frame volley
 						-- was 30+ firetouchinterest pcalls per frame, another hitch source.
-						if dist <= autofarmPickupRange then
+						-- Stop-to-hold only applies when Coin Aura is OFF. With Coin Aura
+						-- ON we rely on the fly-through block below (which claims the coin,
+						-- marks it pending and immediately retargets the NEXT coin) — so
+						-- the flight never pauses at a coin to collect it.
+						if (not coinAuraEnabled) and dist <= autofarmPickupRange then
 							safeFireTouch(part, hrp)
 							if not autofarmFullTouchAt[coin] or (os.clock() - autofarmFullTouchAt[coin]) >= 0.15 then
 								autofarmFullTouchAt[coin] = os.clock()
@@ -16016,27 +16128,45 @@ function startAutofarm()
 							autofarmClaimCoin(coin)
 						end
 
-						-- Coin Aura fly-through: the aura pulls coins in from up to
-						-- coinAuraRadius studs away, so there is NO reason to stop at
-						-- (or rise onto) this coin. Claim it, mark it pending and
-						-- immediately retarget the NEXT coin — the flight continues
-						-- without any pause while the aura finishes the pickup.
-						if coinAuraEnabled and dist <= coinAuraRadius then
+						-- Coin Aura fly-through: touch the coin as soon as we're within pickup
+						-- range, then IMMEDIATELY fly on to the next coin the moment our
+						-- distance to this one drops to autofarmAuraRetargetDist (1.4)
+						-- — slightly BELOW the aura radius, so we never appear to wait
+						-- for the aura to grab the coin; we're already moving to the
+						-- next one before the aura finishes this pickup. The threshold
+						-- is the small retarget distance (not the big pickup range), so
+						-- we don't turn away too early, and collection stays tied to
+						-- how close we physically fly (no far mass-teleport that used
+						-- to trigger the "collecting too fast" anti-cheat kick).
+						if coinAuraEnabled and dist <= autofarmPickupRange then
 							safeFireTouch(part, hrp)
 							autofarmTouchedAt[coin] = os.clock()
 							autofarmClaimCoin(coin)
-							autofarmAuraPending[coin] = os.clock()
-							local nextCoin, nextPart, nextDist = autofarmNearestCoin(container, hrp.Position)
-							if nextCoin then
-								coin, part, dist = nextCoin, nextPart, nextDist
+							if dist <= autofarmAuraRetargetDist then
+								autofarmAuraPending[coin] = os.clock()
+								local nextCoin, nextPart, nextDist = autofarmNearestCoin(container, hrp.Position)
+								if nextCoin then
+									coin, part, dist = nextCoin, nextPart, nextDist
+								end
 							end
 						end
 
 						-- Route: fly UNDER the floor whenever one exists below the coin
 						-- (harder to be killed), stay directly beneath the coin.
-						-- When Coin Aura is enabled, stay under the floor and let it
-						-- pull coins to you. When Coin Aura is off, rise to collect.
+						-- When Coin Aura is OFF, stay just under the floor below the
+						-- coin (harder to be killed) and rise only when there is no
+						-- floor. When Coin Aura is ON we still fly under the floor, but at a
+						-- shallower depth (autofarmAuraUnderFloorDepth) so the coin is
+						-- only a short vertical gap away and a small aura radius (1-2)
+						-- grabs it. This keeps the character hidden under the map while
+						-- collecting — flying right up onto the coin exposed you to
+						-- getting killed. When Coin Aura is OFF, use the deeper/deeper
+						-- is fine: the character rises to collect.
 						local target
+						local underFloorDepth = autofarmUnderFloorDepth
+						if coinAuraEnabled then
+							underFloorDepth = autofarmAuraUnderFloorDepth
+						end
 						autofarmFloorRayParams.FilterDescendantsInstances = {char, container}
 						local floorHit = Workspace:Raycast(
 							part.Position - Vector3.new(0, 0.5, 0),
@@ -16045,7 +16175,7 @@ function startAutofarm()
 						)
 						if floorHit then
 							-- Always stay beneath the floor, close to the coin's XZ position
-							target = Vector3.new(part.Position.X, floorHit.Position.Y - autofarmUnderFloorDepth, part.Position.Z)
+							target = Vector3.new(part.Position.X, floorHit.Position.Y - underFloorDepth, part.Position.Z)
 						else
 							-- No floor below: approach from slightly below
 							target = part.Position - Vector3.new(0, 2, 0)
@@ -17557,6 +17687,7 @@ animAddName.Size = UDim2.new(1, -290, 1, 0)
 animAddName.Position = UDim2.new(0, 0, 0, 0)
 animAddName.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 animAddName.TextColor3 = Color3.fromRGB(255, 255, 255)
+animAddName.Text = ""
 animAddName.PlaceholderText = "Name (optional)"
 animAddName.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
 animAddName.Font = Enum.Font.SourceSansBold
@@ -17571,6 +17702,7 @@ animAddId.Size = UDim2.new(0, 140, 1, 0)
 animAddId.Position = UDim2.new(1, -280, 0, 0)
 animAddId.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 animAddId.TextColor3 = Color3.fromRGB(255, 255, 255)
+animAddId.Text = ""
 animAddId.PlaceholderText = "Animation ID"
 animAddId.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
 animAddId.Font = Enum.Font.SourceSansBold
@@ -17939,6 +18071,7 @@ custName.Name = "CustomAnimName"
 custName.Size = UDim2.new(1, -90, 1, 0)
 custName.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 custName.TextColor3 = Color3.fromRGB(255, 255, 255)
+custName.Text = ""
 custName.PlaceholderText = "Custom animation name"
 custName.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
 custName.Font = Enum.Font.SourceSansBold
@@ -17968,6 +18101,7 @@ for i = 1, #customSlotDefs do
 	box.Size = UDim2.new(1, -8, 0, 42)
 	box.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	box.TextColor3 = Color3.fromRGB(255, 255, 255)
+	box.Text = ""
 	box.PlaceholderText = label
 	box.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
 	box.Font = Enum.Font.SourceSansBold
@@ -23106,6 +23240,32 @@ menuAppearArrowR.MouseButton1Click:Connect(function()
 	clampMenuAppearOffset()
 end)
 
+-- ============== Use Device Paths ==============
+local useDevicePathsButton = Instance.new("TextButton")
+useDevicePathsButton.Name = "UseDevicePathsButton"
+useDevicePathsButton.Size = UDim2.new(1, 0, 0, 42)
+useDevicePathsButton.BackgroundColor3 = btnBgColor
+useDevicePathsButton.TextColor3 = btnTextColor
+useDevicePathsButton.Text = useDevicePaths and "Use Device Paths: ON" or "Use Device Paths: OFF"
+useDevicePathsButton.Font = Enum.Font.SourceSansBold
+useDevicePathsButton.TextScaled = true
+useDevicePathsButton.AutoButtonColor = true
+useDevicePathsButton.ClipsDescendants = true
+useDevicePathsButton.LayoutOrder = 715
+useDevicePathsButton.Parent = categoryFrames["Settings"]
+local useDevicePathsBtnCorner = Instance.new("UICorner")
+useDevicePathsBtnCorner.CornerRadius = UDim.new(0, 6)
+useDevicePathsBtnCorner.Parent = useDevicePathsButton
+local useDevicePathsTSC = Instance.new("UITextSizeConstraint")
+useDevicePathsTSC.MaxTextSize = 17
+useDevicePathsTSC.MinTextSize = 9
+useDevicePathsTSC.Parent = useDevicePathsButton
+useDevicePathsButton.MouseButton1Click:Connect(function()
+	useDevicePaths = not useDevicePaths
+	useDevicePathsButton.Text = useDevicePaths and "Use Device Paths: ON" or "Use Device Paths: OFF"
+	saveConfig()
+end)
+
 -- ============== Background Image ==============
 bgImageRow = Instance.new("Frame")
 bgImageRow.Size = UDim2.new(1, 0, 0, 42)
@@ -24414,7 +24574,8 @@ function buildConfigData()
 	config.values.customFov = customFov; config.values.animationEnabled = animationEnabled
 	config.values.btnPressAnimationEnabled = btnPressAnimationEnabled; config.values.animationStyle = animationStyle
 	config.values.loadingAnimStyle = loadingAnimStyle; config.values.menuAppearStyle = menuAppearStyle; config.values.loadingScreenTime = loadingScreenTime
-	config.values.mainBgImageUrl = mainBgImageUrl; config.values.clickSoundPath = clickSoundPath
+	config.values.mainBgImageUrl = mainBgImageUrl; config.values.useDevicePaths = useDevicePaths
+	config.values.clickSoundPath = clickSoundPath
 	config.values.toggleSoundPath = toggleSoundPath; config.values.startupSoundPath = startupSoundPath
 	config.values.sheriffDieSoundPath = sheriffDieSoundPath; config.values.murdererDieSoundPath = murdererDieSoundPath
 	config.values.murdererLeftSoundPath = murdererLeftSoundPath
@@ -24431,6 +24592,7 @@ config.values.explicitlyClearedSoundPaths = explicitlyClearedSoundPaths
 	config.values.autofarmCustomTargetEnabled = autofarmCustomTargetEnabled; config.values.autofarmCustomTarget = autofarmCustomTarget
 	config.values.autofarmTpModeIndex = autofarmTpModeIndex; config.values.autofarmTpEnabled = autofarmTpEnabled
 	config.values.autofarmPreTpModeIndex = autofarmPreTpModeIndex; config.values.autofarmPreTpEnabled = autofarmPreTpEnabled
+	config.values.autofarmAvoidMurdererModeIndex = autofarmAvoidMurdererModeIndex; config.values.autofarmAvoidMurdererDist = autofarmAvoidMurdererDist
 	config.values.autofarmResetDeathEnabled = autofarmResetDeathEnabled; config.values.autofarmWebhookIntervalMin = autofarmWebhookIntervalMin
 	config.values.autofarmResetDeathCount = autofarmResetDeathCount; config.values.autofarmResetDeathDelay = autofarmResetDeathDelay
 	config.values.autofarmPreTpDelay = autofarmPreTpDelay
@@ -26201,6 +26363,7 @@ function restoreFullConfig()
 		if c.values.loadingScreenTime ~= nil then loadingScreenTime = c.values.loadingScreenTime; if loadingTimeInput then loadingTimeInput.Text = tostring(loadingScreenTime) end end
 		if c.values.menuAppearStyle ~= nil then menuAppearStyle = c.values.menuAppearStyle end
 		if c.values.mainBgImageUrl ~= nil then mainBgImageUrl = c.values.mainBgImageUrl end
+		if c.values.useDevicePaths ~= nil then useDevicePaths = c.values.useDevicePaths end
 		if c.values.clickSoundPath ~= nil then clickSoundPath = c.values.clickSoundPath end
 		if c.values.toggleSoundPath ~= nil then toggleSoundPath = c.values.toggleSoundPath end
 		if c.values.startupSoundPath ~= nil then startupSoundPath = c.values.startupSoundPath end
@@ -26353,6 +26516,9 @@ function restoreFullConfig()
 		end
 		if bgImageInput then
 			bgImageInput.Text = mainBgImageUrl
+		end
+		if useDevicePathsButton then
+			useDevicePathsButton.Text = useDevicePaths and "Use Device Paths: ON" or "Use Device Paths: OFF"
 		end
 		if clickSoundInput then
 			clickSoundInput.Text = clickSoundPath
