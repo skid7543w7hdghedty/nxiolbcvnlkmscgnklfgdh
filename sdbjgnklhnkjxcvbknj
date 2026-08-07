@@ -256,7 +256,9 @@ function saveConfig()
 	config.toggles.loopSpeedEnabled = loopSpeedEnabled
 	config.toggles.customJumpPowerEnabled = customJumpPowerEnabled
 	config.toggles.antiAimMode = currentMode
-	config.toggles.gameNotifEnabled = gameNotifEnabled
+config.toggles.gameNotifEnabled = gameNotifEnabled
+	config.toggles.antiLagEnabled = antiLagEnabled
+	config.toggles.rendering3dEnabled = rendering3dEnabled
 	config.toggles.notifyOnExploiters = notifyOnExploiters
 	config.toggles.notifyOnTeamers = notifyOnTeamers
 	config.toggles.notifyOnScammers = notifyOnScammers
@@ -289,6 +291,7 @@ function saveConfig()
 	config.toggles.autofarmAutoKillSheriffEnabled = autofarmAutoKillSheriffEnabled
 	config.toggles.antiAfkEnabled = antiAfkEnabled
 	config.toggles.instantRoleNotifyEnabled = instantRoleNotifyEnabled
+	config.toggles.instantRolePerkNotifyEnabled = instantRolePerkNotifyEnabled
 	config.toggles.showRoundTimerEnabled = showRoundTimerEnabled
 	config.toggles.voteDupeMode = voteDupeMode
 
@@ -358,11 +361,16 @@ function saveConfig()
 	config.values.popupBtnHeight = popupBtnHeight
 	config.values.fpsPingBtnWidth = fpsPingBtnWidth
 	config.values.fpsPingBtnHeight = fpsPingBtnHeight
+	config.values.combatStatsBtnWidth = combatStatsBtnWidth
+	config.values.combatStatsBtnHeight = combatStatsBtnHeight
+	config.values.combatStatsTextSize = combatStatsTextSize
+	config.values.notifWidth = notifWidth
+	config.values.notifHeight = notifHeight
 	config.values.customFov = customFov
 	config.values.animationEnabled = animationEnabled
 	config.values.btnPressAnimationEnabled = btnPressAnimationEnabled
 	config.values.animationStyle = animationStyle
-	config.values.loadingAnimStyle = loadingAnimStyle
+config.values.loadingAnimStyle = loadingAnimStyle
 	config.values.loadingScreenTime = loadingScreenTime
 	config.values.menuAppearStyle = menuAppearStyle
 config.values.mainBgImageUrl = mainBgImageUrl
@@ -404,7 +412,8 @@ config.values.voteStartSoundPath = voteStartSoundPath
 config.values.autofarmAutoAntiShootDelay = autofarmAutoAntiShootDelay
 	config.values.autofarmCoinDelay = autofarmCoinDelay
 	config.values.autofarmShootDelay = autofarmShootDelay
-	config.values.autofarmStuckTimeout = autofarmStuckTimeout
+config.values.autofarmStuckTimeout = autofarmStuckTimeout
+	config.values.autofarmMode = autofarmMode
 	config.values.resetEveryoneInterval = resetEveryoneInterval
 	config.values.autoResetPlayerInterval = autoResetPlayerInterval
 	config.values.autoResetEveryoneInterval = autoResetEveryoneInterval
@@ -780,6 +789,17 @@ fakeDuckRandTimer = 0
 fakeDuckButton = nil
 fakeDuckAimInput = nil
 fakeDuckSpdInput = nil
+
+-- Anti-Lag variables: disables textures/particles/visual effects/parts/sky to
+-- boost FPS. Fully reversible — every change is recorded so toggling OFF restores
+-- the original state (textures, materials, sky, enabled flags, etc).
+antiLagEnabled = false
+antiLagRestoreList = {}   -- [instance] = {prop=name, value=original}
+antiLagApplied = {}       -- [instance] = true (already touched)
+antiLagNewConn = nil      -- DescendantAdded connection applied while enabled
+antiLagButton = nil
+rendering3dEnabled = true
+rendering3dButton = nil
 
 -- LoopSpeed variables
 loopSpeedEnabled = false
@@ -1378,25 +1398,22 @@ function tkaGetHandleTouched()
 	return ev and ev:FindFirstChild("HandleTouched")
 end
 
--- Kill the SINGLE closest alive player to the knife. Only that worst-case
--- nearest victim is hit — never "everyone the blade passed within range of".
--- prevPos -> curPos is the flight slice sampled this frame.
+-- Track the SINGLE closest alive player to the knife over the whole flight.
+-- Returns the closest player found this frame (within range), or nil. The caller
+-- accumulates the overall closest across frames and kills only that one at the end.
 --
--- Why only the closest: the aura is a thrown knife, so only one person can be
--- impaled at a time; the victim is the player physically nearest the blade's
--- path. rev 2026-08.
+-- Why only the closest: a thrown knife impales only ONE person — the player
+-- physically nearest the blade's path. We never kill "everyone the blade passed
+-- within range of".
 --
 -- Far-side safety: a Q-slice look-behind, not the whole throw. Right after a
 -- throw (or a single dropped frame) the slice prevPos->curPos can stretch across
 -- the map, and measuring distance to that long segment would hit a player who is
 -- geometrically near the line but kilometres from the knife. We clamp the look-
 -- behind so only a realistic slice (up to ~1 radius) behind the current position
--- is considered. Everything on the far side of the map is excluded because the
--- Euclidean distance from the knife's position already ruled it far away.
-function tkaKillNearby(prevPos, curPos, thrownHandle)
-	if not curPos then return false end
-
-	local handleTouched = tkaGetHandleTouched()
+-- is considered.
+function tkaFindClosest(prevPos, curPos)
+	if not curPos then return nil, math.huge end
 
 	-- Build the effective flight slice.
 	local segB = curPos
@@ -1431,22 +1448,22 @@ function tkaKillNearby(prevPos, curPos, thrownHandle)
 			end
 		end
 	end
+	return bestPlr, bestDist
+end
 
-	if bestPlr then
-		local tChar = bestPlr.Character
-		for _, part in ipairs(tChar:GetDescendants()) do
-			if part:IsA("BasePart") then
-				if handleTouched then
-					pcall(function() handleTouched:FireServer(part) end)
-				end
-				if thrownHandle then
-					safeFireTouch(thrownHandle, part)
-				end
+-- Kill a single player at distance (fire the knife's HandleTouched remote + fallback).
+function tkaKillOne(targetPlr)
+	if not targetPlr then return end
+	local handleTouched = tkaGetHandleTouched()
+	local tChar = targetPlr.Character
+	if not tChar then return end
+	for _, part in ipairs(tChar:GetDescendants()) do
+		if part:IsA("BasePart") then
+			if handleTouched then
+				pcall(function() handleTouched:FireServer(part) end)
 			end
 		end
-		return bestPlr
 	end
-	return nil
 end
 
 -- Toggle: hook the Workspace so each detected throw is tracked in flight and
@@ -1466,23 +1483,32 @@ function toggleThrowingKnifeAura()
 			if os.clock() < tkaThrowCooldownUntil then return end
 			tkaThrowCooldownUntil = os.clock() + 0.15
 			task.spawn(function()
-				-- Follow the projectile for its whole flight, sampling every
-				-- frame. Each step we measure the knife's travel segment against
-				-- every player so nobody is skipped even on a fast throw.
+				-- Follow the projectile for its whole flight, sampling every frame.
+				-- Accumulate the SINGLE closest player seen at any point during the
+				-- flight, then kill only that one player once the flight ends.
+				-- This guarantees exactly one kill per throw — the nearest victim.
 				local prevPos = nil
 				local startT = os.clock()
-				local killed = false
-				while throwingKnifeAuraEnabled and not killed and (os.clock() - startT) < 5 do
+				local bestPlr = nil
+				local bestDist = math.huge
+				while throwingKnifeAuraEnabled and (os.clock() - startT) < 5 do
 					if not (inst and inst.Parent and inst:IsDescendantOf(Workspace) and tkaIsThrownKnife(inst)) then
 						break
 					end
 					local curPos = tkaGetKnifePosition(inst)
 					if curPos then
-						local handle = tkaGetThrownHandle(inst)
-						pcall(function() killed = tkaKillNearby(prevPos, curPos, handle) ~= nil end)
+						local plr, dist = tkaFindClosest(prevPos, curPos)
+						if plr and dist < bestDist then
+							bestDist = dist
+							bestPlr = plr
+						end
 						prevPos = curPos
 					end
 					RunService.Heartbeat:Wait()
+				end
+				-- Kill only the single closest player found during the whole flight
+				if bestPlr then
+					tkaKillOne(bestPlr)
 				end
 			end)
 		end)
@@ -2326,9 +2352,13 @@ ESP_HL_TAG     = "_WH"
 ESP_BB_TAG     = "_WBB"
 ESP_GUN_HL_TAG = "_GunHL"
 ESP_GUN_BB_TAG = "_GunBB"
+ESP_TRAP_HL_TAG = "_TrapHL"
+ESP_TRAP_BB_TAG = "_TrapBB"
+ESP_TRAP_COLOR = Color3.fromRGB(255, 0, 0)
 
 espTrackedData = {}
 espTrackedGuns = {}
+espTrackedTraps = {}
 espConnections = {}
 espRoles = nil
 espCurrentHero = nil
@@ -2609,20 +2639,164 @@ function espHookGunDrop(gunDrop)
 	end)
 end
 
-function espFindGunDropsInModel(mapModel)
-	for _, child in ipairs(mapModel:GetDescendants()) do
-		if child.Name == "GunDrop" then
-			task.spawn(espHookGunDrop, child)
+	function espFindGunDropsInModel(mapModel)
+		for _, child in ipairs(mapModel:GetDescendants()) do
+			if child.Name == "GunDrop" then
+				task.spawn(espHookGunDrop, child)
+			end
 		end
+		local mapConn = mapModel.DescendantAdded:Connect(function(descendant)
+			if not espEnabled then return end
+			if descendant.Name == "GunDrop" then
+				task.spawn(espHookGunDrop, descendant)
+			end
+		end)
+		table.insert(espConnections, mapConn)
 	end
-	local mapConn = mapModel.DescendantAdded:Connect(function(descendant)
-		if not espEnabled then return end
-		if descendant.Name == "GunDrop" then
-			task.spawn(espHookGunDrop, descendant)
+
+	-- Trap ESP: highlight + label for Trap perk traps
+	function espIsTrap(inst)
+		if not inst then return false end
+		if not inst:IsA("BasePart") and not inst:IsA("Model") then return false end
+		local n = inst.Name:lower()
+		return n:find("trap") or n:find("capkan")
+	end
+
+	function espCreateTrapHighlight(trap)
+		local adornee = nil
+		if trap:IsA("BasePart") then
+			adornee = trap
+		elseif trap:IsA("Model") then
+			adornee = trap.PrimaryPart or trap:FindFirstChildWhichIsA("BasePart")
 		end
-	end)
-	table.insert(espConnections, mapConn)
-end
+		if not adornee then return nil end
+		local existing = adornee:FindFirstChild(ESP_TRAP_HL_TAG)
+		if existing then existing:Destroy() end
+		local hl = Instance.new("Highlight")
+		hl.Name = ESP_TRAP_HL_TAG
+		hl.Adornee = adornee
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.FillTransparency = 0.6
+		hl.OutlineTransparency = 0
+		hl.FillColor = ESP_TRAP_COLOR
+		hl.OutlineColor = ESP_TRAP_COLOR
+		hl.Parent = adornee
+		return hl
+	end
+
+	function espCreateTrapBillboard(trap)
+		local adornee = nil
+		if trap:IsA("BasePart") then
+			adornee = trap
+		elseif trap:IsA("Model") then
+			adornee = trap.PrimaryPart or trap:FindFirstChildWhichIsA("BasePart")
+		end
+		if not adornee then return nil, nil end
+		local existing = adornee:FindFirstChild(ESP_TRAP_BB_TAG)
+		if existing then existing:Destroy() end
+		local billboard = Instance.new("BillboardGui")
+		billboard.Name = ESP_TRAP_BB_TAG
+		billboard.Adornee = adornee
+		billboard.AlwaysOnTop = true
+		billboard.Size = UDim2.new(0, 200, 0, 40)
+		billboard.StudsOffset = Vector3.new(0, 2, 0)
+		billboard.ResetOnSpawn = false
+		billboard.Parent = adornee
+		local nameLabel = Instance.new("TextLabel")
+		nameLabel.Name = "NameLabel"
+		nameLabel.Size = UDim2.new(1, 0, 0.5, 0)
+		nameLabel.BackgroundTransparency = 1
+		nameLabel.Text = "TRAP"
+		nameLabel.Font = Enum.Font.GothamBold
+		nameLabel.TextSize = 14
+		nameLabel.TextColor3 = ESP_TRAP_COLOR
+		nameLabel.TextStrokeTransparency = 0.5
+		nameLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		nameLabel.Parent = billboard
+		local distLabel = Instance.new("TextLabel")
+		distLabel.Name = "DistLabel"
+		distLabel.Size = UDim2.new(1, 0, 0.5, 0)
+		distLabel.Position = UDim2.new(0, 0, 0.5, 0)
+		distLabel.BackgroundTransparency = 1
+		distLabel.Text = ""
+		distLabel.Font = Enum.Font.Gotham
+		distLabel.TextSize = 11
+		distLabel.TextColor3 = ESP_TRAP_COLOR
+		distLabel.TextStrokeTransparency = 0.5
+		distLabel.TextStrokeColor3 = Color3.fromRGB(0, 0, 0)
+		distLabel.Parent = billboard
+		return nameLabel, distLabel
+	end
+
+	function espCleanTrap(trap)
+		if not trap then return end
+		local adornee = nil
+		if trap:IsA("BasePart") then
+			adornee = trap
+		elseif trap:IsA("Model") then
+			adornee = trap.PrimaryPart or trap:FindFirstChildWhichIsA("BasePart")
+		end
+		if not adornee then return end
+		local hl = adornee:FindFirstChild(ESP_TRAP_HL_TAG)
+		if hl then hl:Destroy() end
+		local bb = adornee:FindFirstChild(ESP_TRAP_BB_TAG)
+		if bb then bb:Destroy() end
+	end
+
+	function espHookTrap(trap)
+		if espTrackedTraps[trap] then return end
+		espCreateTrapHighlight(trap)
+		local _, distLabel = espCreateTrapBillboard(trap)
+		local lastTrapDistText = nil
+		local conn = RunService.Heartbeat:Connect(function()
+			if not espEnabled then return end
+			if _espFrameCounter % 10 ~= 0 then return end
+			if not trap or not trap.Parent then return end
+			if distLabel then
+				local adornee = trap
+				if trap:IsA("Model") then adornee = trap.PrimaryPart or trap:FindFirstChildWhichIsA("BasePart") end
+				if adornee then
+					local myChar = player.Character
+					local myRoot = myChar and myChar:FindFirstChild("HumanoidRootPart")
+					if myRoot then
+						local dist = math.floor((myRoot.Position - adornee.Position).Magnitude)
+						local txt = "[" .. tostring(dist) .. "m]"
+						if txt ~= lastTrapDistText then
+							lastTrapDistText = txt
+							distLabel.Text = txt
+						end
+					end
+				end
+			end
+		end)
+		espTrackedTraps[trap] = { conn = conn }
+		trap.AncestryChanged:Connect(function(_, parent)
+			if not parent then
+				if espTrackedTraps[trap] then
+					if espTrackedTraps[trap].conn then
+						espTrackedTraps[trap].conn:Disconnect()
+					end
+					espTrackedTraps[trap] = nil
+				end
+				espCleanTrap(trap)
+			end
+		end)
+	end
+
+	function espScanForTraps()
+		for _, obj in ipairs(Workspace:GetDescendants()) do
+			if espIsTrap(obj) then
+				task.spawn(espHookTrap, obj)
+			end
+		end
+		local trapConn = Workspace.DescendantAdded:Connect(function(descendant)
+			if not espEnabled then return end
+			if espIsTrap(descendant) then
+				task.spawn(espHookTrap, descendant)
+			end
+		end)
+		table.insert(espConnections, trapConn)
+	end
 
 function espScanForMaps()
 	for _, mapName in ipairs(ESP_MAP_NAMES) do
@@ -2726,6 +2900,11 @@ function espCleanAll()
 		espCleanGun(gunDrop)
 	end
 	espTrackedGuns = {}
+	for trap, data in pairs(espTrackedTraps) do
+		if data.conn then data.conn:Disconnect() end
+		espCleanTrap(trap)
+	end
+	espTrackedTraps = {}
 	for _, conn in ipairs(espConnections) do
 		if typeof(conn) == "RBXScriptConnection" and conn.Connected then
 			conn:Disconnect()
@@ -2772,6 +2951,9 @@ function espEnableAll()
 
 	-- Gun ESP: scan existing maps
 	espScanForMaps()
+
+	-- Trap ESP: scan for traps
+	espScanForTraps()
 
 	-- Gun ESP: watch for new maps
 	table.insert(espConnections, Workspace.ChildAdded:Connect(function(child)
@@ -4461,7 +4643,7 @@ titleBar.Position = UDim2.new(0, 10, 0, 0)
 titleBar.BackgroundTransparency = 1
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.TextXAlignment = Enum.TextXAlignment.Left
-titleBar.Text = "Adrenalin.win V6.7 ODH"
+titleBar.Text = "Adrenalin.win V7.8 — X-Hub Edition"
 titleBar.Font = Enum.Font.SourceSansBold
 titleBar.TextSize = 16.5
 titleBar.Parent = topBar
@@ -10413,7 +10595,7 @@ function gameNotifRepositionAll()
 	end
 end
 
-function gameNotifSendRound(murdererName, sheriffName)
+function gameNotifSendRound(murdererName, sheriffName, perkName)
 	if not gameNotifEnabled then return end
 	playSoundFile(roundStartSoundPath)
 
@@ -10430,8 +10612,8 @@ function gameNotifSendRound(murdererName, sheriffName)
 	local slotIndex = #gameNotifActiveNotifs
 
 	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(0, 340, 0, 0)
-	frame.Position = UDim2.new(1, -350, 1, -10 - (slotIndex * 90))
+	frame.Size = UDim2.new(0, notifWidth, 0, 0)
+	frame.Position = UDim2.new(1, -(notifWidth + 10), 1, -10 - (slotIndex * 90))
 	frame.AnchorPoint = Vector2.new(0, 1)
 	frame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 	frame.BorderSizePixel = 0
@@ -10544,15 +10726,64 @@ function gameNotifSendRound(murdererName, sheriffName)
 		end
 	end)
 
-	table.insert(gameNotifActiveNotifs, frame)
+	-- Perk line (if available)
+	if perkName and perkName ~= "?" and perkName ~= "" then
+		local perkAvatar = Instance.new("ImageLabel")
+		perkAvatar.Size = UDim2.new(0, 24, 0, 24)
+		perkAvatar.Position = UDim2.new(0, 10, 0, 78)
+		perkAvatar.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+		perkAvatar.BorderSizePixel = 0
+		perkAvatar.Parent = frame
+		local perkAvatarCorner = Instance.new("UICorner")
+		perkAvatarCorner.CornerRadius = UDim.new(0, 6)
+		perkAvatarCorner.Parent = perkAvatar
 
-	TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-		Size = UDim2.new(0, 340, 0, 80)
-	}):Play()
+		local perkLabel = Instance.new("TextLabel")
+		perkLabel.Size = UDim2.new(1, -60, 0, 16)
+		perkLabel.Position = UDim2.new(0, 40, 0, 81)
+		perkLabel.BackgroundTransparency = 1
+		perkLabel.Text = "Murderer is using " .. perkName .. " perk"
+		perkLabel.Font = Enum.Font.GothamBold
+		perkLabel.TextSize = 12
+		perkLabel.TextColor3 = Color3.fromRGB(255, 0, 0)
+		perkLabel.TextXAlignment = Enum.TextXAlignment.Left
+		perkLabel.Parent = frame
+
+		task.spawn(function()
+			for attempt = 1, 3 do
+				local ok, thumb = pcall(function()
+					local mPlr = Players:FindFirstChild(murdererName)
+					if not mPlr then
+						for _, p in ipairs(Players:GetPlayers()) do
+							if p.Name == murdererName then mPlr = p break end
+						end
+					end
+					if mPlr then
+						return Players:GetUserThumbnailAsync(mPlr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+					end
+				end)
+				if ok and thumb and thumb ~= "" then
+					perkAvatar.Image = thumb
+					break
+				end
+				if attempt < 3 then task.wait(0.3) end
+			end
+		end)
+
+		TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = UDim2.new(0, notifWidth, 0, notifHeight + 24)
+		}):Play()
+	else
+		TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+			Size = UDim2.new(0, notifWidth, 0, notifHeight)
+		}):Play()
+	end
+
+	table.insert(gameNotifActiveNotifs, frame)
 
 	task.delay(4, function()
 		local fadeOut = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-			Size = UDim2.new(0, 340, 0, 0)
+			Size = UDim2.new(0, notifWidth, 0, 0)
 		})
 		fadeOut:Play()
 		fadeOut.Completed:Wait()
@@ -10659,7 +10890,11 @@ task.spawn(function()
 				gameNotifLastRound = roundKey
 				lastSheriffHeroName = nil
 				lastSheriffHeroUserId = nil
-				gameNotifSendRound(currentMurderer, currentSheriff)
+				local currentPerk = nil
+				if result[currentMurderer] and result[currentMurderer].Perk then
+					currentPerk = result[currentMurderer].Perk
+				end
+				gameNotifSendRound(currentMurderer, currentSheriff, currentPerk)
 			end
 
 			if currentMurderer then
@@ -10786,6 +11021,189 @@ task.spawn(function()
 	end
 end)
 
+-- В–РѕР»СЉРµРєС‚РёСЂРѕСЂР°РЅРѕР№ РїРѕР»РЅРµРµ РїРѕРґР±РѕСЂР° GunDrop (instant, event-driven)
+-- ============================================================
+-- INSTANT PICKUP DETECTION
+-- ============================================================
+-- Root cause of "No one picked up" on instant-kill: the old code only detected a
+-- pickup inside the 0.5s polling loop (then task.wait(0.3) + retries), so by the
+-- time it scanned, the picker — who was auto-killed a frame after grabbing the
+-- gun — was already dead. The fix: hook each GunDrop's AncestryChanged and run the
+-- detection synchronously the SAME FRAME it disappears (grab moment), while the
+-- picker is still alive and actually holding the "Gun" tool. The nearest-alive
+-- snapshot is also taken in that same frame, so even a picker who dies a frame
+-- later is still registered. gameNotifPickupHandled stops double-firing between
+-- the event hook and the (now back-up) polling loop.
+gameNotifPickupHandled = {}
+gameNotifPickupBusy = {}
+
+local function gameNotifSnapshotNearest(lastPos)
+	if not lastPos then return nil end
+	local bestName, bestDist = nil, math.huge
+	for _, p in ipairs(Players:GetPlayers()) do
+		local pChar = p.Character
+		local pHum = pChar and pChar:FindFirstChildOfClass("Humanoid")
+		local pRoot = pChar and pChar:FindFirstChild("HumanoidRootPart")
+		if pChar and pHum and pHum.Health > 0 and pRoot then
+			local d = (pRoot.Position - lastPos).Magnitude
+			if d < bestDist then
+				bestDist = d
+				bestName = p.Name
+			end
+		end
+	end
+	return bestName
+end
+
+local function gameNotifEmitPickup(pickedByName, pickedByUserId)
+	local pickedByPlayer = nil
+	if pickedByUserId then
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.UserId == pickedByUserId then pickedByPlayer = p break end
+		end
+	end
+	if not pickedByPlayer then
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p.Name == pickedByName then pickedByPlayer = p break end
+		end
+	end
+	local pickedChar = pickedByPlayer and pickedByPlayer.Character
+	local pickedHum = pickedChar and pickedChar:FindFirstChildOfClass("Humanoid")
+	if pickedByPlayer and pickedChar and pickedHum and pickedHum.Health > 0 then
+		lastSheriffHeroName = pickedByName
+		lastSheriffHeroUserId = pickedByUserId
+	end
+	if pickedByPlayer then
+		gameNotifSend("Gun Picked Up", pickedByName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255), pickedByPlayer)
+	elseif pickedByUserId then
+		gameNotifSendWithUserId("Gun Picked Up", pickedByName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255), pickedByUserId)
+	else
+		gameNotifSend("Gun Picked Up", pickedByName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+	end
+end
+
+-- Detect who grabbed this gun. Called from the instant AncestryChanged hook with
+-- the frame-accurate lastPos of the disappearing gun, and from the polling loop
+-- as a back-up for guns that vanished before we could hook them.
+local function gameNotifDetectPickup(gun, lastPos)
+	if gameNotifPickupBusy[gun] then return end
+	gameNotifPickupBusy[gun] = true
+	-- Synchronous-alive snapshot: the nearest ALIVE player to the gun in the very
+	-- frame it vanished is the picker — captured now, before any instant death.
+	local snapName = gameNotifSnapshotNearest(lastPos)
+	local pickedByName = nil
+	local pickedByUserId = nil
+	if gameNotifEnabled then
+		-- Tool scan (authoritative): an alive player holding the "Gun" tool now.
+		-- Fast, few retries: at grab-moment the holder is alive, so usually found
+		-- in one pass.
+		local attempts = 0
+		while attempts < 6 do
+			attempts = attempts + 1
+			local foundHolderPlayer = nil
+			for _, p in ipairs(Players:GetPlayers()) do
+				local char = p.Character
+				local hum = char and char:FindFirstChildOfClass("Humanoid")
+				if char and hum and hum.Health > 0 then
+					local hasTool = false
+					for _, tool in ipairs(char:GetChildren()) do
+						if tool:IsA("Tool") and tool.Name:lower():find("gun") then hasTool = true; break end
+					end
+					if not hasTool then
+						local backpack = p:FindFirstChild("Backpack")
+						if backpack then
+							for _, tool in ipairs(backpack:GetChildren()) do
+								if tool:IsA("Tool") and tool.Name:lower():find("gun") then hasTool = true; break end
+							end
+						end
+					end
+					if hasTool then foundHolderPlayer = p; break end
+				end
+			end
+			if foundHolderPlayer then
+				pickedByName = foundHolderPlayer.Name
+				pickedByUserId = foundHolderPlayer.UserId
+				break
+			end
+			if attempts % 3 == 0 then
+				local okRoles, rolesNow = pcall(function()
+					return invokePlayerData()
+				end)
+				if okRoles and rolesNow then
+					for _, p in ipairs(Players:GetPlayers()) do
+						local d = rolesNow[p.Name]
+						if d and d.HasGun and d.Role ~= "Murderer" then
+							local char = p.Character
+							local hum = char and char:FindFirstChildOfClass("Humanoid")
+							if char and hum and hum.Health > 0 then
+								pickedByName = p.Name
+								pickedByUserId = p.UserId
+								foundHolderPlayer = p
+								break
+							end
+						end
+					end
+				end
+			end
+			if pickedByName then break end
+			task.wait(0.08)
+		end
+	end
+	-- No alive holder found: maybe the picker was instantly killed. The snapName
+	-- (nearest alive player at grab-moment) is the picker — but only if a round
+	-- is actually running; otherwise the gun just vanished (round ended / reset).
+	if not pickedByName then
+		local roundActive = false
+		pcall(function()
+			local r = getPlayerDataRemote()
+			if r then
+				local res = invokePlayerData()
+				if res then
+					for _, d in pairs(res) do
+						if d.Role == "Murderer" or d.Role == "Sheriff" then roundActive = true; break end
+					end
+				end
+			end
+		end)
+		if roundActive and snapName then
+			pickedByName = snapName
+		end
+	end
+	if pickedByName then
+		gameNotifEmitPickup(pickedByName, pickedByUserId)
+	elseif gameNotifEnabled then
+		gameNotifSend("Gun Picked Up", "No one picked up the gun — it disappeared.", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+	end
+	gameNotifPickupBusy[gun] = nil
+end
+
+-- Hook each GunDrop so detection fires INSTANTLY at the grab moment, not on the
+-- next 0.5s poll tick.
+local function gameNotifHookGunDrop(gun)
+	if gameNotifPickupHandled[gun] or not gun then return end
+	if gun:GetAttribute("NotifHooked") then return end
+	local conn
+	conn = gun.AncestryChanged:Connect(function(_, parent)
+		if parent ~= nil then return end
+		conn:Disconnect()
+		if gameNotifPickupHandled[gun] then return end
+		gameNotifPickupHandled[gun] = true
+		-- Prefer the position we already tracked; if the poll never got to it,
+		-- read the pivot directly (still valid for a frame after reparenting).
+		local lastPos = gameNotifGunDropPos[gun]
+		if not lastPos then
+			local ok, pos = pcall(function()
+				local cf = gun:GetPivot()
+				return cf and cf.Position or nil
+			end)
+			if ok and pos then lastPos = pos end
+		end
+		gameNotifGunDropPos[gun] = nil
+		task.spawn(gameNotifDetectPickup, gun, lastPos)
+	end)
+	gun:SetAttribute("NotifHooked", true)
+end
+
 -- РћС‚СЃР»РµР¶РёРІР°РЅРёРµ РїРѕРґР±РѕСЂР° GunDrop
 -- [perf] This tracker used to call Workspace:GetDescendants() every 0.5 seconds —
 -- a full scan of the entire map that allocated a huge table each pass and was one
@@ -10798,6 +11216,7 @@ task.spawn(function()
 		for _, obj in ipairs(Workspace:GetDescendants()) do
 			if obj.Name == "GunDrop" then
 				gameNotifGunDrops[obj] = true
+				gameNotifHookGunDrop(obj)
 			end
 		end
 end)
@@ -10833,161 +11252,16 @@ end)
 					local lastPos = gameNotifGunDropPos[gun]
 					gameNotifGunDrops[gun] = nil
 					gameNotifGunDropPos[gun] = nil
-					task.wait(0.3)
-
-local pickedByName = nil
-				local pickedByUserId = nil
-
-				-- WHO PICKED IT UP (authoritative = the real "Gun" tool). The ONLY
-				-- proof that the gun was actually taken is that some ALIVE player now
-				-- holds the physical "Gun" tool (in arm or Backpack), or the server
-				-- flags them as the gun holder. Position has NO vote — it just guesses
-				-- whoever happened to stand near the drop and was frequently wrong, so
-				-- the pickup name was unreliable. We scan A LOT because tool/role
-				-- replication can lag a few hundred ms after a genuine pickup and the
-				-- tracker loop runs every 0.5s — giving up too early produced the
-				-- generic "someone picked up the gun" message for two different reasons
-				-- (slow replication vs. nobody at all). These two are now told apart
-				-- below by whether any holder is ever observed.
-				local foundHolderPlayer = nil
-				local attempts = 0
-				local maxAttempts = 10
-				while attempts < maxAttempts do
-					attempts = attempts + 1
-					-- Tool scan: an alive player holding the "Gun" tool is the picker.
-					for _, p in ipairs(Players:GetPlayers()) do
-						local char = p.Character
-						local hum = char and char:FindFirstChildOfClass("Humanoid")
-						if char and hum and hum.Health > 0 then
-							local hasTool = false
-							for _, tool in ipairs(char:GetChildren()) do
-								if tool:IsA("Tool") and tool.Name:lower():find("gun") then hasTool = true; break end
-							end
-							if not hasTool then
-								local backpack = p:FindFirstChild("Backpack")
-								if backpack then
-									for _, tool in ipairs(backpack:GetChildren()) do
-										if tool:IsA("Tool") and tool.Name:lower():find("gun") then hasTool = true; break end
-									end
-								end
-							end
-							if hasTool then foundHolderPlayer = p; break end
-						end
-					end
-					if foundHolderPlayer then
-						pickedByName = foundHolderPlayer.Name
-						pickedByUserId = foundHolderPlayer.UserId
-						break
-					end
-					-- Role-flag fallback: only consulted once in a while (it is a remote
-					-- call), and only for a LIVE non-murderer so a stale dead hero is
-					-- never mistaken for the picker.
-					if attempts % 3 == 0 then
-						local okRoles, rolesNow = pcall(function()
-							return invokePlayerData()
-						end)
-						if okRoles and rolesNow then
-							for _, p in ipairs(Players:GetPlayers()) do
-								local d = rolesNow[p.Name]
-								if d and d.HasGun and d.Role ~= "Murderer" then
-									local char = p.Character
-									local hum = char and char:FindFirstChildOfClass("Humanoid")
-									if char and hum and hum.Health > 0 then
-										foundHolderPlayer = p
-										pickedByName = p.Name
-										pickedByUserId = p.UserId
-										break
-									end
-								end
-							end
-						end
-					end
-					if foundHolderPlayer then break end
-					task.wait(0.2)
-				end
-
-				if pickedByName then
-					local pickedByPlayer = nil
-					if pickedByUserId then
-						for _, p in ipairs(Players:GetPlayers()) do
-							if p.UserId == pickedByUserId then pickedByPlayer = p break end
-						end
-					end
-					if not pickedByPlayer then
-						for _, p in ipairs(Players:GetPlayers()) do
-							if p.Name == pickedByName then pickedByPlayer = p break end
-						end
-					end
-					-- The gun now belongs to pickedByName. Update the tracked holder
-					-- IMMEDIATELY (instead of waiting for the next notifications tick)
-					-- so "Gun Dropped" / Reset Sheriff / TP / ESP already point at the
-					-- new hero the moment the pickup is confirmed. Only a LIVE holder
-					-- is remembered — a stale dead hero is never kept.
-					local pickedChar = pickedByPlayer and pickedByPlayer.Character
-					local pickedHum = pickedChar and pickedChar:FindFirstChildOfClass("Humanoid")
-					if pickedByPlayer and pickedChar and pickedHum and pickedHum.Health > 0 then
-						lastSheriffHeroName = pickedByName
-						lastSheriffHeroUserId = pickedByUserId
-					end
-					if pickedByPlayer then
-						gameNotifSend("Gun Picked Up", pickedByName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255), pickedByPlayer)
-					elseif pickedByUserId then
-						gameNotifSendWithUserId("Gun Picked Up", pickedByName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255), pickedByUserId)
-					else
-						gameNotifSend("Gun Picked Up", pickedByName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
-					end
-				else
-					-- After ~2s of scanning no ALIVE player holds the "Gun" tool and
-					-- no live server role flag names a holder. This means two very
-					-- different things, and we must tell them apart:
-					--   (A) The round ended and the gun simply vanished / reset  -> nobody.
-					--   (B) Someone picked it up but was killed INSTANTLY (e.g. the
-					--       hero grabbed the gun and got auto-killed a moment later,
-					--       as with Auto Kill Sheriff/Hero). By the time we scan, that
-					--       holder is no longer alive, but the round is STILL going, so
-					--       it WAS picked up -> we should still name the picker.
-					-- Distinguish (B) by checking whether the round is still active
-					-- (a Murderer/Sheriff role still exists). If so, fall back to the
-					-- position-based guess: whoever is nearest to where the gun last
-					-- stood is almost certainly the one who grabbed it and died.
-					local roundActive = false
-					pcall(function()
-						local r = getPlayerDataRemote()
-						if r then
-							local res = invokePlayerData()
-							if res then
-								for _, d in pairs(res) do
-									if d.Role == "Murderer" or d.Role == "Sheriff" then roundActive = true; break end
-								end
-							end
-						end
-					end)
-					if roundActive and lastPos then
-						local bestName, bestDist = nil, math.huge
-						for _, p in ipairs(Players:GetPlayers()) do
-							local pChar = p.Character
-							local pRoot = pChar and pChar:FindFirstChild("HumanoidRootPart")
-							if pRoot then
-								local d = (pRoot.Position - lastPos).Magnitude
-								if d < bestDist then
-									bestDist = d
-									bestName = p.Name
-								end
-							end
-						end
-						if bestName then
-							gameNotifSend("Gun Picked Up", bestName .. " picked up the gun!", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
-						else
-							gameNotifSend("Gun Picked Up", "No one picked up the gun — it disappeared.", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
-						end
-					else
-						gameNotifSend("Gun Picked Up", "No one picked up the gun — it disappeared.", Color3.fromRGB(170, 0, 255), Color3.fromRGB(255, 255, 255))
+					-- Back-up path only: guns that vanished before the AncestryChanged
+					-- hook above could run (e.g. they already existed when the script
+					-- loaded). The instant event hook handles the common case.
+					if not gameNotifPickupHandled[gun] then
+						gameNotifPickupHandled[gun] = true
+						task.spawn(gameNotifDetectPickup, gun, lastPos)
 					end
 				end
 			end
 		end
-
-	end
 end)
 
 -- РћС‚СЃР»РµР¶РёРІР°РЅРёРµ РїРѕСЏРІР»РµРЅРёСЏ GunDrop
@@ -10998,6 +11272,7 @@ task.spawn(function()
 			-- full-Workspace scan). Always tracked, even with notifications off, so
 			-- enabling them later still works.
 			gameNotifGunDrops[obj] = true
+			gameNotifHookGunDrop(obj)
 			if gameNotifEnabled then
 				local droppedByName = nil
 				local droppedByUserId = nil
@@ -11058,6 +11333,7 @@ end)
 -- Instant Role Notify (Utilities) + Office3 gun/notify reliability fix
 -- ============================================================
 instantRoleNotifyEnabled = false
+instantRolePerkNotifyEnabled = false
 -- Position/size stored as scale (0-1) so the label looks the same on phone, tablet and PC
 instantRolePosXScale = 0.5
 instantRolePosYScale = 0.4
@@ -11108,9 +11384,11 @@ task.spawn(function()
 			return invokePlayerData()
 		end)
 		if ok and roles then
-			local murderer, sheriff = nil, nil
+			local murderer, sheriff, murdererPerk = nil, nil, nil
 			for name, data in pairs(roles) do
-				if data.Role == "Murderer" then murderer = name
+				if data.Role == "Murderer" then
+					murderer = name
+					if data.Perk then murdererPerk = data.Perk end
 				elseif data.Role == "Sheriff" then sheriff = name end
 			end
 			if murderer and sheriff then
@@ -11125,6 +11403,9 @@ task.spawn(function()
 						roleText, roleColor = "Sheriff", Color3.fromRGB(0, 0, 255)
 					else
 						roleText, roleColor = "Innocent", Color3.fromRGB(0, 255, 0)
+					end
+					if instantRolePerkNotifyEnabled and murdererPerk and murdererPerk ~= "" then
+						roleText = roleText .. " | Perk: " .. murdererPerk
 					end
 					showInstantRoleLabel(roleText, roleColor)
 				end
@@ -11141,6 +11422,12 @@ do
 	instantRoleNotifyBtn.MouseButton1Click:Connect(function()
 		instantRoleNotifyEnabled = not instantRoleNotifyEnabled
 		setToggleState(instantRoleNotifyBtn, instantRoleNotifyEnabled, "Instant Role Notify: ON", "Instant Role Notify: OFF")
+	end)
+	instantRolePerkNotifyBtn = createButton("InstantRolePerkNotifyButton", "Show Perk in Role Notify: OFF", 116.6)
+	instantRolePerkNotifyBtn.MouseButton1Click:Connect(function()
+		instantRolePerkNotifyEnabled = not instantRolePerkNotifyEnabled
+		setToggleState(instantRolePerkNotifyBtn, instantRolePerkNotifyEnabled, "Show Perk in Role Notify: ON", "Show Perk in Role Notify: OFF")
+		saveConfig()
 	end)
 	currentCategory = _prevCategory
 end
@@ -11357,6 +11644,7 @@ task.spawn(function()
 						if not gunDropAnnounced[obj] and not gameNotifGunDrops[obj] then
 							gunDropAnnounced[obj] = true
 							gameNotifGunDrops[obj] = true
+							gameNotifHookGunDrop(obj)
 							fireGunDroppedNotif()
 						end
 					end
@@ -11396,7 +11684,7 @@ AIM_CONFIG = {
 	shotsPerClick      = 1,                -- the gun fires ONE real bullet per shot; extra FireServer calls never spawn more bullets
 	shotSpacing        = 0.0,
 	wallbangOriginDist = 0.6,              -- very close origin = almost guaranteed piercer hit
-	autoShotCooldown   = 0.15,             -- min seconds between Auto Shot button-presses (fast enough for an instant kill, slow enough to avoid flooding the network)
+	autoShotCooldown   = 0.35,             -- min seconds between Auto Shot bursts (0.0 spammed 300+ remotes/sec and lagged the game)
 	autoShotBurst      = 1,                -- one real bullet per auto attempt too
 	scatterRadius      = 0.35,             -- scatter radius around the full-lead point (covers strafe direction changes)
 	scatterShots       = 2,
@@ -12024,24 +12312,8 @@ end)
 -- spamming at autoShotCooldown so a miss (e.g. role cache still empty) retries
 -- on the very next heartbeat — no delay between grabbing the gun and shooting.
 local aimHadGunLast = false
+local aimLastRoleRefresh = 0
 local aimLastAutoShotAt = 0
-local function aimAutoShootFire(murderer)
-	-- Use the same shooting technique as the Autofarm tab (aimFireGunAt: velocity
-	-- priming + stable-read + full ping prediction), so the one auto-shot bullet
-	-- is as accurate as a farmed shot — but fire it the instant the gun appears,
-	-- with no pre-shot delay or cooldown before the first shot.
-	pcall(aimFireGunAt, murderer, AIM_CONFIG.autoShotBurst)
-	pcall(aimUnequipGun)
-end
-local function aimAutoShootSpam()
-	local char = player.Character
-	local bp = player:FindFirstChild("Backpack")
-	if not (char and (char:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")))) then return end
-	local murderer = aimFindMurderer() or aimFindNearestPlayer()
-	if not (murderer and murderer ~= player and murderer.Character) then return end
-	if not aimMurdererAlive(murderer) then return end
-	aimAutoShootFire(murderer)
-end
 task.spawn(function()
 	while true do
 		RunService.Heartbeat:Wait()
@@ -12050,17 +12322,47 @@ task.spawn(function()
 			local char = player.Character
 			local bp = player:FindFirstChild("Backpack")
 			local hasGun = (char and (char:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")))) and true or false
-			local now = os.clock()
 			if hasGun and not aimHadGunLast then
-				-- Gun just appeared: fire INSTANTLY, bypassing the cooldown.
-				aimLastAutoShotAt = now
-				aimAutoShootSpam()
+				-- Gun just appeared: fire INSTANTLY with zero added latency.
+				-- No blocking role InvokeServer, no velocity-stability wait — go
+				-- straight to the raw single-bullet shot so the trigger matches the
+				-- frame the gun spawned. Role refresh is deferred async so the next
+				-- (rate-limited) burst still benefits from fresh data.
+				local m = aimFindMurderer()
+				if not (m and m ~= player and aimMurdererAlive(m)) then
+					-- Fresh gun but no cached role yet: pull the roles ONCE right
+					-- now so we can fire in this same frame instead of waiting for
+					-- the rate-limited branch (which would add a full cooldown).
+					pcall(aimRefreshRoleNow)
+					m = aimFindMurderer()
+				else
+					task.spawn(function() pcall(aimRefreshRoleNow) end)
+				end
+				if m and m ~= player and aimMurdererAlive(m) then
+					aimLastAutoShotAt = os.clock()
+					pcall(aimFireGunAtOriginal, m, AIM_CONFIG.autoShotBurst)
+				end
 			end
 			aimHadGunLast = hasGun
 			if not hasGun then return end
+			local now = os.clock()
+			-- Rate limit: skip this heartbeat entirely while on cooldown (also skips
+			-- the murderer lookup, keeping the loop nearly free between bursts)
 			if (now - aimLastAutoShotAt) < (AIM_CONFIG.autoShotCooldown or 0.35) then return end
-			aimLastAutoShotAt = now
-			aimAutoShootSpam()
+			local murderer = aimFindMurderer()
+			if not murderer and (now - aimLastRoleRefresh) > 0.08 then
+				aimLastRoleRefresh = now
+				aimRefreshRoleNow()
+				murderer = aimFindMurderer()
+			end
+			if murderer and murderer ~= player and aimMurdererAlive(murderer) then
+				aimLastAutoShotAt = now
+				-- Fire with zero added latency (no stable-velocity hold): the
+				-- standalone Auto Shoot Murderer must respond instantly. The
+				-- configurable autofarmShootDelay only applies inside the
+				-- autofarm path and never affects this loop.
+				pcall(aimFireGunAtOriginal, murderer, AIM_CONFIG.autoShotBurst)
+			end
 		end)
 	end
 end)
@@ -12069,6 +12371,171 @@ end)
 
 currentCategory = "Combat"
 createSection("Combat", 200)
+
+-- Combat Stats display: Murderer, Sheriff, Perk, Gun Dropped
+combatStatsFrame = Instance.new("Frame")
+combatStatsFrame.Name = "CombatStatsFrame"
+combatStatsFrame.Size = UDim2.new(1, 0, 0, 44)
+combatStatsFrame.BackgroundTransparency = 1
+combatStatsFrame.LayoutOrder = 200.5
+combatStatsFrame.Parent = categoryFrames["Combat"]
+
+combatStatsLabel = Instance.new("TextLabel")
+combatStatsLabel.Name = "CombatStatsLabel"
+combatStatsLabel.Size = UDim2.new(1, 0, 1, 0)
+combatStatsLabel.BackgroundTransparency = 1
+combatStatsLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+combatStatsLabel.RichText = true
+combatStatsLabel.TextSize = 14
+combatStatsLabel.TextWrapped = true
+combatStatsLabel.Text = ""
+combatStatsLabel.Font = Enum.Font.SourceSansBold
+combatStatsLabel.TextXAlignment = Enum.TextXAlignment.Center
+combatStatsLabel.Parent = combatStatsFrame
+
+-- Combat Stats text cache for extracted button
+combatStatsMurderer = "?"
+combatStatsSheriff = "?"
+combatStatsHero = "?"
+combatStatsPerk = "?"
+combatStatsGunDropped = "?"
+
+function combatStatsRefreshText()
+	-- Sheriff/Hero display: if sheriff alive -> show Sheriff (blue), if sheriff dead
+	-- but someone picked up the gun -> show Hero (yellow), otherwise -> No One (blue)
+	local sheriffHeroText
+	if combatStatsSheriff ~= "?" and combatStatsSheriff ~= "No One" then
+		sheriffHeroText = '<font color="rgb(0,0,255)">Sheriff: ' .. combatStatsSheriff .. '</font>'
+	elseif combatStatsHero ~= "?" and combatStatsHero ~= "No One" then
+		sheriffHeroText = '<font color="rgb(255,255,0)">Hero: ' .. combatStatsHero .. '</font>'
+	else
+		sheriffHeroText = '<font color="rgb(0,0,255)">Sheriff/Hero: No One</font>'
+	end
+	local text = '<font color="rgb(255,0,0)">Murderer: ' .. combatStatsMurderer .. '</font> | ' .. sheriffHeroText .. ' | <font color="rgb(255,0,0)">Perk: ' .. combatStatsPerk .. '</font> | <font color="rgb(160,0,255)">Gun Dropped: ' .. combatStatsGunDropped .. '</font>'
+	combatStatsLabel.Text = text
+	if extractedButtons then
+		local data = extractedButtons["Combat Stats"]
+		if data then
+			if data.line1Text then data.line1Text.Text = text end
+		end
+	end
+end
+
+-- Physically scan for the player holding the Gun tool (same method as the
+-- notification system). Returns sheriffName, heroName — the real gun holder(s).
+-- dataRoleMap is the GetPlayerData() result used to distinguish Sheriff vs Hero.
+function combatStatsScanGunHolder(dataRoleMap)
+	local sheriffName = nil
+	local heroName = nil
+	for _, p in ipairs(Players:GetPlayers()) do
+		local char = p.Character
+		local hum = char and char:FindFirstChildOfClass("Humanoid")
+		if char and hum and hum.Health > 0 then
+			local hasGun = false
+			for _, tool in ipairs(char:GetChildren()) do
+				if tool:IsA("Tool") and tool.Name:lower():find("gun") then hasGun = true; break end
+			end
+			if not hasGun then
+				local bp = p:FindFirstChild("Backpack")
+				if bp then
+					for _, tool in ipairs(bp:GetChildren()) do
+						if tool:IsA("Tool") and tool.Name:lower():find("gun") then hasGun = true; break end
+					end
+				end
+			end
+			if hasGun then
+				local role = dataRoleMap and dataRoleMap[p.Name] and dataRoleMap[p.Name].Role
+				if role == "Sheriff" then
+					sheriffName = p.Name
+				elseif role == "Hero" then
+					heroName = p.Name
+				else
+					-- Has gun but no definitive role — treat as hero
+					heroName = p.Name
+				end
+			end
+		end
+	end
+	return sheriffName, heroName
+end
+
+-- Gun Dropped detection (based on GunDrop in workspace, like AutoGrab Gun)
+combatStatsRoundActive = false
+combatStatsLastRoundActive = false
+
+function combatStatsHasGunDrop()
+	for _, obj in ipairs(Workspace:GetDescendants()) do
+		if obj.Name == "GunDrop" then return true end
+	end
+	return false
+end
+
+function combatStatsCheckGun()
+	if not combatStatsRoundActive then
+		if combatStatsGunDropped ~= "No" then
+			combatStatsGunDropped = "No"
+			combatStatsRefreshText()
+		end
+		return
+	end
+	local gunOnGround = combatStatsHasGunDrop()
+	local newVal = gunOnGround and "Yes" or "No"
+	if newVal ~= combatStatsGunDropped then
+		combatStatsGunDropped = newVal
+		combatStatsRefreshText()
+	end
+end
+
+function combatStatsHookPlayer(plr)
+	local function hookChar(char)
+		-- empty, gun detection is now done via GunDrop in workspace
+	end
+	if plr.Character then hookChar(plr.Character) end
+	plr.CharacterAdded:Connect(hookChar)
+end
+
+for _, plr in ipairs(Players:GetPlayers()) do
+	combatStatsHookPlayer(plr)
+end
+Players.PlayerAdded:Connect(function(plr)
+	combatStatsHookPlayer(plr)
+end)
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		local ok, result = pcall(function()
+			return invokePlayerData()
+		end)
+		if ok and result then
+			local murderer, perkName = "?", "?"
+			for name, data in pairs(result) do
+				if data.Role == "Murderer" then
+					murderer = name
+					if data.Perk then perkName = data.Perk end
+				end
+			end
+			-- Physically scan for the gun holder (same method as notifications).
+			-- This is more reliable than data.Role which can lag after death.
+			local sheriff, hero = combatStatsScanGunHolder(result)
+			if not sheriff then sheriff = "No One" end
+			if not hero then hero = "No One" end
+			combatStatsRoundActive = (murderer ~= "?")
+			if combatStatsRoundActive and not combatStatsLastRoundActive then
+				combatStatsGunDropped = "No"
+			end
+			combatStatsCheckGun()
+			combatStatsLastRoundActive = combatStatsRoundActive
+			if murderer ~= combatStatsMurderer or sheriff ~= combatStatsSheriff or hero ~= combatStatsHero or perkName ~= combatStatsPerk then
+				combatStatsMurderer = murderer
+				combatStatsSheriff = sheriff
+				combatStatsHero = hero
+				combatStatsPerk = perkName
+				combatStatsRefreshText()
+			end
+		end
+	end
+end)
 
 -- Desync (original spin technique): spin + walk, bullets pass even while moving
 desyncSpinButton = createButton("DesyncSpinButton", "Desync: OFF", 202)
@@ -12950,6 +13417,96 @@ do
 		else
 			fakeDuckSpdInput.Text = tostring(fakeDuckSpeedValue)
 		end
+	end)
+end
+
+-- Anti-Lag (toggleable): removes particles, visual effects, decals/textures,
+-- smooths part materials and hides the sky to boost FPS. Every change is recorded
+-- so toggling OFF restores everything to its original state.
+
+function antiLagSaveAndApply(inst)
+	if antiLagApplied[inst] then return end
+	pcall(function()
+		if inst:IsA("Part") or inst:IsA("Union") or inst:IsA("BasePart") then
+			antiLagRestoreList[inst] = {prop = "Material", value = inst.Material}
+			inst.Material = Enum.Material.SmoothPlastic
+		end
+		if inst:IsA("ParticleEmitter") or inst:IsA("Smoke") or inst:IsA("Explosion") or inst:IsA("Sparkles") or inst:IsA("Fire") then
+			antiLagRestoreList[inst] = {prop = "Enabled", value = inst.Enabled}
+			inst.Enabled = false
+		end
+		if inst:IsA("BloomEffect") or inst:IsA("BlurEffect") or inst:IsA("DepthOfFieldEffect") or inst:IsA("SunRaysEffect") then
+			antiLagRestoreList[inst] = {prop = "Enabled", value = inst.Enabled}
+			inst.Enabled = false
+		end
+		if inst:IsA("Decal") or inst:IsA("Texture") then
+			antiLagRestoreList[inst] = {prop = "Texture", value = inst.Texture}
+			inst.Texture = ""
+		end
+		if inst:IsA("Sky") then
+			antiLagRestoreList[inst] = {prop = "Parent", value = inst.Parent}
+			inst.Parent = nil
+		end
+	end)
+	antiLagApplied[inst] = true
+end
+
+function antiLagScanAll()
+	pcall(function()
+		for _, v in ipairs(game:GetDescendants()) do
+			antiLagSaveAndApply(v)
+		end
+	end)
+end
+
+function enableAntiLag()
+	antiLagEnabled = true
+	antiLagScanAll()
+	antiLagNewConn = game.DescendantAdded:Connect(function(child)
+		if not antiLagEnabled then return end
+		pcall(function() antiLagSaveAndApply(child) end)
+	end)
+	if antiLagButton then setToggleState(antiLagButton, true, "Anti-Lag: ON", "Anti-Lag: OFF") end
+end
+
+function disableAntiLag()
+	antiLagEnabled = false
+	if antiLagNewConn then antiLagNewConn:Disconnect(); antiLagNewConn = nil end
+	for inst, record in pairs(antiLagRestoreList) do
+		pcall(function()
+			inst[record.prop] = record.value
+		end)
+	end
+	antiLagRestoreList = {}
+	antiLagApplied = {}
+	if antiLagButton then setToggleState(antiLagButton, false, "Anti-Lag: ON", "Anti-Lag: OFF") end
+end
+
+function toggleAntiLag()
+	if antiLagEnabled then
+		disableAntiLag()
+	else
+		enableAntiLag()
+	end
+end
+
+-- Anti-Lag UI (full-width toggle button, right after Fake Duck)
+do
+	antiLagButton = createButton("AntiLagButton", "Anti-Lag: OFF", 215.5)
+	antiLagButton.MouseButton1Click:Connect(function()
+		toggleAntiLag()
+		setExtractedBtnState("Anti-Lag", antiLagEnabled)
+	end)
+end
+
+-- 3D Rendering toggle (disables 3D rendering to reduce CPU usage, like Render.lua)
+do
+	rendering3dButton = createButton("Rendering3dButton", "3D Rendering: ON", 215.6)
+	rendering3dButton.MouseButton1Click:Connect(function()
+		rendering3dEnabled = not rendering3dEnabled
+		pcall(function() RunService:Set3dRenderingEnabled(rendering3dEnabled) end)
+		setToggleState(rendering3dButton, rendering3dEnabled, "3D Rendering: ON", "3D Rendering: OFF")
+		saveConfig()
 	end)
 end
 
@@ -15234,7 +15791,7 @@ autofarmAuraUnderFloorDepth = 0.4
 -- (felt like stopping). A value clearly SMALLER than the aura means the character
 -- turns to the next coin well before the aura finishes this one — continuous
 -- movement, no pause. Keep it below coinAuraRadius.
-autofarmAuraRetargetDist = 0.8
+autofarmAuraRetargetDist = 1
 autofarmAscendDist = 1             -- horizontal distance at which we start rising to the coin
 autofarmAscentMultiplier = 1       -- DEPRECATED: the 3x ascent boost caused speed spikes ("jerks") when climbing to higher coins — flight now moves at ONE constant speed in all directions
 -- Coins currently being pulled in by Coin Aura: [coin] = os.clock() when we flew
@@ -15327,6 +15884,13 @@ autofarmStuckTimeout = 5          -- seconds of being stuck before the anti-stop
 autofarmPreTpEnabled = false
 autofarmPreTpModeIndex = 1
 autofarmPreTpDelay = 3           -- seconds to wait after round start before TPing (1-10)
+
+-- Autofarm technique mode, independent of the Coin Aura toggle:
+--   1 = Default  : the classic stop-and-hold farm (deep under-floor route).
+--   2 = Fast     : the fly-through farm (shallow under-floor route, retargets
+--                  early and keeps constant movement).
+autofarmMode = 1
+autofarmModeNames = {"Default", "Fast"}
 
 -- Auto teleport after the farm (same places as the Teleports tab, minus role TPs)
 autofarmTpModeIndex = 1               -- UI-declared later, default here for config save
@@ -15740,7 +16304,7 @@ function autofarmShootMurderer(forcePiercer)
 		task.wait(autofarmShootDelay)
 	end
 	local startedAt = os.clock()
-	while os.clock() - startedAt < 8 do
+	while os.clock() - startedAt < 10 do
 		local m = autofarmFindMurdererPlayer()
 		if not (m and m.Character) then break end
 		local mh = m.Character:FindFirstChildOfClass("Humanoid")
@@ -15749,15 +16313,10 @@ function autofarmShootMurderer(forcePiercer)
 		local myChar = player.Character
 		local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 		if not myHum or myHum.Health <= 0 then return false end
-		if forcePiercer then
-			local wasWallbang = aimWallbangEnabled
-			aimWallbangEnabled = true
-			pcall(aimFireGunAt, m)
-			aimWallbangEnabled = wasWallbang
-		else
-			pcall(aimFireGunAt, m)
-		end
-		task.wait(0.15)
+		-- Single predicted shot — path-sweep covers lead error/desync
+		pcall(aimFireGunAt, m)
+		pcall(aimUnequipGun)
+		task.wait(0.12)
 	end
 	return true
 end
@@ -16011,7 +16570,7 @@ function startAutofarm()
 					-- Are any coins still being pulled in by the Coin Aura? If so, the
 					-- round is NOT over even when no targetable coin is left.
 					local auraStillPulling = false
-					if coinAuraEnabled then
+					if autofarmMode == 2 then
 						for c, t in pairs(autofarmAuraPending) do
 							if (os.clock() - t) < 2 and not autofarmCoinIsGone(c) then
 								auraStillPulling = true
@@ -16108,11 +16667,11 @@ function startAutofarm()
 						-- collects), but the full-body volley over all ~15 parts is now
 						-- throttled to every 0.15s per coin — the old every-frame volley
 						-- was 30+ firetouchinterest pcalls per frame, another hitch source.
-						-- Stop-to-hold only applies when Coin Aura is OFF. With Coin Aura
-						-- ON we rely on the fly-through block below (which claims the coin,
+						-- Stop-to-hold only applies when the mode is Default. In Fast
+						-- mode we rely on the fly-through block below (which claims the coin,
 						-- marks it pending and immediately retargets the NEXT coin) — so
 						-- the flight never pauses at a coin to collect it.
-						if (not coinAuraEnabled) and dist <= autofarmPickupRange then
+						if autofarmMode == 1 and dist <= autofarmPickupRange then
 							safeFireTouch(part, hrp)
 							if not autofarmFullTouchAt[coin] or (os.clock() - autofarmFullTouchAt[coin]) >= 0.15 then
 								autofarmFullTouchAt[coin] = os.clock()
@@ -16128,9 +16687,9 @@ function startAutofarm()
 							autofarmClaimCoin(coin)
 						end
 
-						-- Coin Aura fly-through: touch the coin as soon as we're within pickup
+						-- Fast-mode fly-through: touch the coin as soon as we're within pickup
 						-- range, then IMMEDIATELY fly on to the next coin the moment our
-						-- distance to this one drops to autofarmAuraRetargetDist (1.4)
+						-- distance to this one drops to autofarmAuraRetargetDist (0.8)
 						-- — slightly BELOW the aura radius, so we never appear to wait
 						-- for the aura to grab the coin; we're already moving to the
 						-- next one before the aura finishes this pickup. The threshold
@@ -16138,7 +16697,7 @@ function startAutofarm()
 						-- we don't turn away too early, and collection stays tied to
 						-- how close we physically fly (no far mass-teleport that used
 						-- to trigger the "collecting too fast" anti-cheat kick).
-						if coinAuraEnabled and dist <= autofarmPickupRange then
+						if autofarmMode == 2 and dist <= autofarmPickupRange then
 							safeFireTouch(part, hrp)
 							autofarmTouchedAt[coin] = os.clock()
 							autofarmClaimCoin(coin)
@@ -16164,7 +16723,7 @@ function startAutofarm()
 						-- is fine: the character rises to collect.
 						local target
 						local underFloorDepth = autofarmUnderFloorDepth
-						if coinAuraEnabled then
+						if autofarmMode == 2 then
 							underFloorDepth = autofarmAuraUnderFloorDepth
 						end
 						autofarmFloorRayParams.FilterDescendantsInstances = {char, container}
@@ -16538,6 +17097,80 @@ autofarm50Btn.MouseButton1Click:Connect(function()
 		setAutofarmEnabled(true, 50)
 	end
 	refreshAutofarmButtons()
+end)
+
+-- ===== Autofarm technique mode: dropdown selection (same style as Auto TP) =====
+autofarmModeRow = Instance.new("Frame")
+autofarmModeRow.Name = "AutofarmModeRow"
+autofarmModeRow.Size = UDim2.new(1, 0, 0, 42)
+autofarmModeRow.BackgroundTransparency = 1
+autofarmModeRow.LayoutOrder = 303.5
+autofarmModeRow.Parent = categoryFrames["Autofarm"]
+
+autofarmModeLabel = Instance.new("TextLabel")
+autofarmModeLabel.Size = UDim2.new(0.5, -2, 1, 0)
+autofarmModeLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmModeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmModeLabel.Text = "Autofarm Mode"
+autofarmModeLabel.Font = Enum.Font.SourceSansBold
+autofarmModeLabel.TextSize = 14
+autofarmModeLabel.Parent = autofarmModeRow
+Instance.new("UICorner", autofarmModeLabel).CornerRadius = UDim.new(0, 6)
+
+autofarmModeSelect = Instance.new("TextButton")
+autofarmModeSelect.Size = UDim2.new(0.5, -2, 1, 0)
+autofarmModeSelect.Position = UDim2.new(0.5, 2, 0, 0)
+autofarmModeSelect.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmModeSelect.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmModeSelect.Text = autofarmModeNames[autofarmMode] .. " ▼"
+autofarmModeSelect.Font = Enum.Font.SourceSansBold
+autofarmModeSelect.TextSize = 14
+autofarmModeSelect.AutoButtonColor = false
+autofarmModeSelect.Parent = autofarmModeRow
+Instance.new("UICorner", autofarmModeSelect).CornerRadius = UDim.new(0, 6)
+
+autofarmModeDropdownFrame = Instance.new("Frame")
+autofarmModeDropdownFrame.Size = UDim2.new(0.5, -2, 0, math.min(#autofarmModeNames * 30, 120))
+autofarmModeDropdownFrame.Position = UDim2.new(0.5, 2, 0, 42)
+autofarmModeDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmModeDropdownFrame.BorderSizePixel = 0
+autofarmModeDropdownFrame.Visible = false
+autofarmModeDropdownFrame.ZIndex = 10
+autofarmModeDropdownFrame.Parent = autofarmModeRow
+
+autofarmModeDropdownList = Instance.new("ScrollingFrame")
+autofarmModeDropdownList.Size = UDim2.new(1, 0, 1, 0)
+autofarmModeDropdownList.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmModeDropdownList.BorderSizePixel = 0
+autofarmModeDropdownList.ScrollBarThickness = 4
+autofarmModeDropdownList.CanvasSize = UDim2.new(0, 0, 0, #autofarmModeNames * 30)
+autofarmModeDropdownList.ZIndex = 10
+autofarmModeDropdownList.Parent = autofarmModeDropdownFrame
+Instance.new("UICorner", autofarmModeDropdownList).CornerRadius = UDim.new(0, 6)
+
+for i, modeName in ipairs(autofarmModeNames) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 30)
+	btn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+	btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Text = modeName
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 14
+	btn.AutoButtonColor = false
+	btn.ZIndex = 10
+	btn.Parent = autofarmModeDropdownList
+	btn.MouseButton1Click:Connect(function()
+		autofarmMode = i
+		autofarmModeSelect.Text = modeName .. " ▼"
+		autofarmModeDropdownFrame.Visible = false
+		saveConfig()
+	end)
+	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+end
+autofarmModeSelect.MouseButton1Click:Connect(function()
+	autofarmModeDropdownFrame.Visible = not autofarmModeDropdownFrame.Visible
 end)
 
 -- Custom target coin count: toggle button + numeric input (right after 50 coins)
@@ -17723,6 +18356,7 @@ animAddBtn.TextSize = 14
 animAddBtn.Parent = animAddRow
 Instance.new("UICorner", animAddBtn).CornerRadius = UDim.new(0, 6)
 
+
 local function trimEmoteName(raw)
 	return (raw or ""):gsub("^%s+", ""):gsub("%s+$", "")
 end
@@ -17742,7 +18376,7 @@ function rebuildEmotions()
 	end
 	animationUiById = {}
 
-	local order = 403
+	local order = 404
 	for index = 1, #emotionOrder do
 		local entry = emotionOrder[index]
 		local animationId = entry.id
@@ -19454,6 +20088,11 @@ bindableFeatures = {
 		toggleFakeDuck()
 		bindToggleStates["Fake Duck"] = fakeDuckEnabled
 	end},
+	{name = "Anti-Lag", defaultKey = nil, getState = function() return antiLagEnabled end, callback = function()
+		toggleAntiLag()
+		bindToggleStates["Anti-Lag"] = antiLagEnabled
+		setExtractedBtnState("Anti-Lag", antiLagEnabled)
+	end},
 	{name = "LoopSpeed", defaultKey = nil, getState = function() return loopSpeedEnabled end, callback = function()
 		toggleLoopSpeed()
 		bindToggleStates["LoopSpeed"] = loopSpeedEnabled
@@ -20092,30 +20731,8 @@ function createTeamerPlayerButton(plr)
 		button.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
 	end)
 
-	coroutine.wrap(function()
-		local friendCount = 0
-		for _, otherPlayer in Players:GetPlayers() do
-			if otherPlayer ~= plr then
-				local success, isFriend = pcall(function()
-					return otherPlayer:IsFriendsWith(plr.UserId)
-				end)
-				if success and isFriend then
-					friendCount = friendCount + 1
-					local found = false
-					for _, pair in ipairs(teamerFriendships) do
-						if (pair[1] == plr and pair[2] == otherPlayer) or (pair[1] == otherPlayer and pair[2] == plr) then
-							found = true
-							break
-						end
-					end
-					if not found then
-						table.insert(teamerFriendships, {plr, otherPlayer})
-					end
-				end
-			end
-		end
-		friendLabel.Text = "Friends: " .. friendCount
-	end)()
+	if not teamerFriendLabels then teamerFriendLabels = {} end
+	teamerFriendLabels[plr.Name] = friendLabel
 
 	button.MouseButton1Click:Connect(function()
 		if teamerPopupCache[plr.Name] and teamerPopupCache[plr.Name].Parent then
@@ -20244,6 +20861,11 @@ function createTeamerPlayerButton(plr)
 						local success, result = pcall(function()
 							return otherPlayer:IsFriendsWith(plr.UserId)
 						end)
+						if not (success and result) then
+							success, result = pcall(function()
+								return plr:IsFriendsWith(otherPlayer.UserId)
+							end)
+						end
 						isFriend = success and result
 						if isFriend then
 							table.insert(teamerFriendships, {plr, otherPlayer})
@@ -20561,8 +21183,82 @@ for _, plr in ipairs(Players:GetPlayers()) do
 	createTeamerPlayerButton(plr)
 end
 
+teamerFriendships = {}
+coroutine.wrap(function()
+	local allPlayers = Players:GetPlayers()
+	for i = 1, #allPlayers do
+		for j = i + 1, #allPlayers do
+			local a, b = allPlayers[i], allPlayers[j]
+			task.wait(0.15)
+			local ok, result = pcall(function()
+				return a:IsFriendsWith(b.UserId)
+			end)
+			if not (ok and result) then
+				task.wait(0.15)
+				ok, result = pcall(function()
+					return b:IsFriendsWith(a.UserId)
+				end)
+			end
+			if ok and result then
+				table.insert(teamerFriendships, {a, b})
+			end
+		end
+	end
+	for _, plr in ipairs(allPlayers) do
+		if plr ~= player and teamerFriendLabels and teamerFriendLabels[plr.Name] then
+			local count = 0
+			for _, pair in ipairs(teamerFriendships) do
+				if pair[1] == plr or pair[2] == plr then
+					count = count + 1
+				end
+			end
+			teamerFriendLabels[plr.Name].Text = "Friends: " .. count
+		end
+	end
+end)()
+
 Players.PlayerAdded:Connect(function(plr)
 	createTeamerPlayerButton(plr)
+	task.spawn(function()
+		task.wait(1)
+		for _, otherPlr in Players:GetPlayers() do
+			if otherPlr ~= plr and otherPlr ~= player then
+				local ok, result = pcall(function()
+					return plr:IsFriendsWith(otherPlr.UserId)
+				end)
+				if not (ok and result) then
+					task.wait(0.15)
+					ok, result = pcall(function()
+						return otherPlr:IsFriendsWith(plr.UserId)
+					end)
+				end
+				if ok and result then
+					local found = false
+					for _, pair in ipairs(teamerFriendships) do
+						if (pair[1] == plr and pair[2] == otherPlr) or (pair[1] == otherPlr and pair[2] == plr) then
+							found = true
+							break
+						end
+					end
+					if not found then
+						table.insert(teamerFriendships, {plr, otherPlr})
+					end
+				end
+				task.wait(0.15)
+			end
+		end
+		for _, p in ipairs(Players:GetPlayers()) do
+			if p ~= player and teamerFriendLabels and teamerFriendLabels[p.Name] then
+				local count = 0
+				for _, pair in ipairs(teamerFriendships) do
+					if pair[1] == p or pair[2] == p then
+						count = count + 1
+					end
+				end
+				teamerFriendLabels[p.Name].Text = "Friends: " .. count
+			end
+		end
+	end)
 end)
 
 Players.PlayerRemoving:Connect(function(plr)
@@ -20579,6 +21275,7 @@ Players.PlayerRemoving:Connect(function(plr)
 			table.remove(teamerFriendships, i)
 		end
 	end
+	if teamerFriendLabels then teamerFriendLabels[plr.Name] = nil end
 end)
 
 -- ============================================
@@ -23260,9 +23957,10 @@ local useDevicePathsTSC = Instance.new("UITextSizeConstraint")
 useDevicePathsTSC.MaxTextSize = 17
 useDevicePathsTSC.MinTextSize = 9
 useDevicePathsTSC.Parent = useDevicePathsButton
+if useDevicePaths then setToggleState(useDevicePathsButton, true, "Use Device Paths: ON", "Use Device Paths: OFF") end
 useDevicePathsButton.MouseButton1Click:Connect(function()
 	useDevicePaths = not useDevicePaths
-	useDevicePathsButton.Text = useDevicePaths and "Use Device Paths: ON" or "Use Device Paths: OFF"
+	setToggleState(useDevicePathsButton, useDevicePaths, "Use Device Paths: ON", "Use Device Paths: OFF")
 	saveConfig()
 end)
 
@@ -24549,6 +25247,7 @@ function buildConfigData()
 	config.toggles.autofarmStuckEnabled = autofarmStuckEnabled
 	config.toggles.autofarmWebhookEnabled = autofarmWebhookEnabled; config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
 	config.toggles.instantRoleNotifyEnabled = instantRoleNotifyEnabled
+	config.toggles.instantRolePerkNotifyEnabled = instantRolePerkNotifyEnabled
 	config.toggles.showRoundTimerEnabled = showRoundTimerEnabled
 	config.toggles.voteDupeMode = voteDupeMode
 	if keystrokeSavedPos then config.keystrokePos = {X = {Scale = keystrokeSavedPos.X.Scale, Offset = keystrokeSavedPos.X.Offset}, Y = {Scale = keystrokeSavedPos.Y.Scale, Offset = keystrokeSavedPos.Y.Offset}} end
@@ -24571,6 +25270,9 @@ function buildConfigData()
 	config.values.mainMenuWidth = mainMenuWidth; config.values.mainMenuHeight = mainMenuHeight
 	config.values.popupBtnWidth = popupBtnWidth; config.values.popupBtnHeight = popupBtnHeight
 	config.values.fpsPingBtnWidth = fpsPingBtnWidth; config.values.fpsPingBtnHeight = fpsPingBtnHeight
+	config.values.combatStatsBtnWidth = combatStatsBtnWidth; config.values.combatStatsBtnHeight = combatStatsBtnHeight
+	config.values.combatStatsTextSize = combatStatsTextSize
+	config.values.notifWidth = notifWidth; config.values.notifHeight = notifHeight
 	config.values.customFov = customFov; config.values.animationEnabled = animationEnabled
 	config.values.btnPressAnimationEnabled = btnPressAnimationEnabled; config.values.animationStyle = animationStyle
 	config.values.loadingAnimStyle = loadingAnimStyle; config.values.menuAppearStyle = menuAppearStyle; config.values.loadingScreenTime = loadingScreenTime
@@ -24952,6 +25654,9 @@ btnFeatures = {
 	{name = "Fake Duck",
 	 toggle = function() toggleFakeDuck() end,
 	 getState = function() return fakeDuckEnabled end},
+	{name = "Anti-Lag",
+	 toggle = function() toggleAntiLag() end,
+	 getState = function() return antiLagEnabled end},
 	{name = "LoopSpeed",
 	 toggle = function() toggleLoopSpeed() end,
 	 getState = function() return loopSpeedEnabled end},
@@ -25033,6 +25738,8 @@ btnFeatures = {
 	{name = "Freeze",
 	 toggle = function() toggleFreeze(); setToggleState(freezeButton, freezeEnabled, "Freeze: ON", "Freeze: OFF"); setExtractedBtnState("Freeze", freezeEnabled) end,
 	 getState = function() return freezeEnabled end},
+	{name = "Combat Stats",
+	 toggle = function() end},
 	{name = "FPS",
 	 toggle = function() end},
 	{name = "Ping",
@@ -25047,6 +25754,11 @@ popupBtnWidth = 204
 popupBtnHeight = 46
 fpsPingBtnWidth = 200
 fpsPingBtnHeight = 64
+combatStatsBtnWidth = 400
+combatStatsBtnHeight = 64
+combatStatsTextSize = 14
+notifWidth = 340
+notifHeight = 80
 
 lockDragBtn = Instance.new("TextButton")
 lockDragBtn.Name = "LockDragBtn"
@@ -25057,7 +25769,7 @@ lockDragBtn.Text = "Lock Buttons Drag: OFF"
 lockDragBtn.Font = Enum.Font.SourceSansBold
 lockDragBtn.TextSize = 14
 lockDragBtn.AutoButtonColor = false
-lockDragBtn.LayoutOrder = 711
+lockDragBtn.LayoutOrder = 712
 lockDragBtn.Parent = categoryFrames["Settings"]
 
 lockDragCorner = Instance.new("UICorner")
@@ -25090,7 +25802,7 @@ toggleDragBtn.Text = "Lock WIN-X Drag: OFF"
 toggleDragBtn.Font = Enum.Font.SourceSansBold
 toggleDragBtn.TextSize = 14
 toggleDragBtn.AutoButtonColor = false
-toggleDragBtn.LayoutOrder = 710
+toggleDragBtn.LayoutOrder = 711
 toggleDragBtn.Parent = categoryFrames["Settings"]
 
 toggleDragCorner = Instance.new("UICorner")
@@ -25320,6 +26032,181 @@ fpsPingHeightInput.FocusLost:Connect(function()
 	saveConfig()
 end)
 
+-- Combat Stats Button Size
+combatStatsSizeRow = Instance.new("Frame")
+combatStatsSizeRow.Size = UDim2.new(1, 0, 0, 42)
+combatStatsSizeRow.BackgroundTransparency = 1
+combatStatsSizeRow.LayoutOrder = 708
+combatStatsSizeRow.Parent = categoryFrames["Settings"]
+
+combatStatsSizeLabel = Instance.new("TextLabel")
+combatStatsSizeLabel.Size = UDim2.new(1, -160, 1, 0)
+combatStatsSizeLabel.BackgroundTransparency = 1
+combatStatsSizeLabel.Text = "Combat Stats Btn (W x H)"
+combatStatsSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+combatStatsSizeLabel.Font = Enum.Font.SourceSansBold
+combatStatsSizeLabel.TextSize = 16
+combatStatsSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+combatStatsSizeLabel.Parent = combatStatsSizeRow
+
+combatStatsWidthInput = Instance.new("TextBox")
+combatStatsWidthInput.Size = UDim2.new(0, 68, 1, 0)
+combatStatsWidthInput.Position = UDim2.new(1, -146, 0, 0)
+combatStatsWidthInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+combatStatsWidthInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+combatStatsWidthInput.Text = tostring(combatStatsBtnWidth)
+combatStatsWidthInput.PlaceholderText = "W"
+combatStatsWidthInput.Font = Enum.Font.SourceSansBold
+combatStatsWidthInput.TextSize = 15
+combatStatsWidthInput.ClearTextOnFocus = false
+combatStatsWidthInput.Parent = combatStatsSizeRow
+Instance.new("UICorner", combatStatsWidthInput).CornerRadius = UDim.new(0, 6)
+
+combatStatsHeightInput = Instance.new("TextBox")
+combatStatsHeightInput.Size = UDim2.new(0, 68, 1, 0)
+combatStatsHeightInput.Position = UDim2.new(1, -74, 0, 0)
+combatStatsHeightInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+combatStatsHeightInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+combatStatsHeightInput.Text = tostring(combatStatsBtnHeight)
+combatStatsHeightInput.PlaceholderText = "H"
+combatStatsHeightInput.Font = Enum.Font.SourceSansBold
+combatStatsHeightInput.TextSize = 15
+combatStatsHeightInput.ClearTextOnFocus = false
+combatStatsHeightInput.Parent = combatStatsSizeRow
+Instance.new("UICorner", combatStatsHeightInput).CornerRadius = UDim.new(0, 6)
+
+combatStatsWidthInput.FocusLost:Connect(function()
+	local val = tonumber(combatStatsWidthInput.Text)
+	if val and val >= 100 and val <= 600 then
+		combatStatsBtnWidth = val
+		if extractedButtons["Combat Stats"] and extractedButtons["Combat Stats"].btn then
+			extractedButtons["Combat Stats"].btn.Size = UDim2.new(0, val, 0, combatStatsBtnHeight)
+		end
+	else
+		combatStatsWidthInput.Text = tostring(combatStatsBtnWidth)
+	end
+	saveConfig()
+end)
+
+combatStatsHeightInput.FocusLost:Connect(function()
+	local val = tonumber(combatStatsHeightInput.Text)
+	if val and val >= 30 and val <= 120 then
+		combatStatsBtnHeight = val
+		if extractedButtons["Combat Stats"] and extractedButtons["Combat Stats"].btn then
+			extractedButtons["Combat Stats"].btn.Size = UDim2.new(0, combatStatsBtnWidth, 0, val)
+		end
+	else
+		combatStatsHeightInput.Text = tostring(combatStatsBtnHeight)
+	end
+	saveConfig()
+end)
+
+-- Notification Size (W x H)
+notifSizeRow = Instance.new("Frame")
+notifSizeRow.Size = UDim2.new(1, 0, 0, 42)
+notifSizeRow.BackgroundTransparency = 1
+notifSizeRow.LayoutOrder = 709
+notifSizeRow.Parent = categoryFrames["Settings"]
+
+notifSizeLabel = Instance.new("TextLabel")
+notifSizeLabel.Size = UDim2.new(1, -160, 1, 0)
+notifSizeLabel.BackgroundTransparency = 1
+notifSizeLabel.Text = "Notification (W x H)"
+notifSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+notifSizeLabel.Font = Enum.Font.SourceSansBold
+notifSizeLabel.TextSize = 16
+notifSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+notifSizeLabel.Parent = notifSizeRow
+
+notifWidthInput = Instance.new("TextBox")
+notifWidthInput.Size = UDim2.new(0, 68, 1, 0)
+notifWidthInput.Position = UDim2.new(1, -146, 0, 0)
+notifWidthInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+notifWidthInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+notifWidthInput.Text = tostring(notifWidth)
+notifWidthInput.PlaceholderText = "W"
+notifWidthInput.Font = Enum.Font.SourceSansBold
+notifWidthInput.TextSize = 15
+notifWidthInput.ClearTextOnFocus = false
+notifWidthInput.Parent = notifSizeRow
+Instance.new("UICorner", notifWidthInput).CornerRadius = UDim.new(0, 6)
+
+notifHeightInput = Instance.new("TextBox")
+notifHeightInput.Size = UDim2.new(0, 68, 1, 0)
+notifHeightInput.Position = UDim2.new(1, -74, 0, 0)
+notifHeightInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+notifHeightInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+notifHeightInput.Text = tostring(notifHeight)
+notifHeightInput.PlaceholderText = "H"
+notifHeightInput.Font = Enum.Font.SourceSansBold
+notifHeightInput.TextSize = 15
+notifHeightInput.ClearTextOnFocus = false
+notifHeightInput.Parent = notifSizeRow
+Instance.new("UICorner", notifHeightInput).CornerRadius = UDim.new(0, 6)
+
+notifWidthInput.FocusLost:Connect(function()
+	local val = tonumber(notifWidthInput.Text)
+	if val and val >= 200 and val <= 600 then
+		notifWidth = val
+	else
+		notifWidthInput.Text = tostring(notifWidth)
+	end
+	saveConfig()
+end)
+
+notifHeightInput.FocusLost:Connect(function()
+	local val = tonumber(notifHeightInput.Text)
+	if val and val >= 40 and val <= 200 then
+		notifHeight = val
+	else
+		notifHeightInput.Text = tostring(notifHeight)
+	end
+	saveConfig()
+end)
+
+-- Combat Stats Text Size
+combatStatsTextSizeRow = Instance.new("Frame")
+combatStatsTextSizeRow.Size = UDim2.new(1, 0, 0, 42)
+combatStatsTextSizeRow.BackgroundTransparency = 1
+combatStatsTextSizeRow.LayoutOrder = 710
+combatStatsTextSizeRow.Parent = categoryFrames["Settings"]
+
+combatStatsTextSizeLabel = Instance.new("TextLabel")
+combatStatsTextSizeLabel.Size = UDim2.new(1, -100, 1, 0)
+combatStatsTextSizeLabel.BackgroundTransparency = 1
+combatStatsTextSizeLabel.Text = "Stats Text Size"
+combatStatsTextSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+combatStatsTextSizeLabel.Font = Enum.Font.SourceSansBold
+combatStatsTextSizeLabel.TextSize = 16
+combatStatsTextSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+combatStatsTextSizeLabel.Parent = combatStatsTextSizeRow
+
+combatStatsTextSizeInput = Instance.new("TextBox")
+combatStatsTextSizeInput.Size = UDim2.new(0, 68, 1, 0)
+combatStatsTextSizeInput.Position = UDim2.new(1, -74, 0, 0)
+combatStatsTextSizeInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+combatStatsTextSizeInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+combatStatsTextSizeInput.Text = tostring(combatStatsTextSize)
+combatStatsTextSizeInput.Font = Enum.Font.SourceSansBold
+combatStatsTextSizeInput.TextSize = 15
+combatStatsTextSizeInput.ClearTextOnFocus = false
+combatStatsTextSizeInput.Parent = combatStatsTextSizeRow
+Instance.new("UICorner", combatStatsTextSizeInput).CornerRadius = UDim.new(0, 6)
+
+combatStatsTextSizeInput.FocusLost:Connect(function()
+	local val = tonumber(combatStatsTextSizeInput.Text)
+	if val and val >= 8 and val <= 30 then
+		combatStatsTextSize = val
+		local data = extractedButtons and extractedButtons["Combat Stats"]
+		if data and data.line1Text then
+			data.line1Text.TextSize = val
+		end
+	else
+		combatStatsTextSizeInput.Text = tostring(combatStatsTextSize)
+	end
+	saveConfig()
+end)
+
 buttonsSearchBox = Instance.new("TextBox")
 buttonsSearchBox.Name = "ButtonsSearchBox"
 buttonsSearchBox.Size = UDim2.new(1, 0, 0, 42)
@@ -25338,6 +26225,7 @@ buttonsSearchCorner = Instance.new("UICorner")
 buttonsSearchCorner.CornerRadius = UDim.new(0, 6)
 buttonsSearchCorner.Parent = buttonsSearchBox
 
+local function buildPopupButtons()
 extractHandlers = {}
 buttonRowRefs = {}
 
@@ -25396,16 +26284,17 @@ for bindOrder, feature in ipairs(btnFeatures) do
 		if extractedButtons[feature.name] then return end
 
 		local isFpsPingFeature = feature.name == "FPS" or feature.name == "Ping" or feature.name == "FPS+Ping"
+		local isCombatStats = feature.name == "Combat Stats"
 
-		if isFpsPingFeature then
+		if isFpsPingFeature or isCombatStats then
 			local extractedCount = 0
 			for _ in pairs(extractedButtons) do
 				extractedCount = extractedCount + 1
 			end
 
 			local isBoth = feature.name == "FPS+Ping"
-			local width = isBoth and fpsPingBtnWidth or 150
-			local height = isBoth and fpsPingBtnHeight or 46
+			local width = isCombatStats and combatStatsBtnWidth or (isBoth and fpsPingBtnWidth or 150)
+			local height = isCombatStats and combatStatsBtnHeight or (isBoth and fpsPingBtnHeight or 46)
 
 			local vpY = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize.Y or 800
 			local maxRows = math.max(1, math.floor((vpY - 20) / (height + 2)))
@@ -25492,6 +26381,24 @@ for bindOrder, feature in ipairs(btnFeatures) do
 
 				data.fpsText = fpsText
 				data.pingText = pingText
+				data.dragConn = fpsPingMakeDraggable(popupBorder)
+			elseif isCombatStats then
+				local line1Text = Instance.new("TextLabel")
+				line1Text.Size = UDim2.new(1, -8, 1, -4)
+				line1Text.Position = UDim2.new(0, 4, 0, 2)
+				line1Text.BackgroundTransparency = 1
+				line1Text.TextColor3 = Color3.fromRGB(255, 255, 255)
+				line1Text.RichText = true
+				line1Text.TextWrapped = true
+				line1Text.TextYAlignment = Enum.TextYAlignment.Top
+				line1Text.TextXAlignment = Enum.TextXAlignment.Left
+				line1Text.Font = Enum.Font.Code
+				line1Text.TextSize = combatStatsTextSize
+				line1Text.Text = '<font color="rgb(255,0,0)">Murderer: ' .. combatStatsMurderer .. '</font> | <font color="rgb(0,0,255)">Sheriff: ' .. combatStatsSheriff .. '</font> | <font color="rgb(255,0,0)">Perk: ' .. combatStatsPerk .. '</font> | <font color="rgb(160,0,255)">Gun Dropped: ' .. combatStatsGunDropped .. '</font>'
+				line1Text.Parent = popupBorder
+
+				data.line1Text = line1Text
+
 				data.dragConn = fpsPingMakeDraggable(popupBorder)
 			else
 				local textBtn = Instance.new("TextButton")
@@ -25819,10 +26726,14 @@ do
 			end
 			TweenService:Create(blur, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = 0}):Play()
 			task.delay(1, function() blur:Destroy() end)
-		end
-	end
+ 		end
+ 	end
+end
 end
 
+buildPopupButtons()
+
+local function initToggleAndMainGUI()
 toggleButton = Instance.new("Frame")
 toggleButton.Name = "ToggleButton"
 toggleButton.Size = UDim2.new(0, toggleButtonSize, 0, toggleButtonSize)
@@ -26259,6 +27170,7 @@ function restoreFullConfig()
 	customJumpPowerEnabled = T.customJumpPowerEnabled or false
 	gameNotifEnabled = T.gameNotifEnabled or false
 	instantRoleNotifyEnabled = T.instantRoleNotifyEnabled or false
+	instantRolePerkNotifyEnabled = T.instantRolePerkNotifyEnabled or false
 	showRoundTimerEnabled = T.showRoundTimerEnabled or false
 	voteDupeMode = T.voteDupeMode or "Multiple"
 	notifyOnExploiters = T.notifyOnExploiters or false
@@ -26330,6 +27242,11 @@ function restoreFullConfig()
 		if c.values.popupBtnHeight ~= nil then popupBtnHeight = c.values.popupBtnHeight end
 		if c.values.fpsPingBtnWidth ~= nil then fpsPingBtnWidth = c.values.fpsPingBtnWidth end
 		if c.values.fpsPingBtnHeight ~= nil then fpsPingBtnHeight = c.values.fpsPingBtnHeight end
+		if c.values.combatStatsBtnWidth ~= nil then combatStatsBtnWidth = c.values.combatStatsBtnWidth end
+		if c.values.combatStatsBtnHeight ~= nil then combatStatsBtnHeight = c.values.combatStatsBtnHeight end
+		if c.values.combatStatsTextSize ~= nil then combatStatsTextSize = c.values.combatStatsTextSize end
+		if c.values.notifWidth ~= nil then notifWidth = c.values.notifWidth end
+		if c.values.notifHeight ~= nil then notifHeight = c.values.notifHeight end
 		if c.values.customFov then customFov = c.values.customFov end
 		if c.values.mainMenuColorR ~= nil and c.values.mainMenuColorG ~= nil and c.values.mainMenuColorB ~= nil then
 			mainMenuColor = Color3.fromRGB(c.values.mainMenuColorR, c.values.mainMenuColorG, c.values.mainMenuColorB)
@@ -26518,7 +27435,7 @@ function restoreFullConfig()
 			bgImageInput.Text = mainBgImageUrl
 		end
 		if useDevicePathsButton then
-			useDevicePathsButton.Text = useDevicePaths and "Use Device Paths: ON" or "Use Device Paths: OFF"
+			setToggleState(useDevicePathsButton, useDevicePaths, "Use Device Paths: ON", "Use Device Paths: OFF")
 		end
 		if clickSoundInput then
 			clickSoundInput.Text = clickSoundPath
@@ -26625,13 +27542,14 @@ function restoreFullConfig()
 	if mainFrame then
 		mainFrame.Size = UDim2.new(0, mainMenuWidth, 0, mainMenuHeight)
 	end
-	-- [fix] FPS+Ping has its own size settings (fpsPingBtnWidth/Height) and must NOT
-	-- inherit the generic extracted-button size when a config is applied. Previously
-	-- this loop resized ALL extracted buttons (including FPS+Ping) to popupBtnWidth/Height.
+	-- [fix] FPS+Ping and Combat Stats have their own size settings and must NOT
+	-- inherit the generic extracted-button size when a config is applied.
 	for name, data in pairs(extractedButtons) do
 		if data.btn then
 			if name == "FPS+Ping" then
 				data.btn.Size = UDim2.new(0, fpsPingBtnWidth, 0, fpsPingBtnHeight)
+			elseif name == "Combat Stats" then
+				data.btn.Size = UDim2.new(0, combatStatsBtnWidth, 0, combatStatsBtnHeight)
 			elseif name ~= "FPS" and name ~= "Ping" then
 				data.btn.Size = UDim2.new(0, popupBtnWidth, 0, popupBtnHeight)
 			end
@@ -26662,11 +27580,29 @@ function restoreFullConfig()
 	if fpsPingHeightInput and c.values and c.values.fpsPingBtnHeight ~= nil then
 		fpsPingHeightInput.Text = tostring(c.values.fpsPingBtnHeight)
 	end
+	if combatStatsWidthInput and c.values and c.values.combatStatsBtnWidth ~= nil then
+		combatStatsWidthInput.Text = tostring(c.values.combatStatsBtnWidth)
+	end
+	if combatStatsHeightInput and c.values and c.values.combatStatsBtnHeight ~= nil then
+		combatStatsHeightInput.Text = tostring(c.values.combatStatsBtnHeight)
+	end
+	if combatStatsTextSizeInput and c.values and c.values.combatStatsTextSize ~= nil then
+		combatStatsTextSizeInput.Text = tostring(c.values.combatStatsTextSize)
+	end
+	if notifWidthInput and c.values and c.values.notifWidth ~= nil then
+		notifWidthInput.Text = tostring(c.values.notifWidth)
+	end
+	if notifHeightInput and c.values and c.values.notifHeight ~= nil then
+		notifHeightInput.Text = tostring(c.values.notifHeight)
+	end
 	if fovInputBox and c.values and c.values.customFov then
 		fovInputBox.Text = tostring(c.values.customFov)
 	end
 	if instantRoleNotifyBtn then
 		setToggleState(instantRoleNotifyBtn, instantRoleNotifyEnabled, "Instant Role Notify: ON", "Instant Role Notify: OFF")
+	end
+	if instantRolePerkNotifyBtn then
+		setToggleState(instantRolePerkNotifyBtn, instantRolePerkNotifyEnabled, "Show Perk in Role Notify: ON", "Show Perk in Role Notify: OFF")
 	end
 	if instantRolePosXInput and c.values and c.values.instantRolePosXScale ~= nil then
 		instantRolePosXInput.Text = tostring(math.floor(c.values.instantRolePosXScale * 100))
@@ -26874,6 +27810,14 @@ function restoreFullConfig()
 	if T.gameNotifEnabled then
 		if btn.gameNotif then setToggleState(btn.gameNotif, true, "Notifications: ON", "Notifications: OFF") end
 	end
+	if T.antiLagEnabled then
+		enableAntiLag()
+	end
+	if T.rendering3dEnabled == false then
+		rendering3dEnabled = false
+		pcall(function() RunService:Set3dRenderingEnabled(false) end)
+		if rendering3dButton then setToggleState(rendering3dButton, false, "3D Rendering: ON", "3D Rendering: OFF") end
+	end
 	if T.notifyOnExploiters then
 		if notifyExploitersButton then setToggleState(notifyExploitersButton, true, "Notify on Exploiters: ON", "Notify on Exploiters: OFF") end
 	end
@@ -27034,6 +27978,10 @@ function restoreFullConfig()
 		if c.values.autofarmPreTpModeIndex and autofarmPreTpModes[c.values.autofarmPreTpModeIndex] then
 			autofarmPreTpModeIndex = c.values.autofarmPreTpModeIndex
 			if autofarmPreTpSelect then autofarmPreTpSelect.Text = autofarmPreTpModes[autofarmPreTpModeIndex] .. " ▼" end
+		end
+		if c.values.autofarmMode and autofarmModeNames[c.values.autofarmMode] then
+			autofarmMode = c.values.autofarmMode
+			if autofarmModeSelect then autofarmModeSelect.Text = autofarmModeNames[autofarmMode] .. " ▼" end
 		end
 		if c.values.autofarmPreTpEnabled ~= nil then
 			autofarmPreTpEnabled = c.values.autofarmPreTpEnabled
@@ -27240,25 +28188,18 @@ do
 		sherSection.TextSize = 15
 		sherSection.LayoutOrder = 250
 		sherSection.Parent = sheriffFrame
-		-- Move Shoot Murderer
 		if shootMurdererButton then shootMurdererButton.Parent = sheriffFrame; shootMurdererButton.LayoutOrder = 251 end
-		-- Move LMB Shoot
 		if lmbShootButton then lmbShootButton.Parent = sheriffFrame; lmbShootButton.LayoutOrder = 252 end
-		-- Move Flick Shot (right after LMB Shoot)
 		if flickShotButton then flickShotButton.Parent = sheriffFrame; flickShotButton.LayoutOrder = 252.1 end
-		-- Move Spin 360 (right after Flick Shot)
 		if spin360Button then spin360Button.Parent = sheriffFrame; spin360Button.LayoutOrder = 252.2 end
-		-- Move Piercer Bullet
 		if wallBangButton then wallBangButton.Parent = sheriffFrame; wallBangButton.LayoutOrder = 253 end
-		-- Move Shoot Picker
-		if shootPicker and shootPicker.statusLabel then
-			local titleBar = shootPicker.statusLabel.Parent
-			if titleBar then titleBar.Parent = sheriffFrame; titleBar.LayoutOrder = 254 end
-			local searchBox = titleBar and titleBar.Parent and titleBar.Parent:FindFirstChild("ShootPickerSearch")
-			-- picker search and frame are siblings of titleBar in the same parent
-			for _, child in ipairs(sheriffFrame:GetChildren()) do end -- no-op
+		if shootPlayerButton then shootPlayerButton.Parent = sheriffFrame; shootPlayerButton.LayoutOrder = 255 end
+		if autoShotButton then autoShotButton.Parent = sheriffFrame; autoShotButton.LayoutOrder = 256 end
+		if btn.autoGrabGun then btn.autoGrabGun.Parent = sheriffFrame; btn.autoGrabGun.LayoutOrder = 257 end
+		if btn.gunAura then
+			local row = btn.gunAura.Parent
+			if row then row.Parent = sheriffFrame; row.LayoutOrder = 258 end
 		end
-		-- Actually re-parent all picker elements by prefix
 		local combatFrame = categoryFrames["Combat"]
 		if combatFrame then
 			for _, child in ipairs(combatFrame:GetChildren()) do
@@ -27270,19 +28211,10 @@ do
 				end
 			end
 		end
-		-- Move Shoot Player button
-		if shootPlayerButton then shootPlayerButton.Parent = sheriffFrame; shootPlayerButton.LayoutOrder = 255 end
-		-- Move Auto Shoot Murderer
-		if autoShotButton then autoShotButton.Parent = sheriffFrame; autoShotButton.LayoutOrder = 256 end
-		-- Move AutoGrab Gun
-		if btn.autoGrabGun then btn.autoGrabGun.Parent = sheriffFrame; btn.autoGrabGun.LayoutOrder = 257 end
-		-- Move Gun Aura (it's a dual row: btn.gunAura.Parent is a row frame)
-		if btn.gunAura then
-			local row = btn.gunAura.Parent
-			if row then row.Parent = sheriffFrame; row.LayoutOrder = 258 end
-		end
 	end
+end
 
+do
 	-- MURDERER TAB: LayoutOrder 270-285
 	local murdererFrame = categoryFrames["Murderer"]
 	if murdererFrame then
@@ -27296,13 +28228,21 @@ do
 		murdSection.TextSize = 15
 		murdSection.LayoutOrder = 270
 		murdSection.Parent = murdererFrame
-		-- Move Kill Everyone
 		if killEveryoneBtn then killEveryoneBtn.Parent = murdererFrame; killEveryoneBtn.LayoutOrder = 271 end
-		-- Move Kill Everyone (except friends)
 		if killEveryoneNoFriendsBtn then killEveryoneNoFriendsBtn.Parent = murdererFrame; killEveryoneNoFriendsBtn.LayoutOrder = 272 end
-		-- Move Kill Sheriff
 		if killSheriffBtn then killSheriffBtn.Parent = murdererFrame; killSheriffBtn.LayoutOrder = 273 end
-		-- Move Kill Picker (by prefix search)
+		if killPlayerBtn then killPlayerBtn.Parent = murdererFrame; killPlayerBtn.LayoutOrder = 275 end
+		if autoKillEveryoneBtn then autoKillEveryoneBtn.Parent = murdererFrame; autoKillEveryoneBtn.LayoutOrder = 276 end
+		if autoKillEveryoneNoFriendsBtn then autoKillEveryoneNoFriendsBtn.Parent = murdererFrame; autoKillEveryoneNoFriendsBtn.LayoutOrder = 277 end
+		if autoKillSheriffBtn then autoKillSheriffBtn.Parent = murdererFrame; autoKillSheriffBtn.LayoutOrder = 278 end
+		if reachButton then
+			local row = reachButton.Parent
+			if row then row.Parent = murdererFrame; row.LayoutOrder = 279 end
+		end
+		if throwingKnifeAuraButton then
+			local row = throwingKnifeAuraButton.Parent
+			if row then row.Parent = murdererFrame; row.LayoutOrder = 280 end
+		end
 		local combatFrame2 = categoryFrames["Combat"]
 		if combatFrame2 then
 			for _, child in ipairs(combatFrame2:GetChildren()) do
@@ -27314,26 +28254,10 @@ do
 				end
 			end
 		end
-		-- Move Kill Player
-		if killPlayerBtn then killPlayerBtn.Parent = murdererFrame; killPlayerBtn.LayoutOrder = 275 end
-		-- Move Auto Kill Everyone
-		if autoKillEveryoneBtn then autoKillEveryoneBtn.Parent = murdererFrame; autoKillEveryoneBtn.LayoutOrder = 276 end
-		-- Move Auto Kill Everyone (except friends)
-		if autoKillEveryoneNoFriendsBtn then autoKillEveryoneNoFriendsBtn.Parent = murdererFrame; autoKillEveryoneNoFriendsBtn.LayoutOrder = 277 end
-		-- Move Auto Kill Sheriff
-		if autoKillSheriffBtn then autoKillSheriffBtn.Parent = murdererFrame; autoKillSheriffBtn.LayoutOrder = 278 end
-		-- Move KillAura (dual row: reachButton.Parent is a row frame)
-		if reachButton then
-			local row = reachButton.Parent
-			if row then row.Parent = murdererFrame; row.LayoutOrder = 279 end
-		end
-		-- Move Throwing Knife Aura (dual row) right after KillAura
-		if throwingKnifeAuraButton then
-			local row = throwingKnifeAuraButton.Parent
-			if row then row.Parent = murdererFrame; row.LayoutOrder = 280 end
-		end
 	end
+end
 
+do
 	-- RESET TAB: LayoutOrder 310-330
 	local resetFrame = categoryFrames["Reset"]
 	local utilFrame = categoryFrames["Utilities"]
@@ -27348,9 +28272,15 @@ do
 		rstSection.TextSize = 15
 		rstSection.LayoutOrder = 310
 		rstSection.Parent = resetFrame
-		-- Move Reset Player row
 		if resetPlayerRow then resetPlayerRow.Parent = resetFrame; resetPlayerRow.LayoutOrder = 311 end
-		-- Move Reset Picker elements
+		if resetSelectedBtn then resetSelectedBtn.Parent = resetFrame; resetSelectedBtn.LayoutOrder = 313 end
+		if resetEveryoneBtn then resetEveryoneBtn.Parent = resetFrame; resetEveryoneBtn.LayoutOrder = 314 end
+		if resetSheriffBtn then resetSheriffBtn.Parent = resetFrame; resetSheriffBtn.LayoutOrder = 315 end
+		if resetMurdererBtn then resetMurdererBtn.Parent = resetFrame; resetMurdererBtn.LayoutOrder = 316 end
+		if autoResetPlayerBtn then autoResetPlayerBtn.Parent = resetFrame; autoResetPlayerBtn.LayoutOrder = 317 end
+		if autoResetEveryoneBtn then autoResetEveryoneBtn.Parent = resetFrame; autoResetEveryoneBtn.LayoutOrder = 318 end
+		if autoResetSheriffBtn then autoResetSheriffBtn.Parent = resetFrame; autoResetSheriffBtn.LayoutOrder = 319 end
+		if autoResetMurdererBtn then autoResetMurdererBtn.Parent = resetFrame; autoResetMurdererBtn.LayoutOrder = 320 end
 		for _, child in ipairs(utilFrame:GetChildren()) do
 			if child.Name:match("^Reset") and child.Name:match("Picker") then
 				child.Parent = resetFrame
@@ -27359,23 +28289,6 @@ do
 				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 312.006 end
 			end
 		end
-		-- Move Reset Selected
-		if resetSelectedBtn then resetSelectedBtn.Parent = resetFrame; resetSelectedBtn.LayoutOrder = 313 end
-		-- Move Reset Everyone
-		if resetEveryoneBtn then resetEveryoneBtn.Parent = resetFrame; resetEveryoneBtn.LayoutOrder = 314 end
-		-- Move Reset Sheriff/Hero
-		if resetSheriffBtn then resetSheriffBtn.Parent = resetFrame; resetSheriffBtn.LayoutOrder = 315 end
-		-- Move Reset Murderer
-		if resetMurdererBtn then resetMurdererBtn.Parent = resetFrame; resetMurdererBtn.LayoutOrder = 316 end
-		-- Move Auto Reset Player
-		if autoResetPlayerBtn then autoResetPlayerBtn.Parent = resetFrame; autoResetPlayerBtn.LayoutOrder = 317 end
-		-- Move Auto Reset Everyone
-		if autoResetEveryoneBtn then autoResetEveryoneBtn.Parent = resetFrame; autoResetEveryoneBtn.LayoutOrder = 318 end
-		-- Move Auto Reset Sheriff/Hero
-		if autoResetSheriffBtn then autoResetSheriffBtn.Parent = resetFrame; autoResetSheriffBtn.LayoutOrder = 319 end
-		-- Move Auto Reset Murderer
-		if autoResetMurdererBtn then autoResetMurdererBtn.Parent = resetFrame; autoResetMurdererBtn.LayoutOrder = 320 end
-		-- Move Watch Murderer Picker
 		for _, child in ipairs(utilFrame:GetChildren()) do
 			if child.Name:match("^WatchMurderer") and child.Name:match("Picker") then
 				child.Parent = resetFrame
@@ -27384,7 +28297,6 @@ do
 				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 321.006 end
 			end
 		end
-		-- Move Watch Sheriff Picker
 		for _, child in ipairs(utilFrame:GetChildren()) do
 			if child.Name:match("^WatchSheriff") and child.Name:match("Picker") then
 				child.Parent = resetFrame
@@ -27394,23 +28306,23 @@ do
 			end
 		end
 	end
+end
 
-	-- Move Auto Remove Coins, Auto Mute Coins, Auto Delete Corpses to Combat (end)
+do
 	local combatEndFrame = categoryFrames["Combat"]
 	if combatEndFrame then
 		if btn.autoDeleteCoins then btn.autoDeleteCoins.Parent = combatEndFrame; btn.autoDeleteCoins.LayoutOrder = 258.5 end
 		if btn.autoMuteCoins then btn.autoMuteCoins.Parent = combatEndFrame; btn.autoMuteCoins.LayoutOrder = 258.6 end
 		if btn.autoDeleteCorpses then btn.autoDeleteCorpses.Parent = combatEndFrame; btn.autoDeleteCorpses.LayoutOrder = 258.7 end
 	end
+end
 
-	-- Move LoopSpeed to Player 1st place (LayoutOrder 100.1)
+do
 	local mvmtFrame = categoryFrames["Player"]
 	if mvmtFrame then
 		local lsRow = loopSpeedButton and loopSpeedButton.Parent
 		if lsRow then lsRow.Parent = mvmtFrame; lsRow.LayoutOrder = 100.1 end
 		if customJumpPowerRow then customJumpPowerRow.Parent = mvmtFrame; customJumpPowerRow.LayoutOrder = 100.15 end
-		-- Move AirStrafe to Player 2nd place (LayoutOrder 100.2)
-		-- Wrap AirStrafe in a dual row with value input
 		if airStrafeButton then
 			local asRow = Instance.new("Frame")
 			asRow.Name = "AirStrafeRow"
@@ -27447,9 +28359,9 @@ do
 			end)
 		end
 	end
+end
 
-	-- COLLAPSIBLE FLING PLAYER LIST
-	-- Add a collapse button to the Multi Fling section header
+do
 	local utilFling = categoryFrames["Utilities"]
 	if utilFling and multiFlingFrame then
 		multiFlingCollapsed = false
@@ -27511,3 +28423,6 @@ task.defer(function()
 	task.wait(2)
 	if notifyExistingMarkedPlayers then pcall(notifyExistingMarkedPlayers) end
 end)
+end
+
+initToggleAndMainGUI()
