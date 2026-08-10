@@ -18193,6 +18193,7 @@ function autofarmQueueRejoin()
 	local url = tostring(AUTOFARM_SCRIPT_URL or ""):gsub("^%s+", ""):gsub("%s+$", "")
 	if url == "" then return false end
 	local q = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
+	if not q then pcall(function() q = getgenv().queue_on_teleport end) end
 	if not q then return false end
 	local ok = pcall(q, string.format('task.wait(3) loadstring(game:HttpGet(%q))()', url))
 	return ok
@@ -18202,8 +18203,13 @@ function autofarmServerHop()
 	-- Persist the current toggles FIRST: autofarm state, speed, webhook etc are
 	-- restored straight from the saved config after the rejoin.
 	pcall(saveConfig)
+	-- Clear the one-time guard so the script can re-activate on the new server.
+	-- Some executors keep getgenv() across teleports; without this the queued
+	-- loadstring hits the "Script already loaded!" guard and silently returns.
+	pcall(function() getgenv().AdrenalinWinLoaded = nil end)
 	if not autofarmQueueRejoin() then
 		notify("Server Hop", "Fill Script URL box to auto-load after hop (or your executor lacks queue_on_teleport)", 5)
+		return
 	end
 	local hopped = false
 	pcall(function()
@@ -18250,6 +18256,30 @@ task.spawn(function()
 		end
 	end
 end)
+
+-- Kick / disconnect handler: save config + queue script before the game closes so
+-- the player can re-execute on rejoin and Server Hop continues working.
+local lastHopAttempt = 0
+local function onDisconnecting()
+	if os.clock() - lastHopAttempt < 5 then return end
+	lastHopAttempt = os.clock()
+	pcall(saveConfig)
+	pcall(function() getgenv().AdrenalinWinLoaded = nil end)
+	if autofarmServerHopEnabled then
+		pcall(autofarmQueueRejoin)
+	end
+end
+game:BindToClose(function()
+	onDisconnecting()
+	task.wait(2)
+end)
+if player then
+	player.OnTeleport:Connect(function(state)
+		if state == Enum.TeleportState.Started or state == Enum.TeleportState.Failed then
+			onDisconnecting()
+		end
+	end)
+end
 
 autofarmServerHopBtn = createButton("AutofarmServerHopButton", "Server Hop When Alone: OFF", 335)
 autofarmServerHopBtn.MouseButton1Click:Connect(function()
