@@ -18269,10 +18269,6 @@ local function onDisconnecting()
 		pcall(autofarmQueueRejoin)
 	end
 end
-game:BindToClose(function()
-	onDisconnecting()
-	task.wait(2)
-end)
 if player then
 	player.OnTeleport:Connect(function(state)
 		if state == Enum.TeleportState.Started or state == Enum.TeleportState.Failed then
