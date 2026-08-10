@@ -318,13 +318,25 @@ config.toggles.gameNotifEnabled = gameNotifEnabled
 	config.toggles.coinAuraEnabled = coinAuraEnabled
 	config.values.coinAuraRadius = coinAuraRadius
 	config.values.DesyncOffsetRange = DesyncOffsetRange
+	config.values.DesyncSpinOffset = DesyncSpinOffset
 	config.values.antiAimSpeed = antiAimSpeed
 	config.values.loopSpeedValue = loopSpeedValue
 	config.values.customJumpPowerValue = customJumpPowerValue
 	config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
 	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed
 	config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
-	config.pickerCollapsed = (loadedConfig and loadedConfig.pickerCollapsed) or {}
+	if loadedConfig and loadedConfig.pickerCollapsed then
+		config.pickerCollapsed = {}
+		for k, v in pairs(loadedConfig.pickerCollapsed) do config.pickerCollapsed[k] = v end
+	else
+		config.pickerCollapsed = {}
+	end
+	if loadedConfig and loadedConfig.pickerMultiSelect then
+		config.pickerMultiSelect = {}
+		for k, v in pairs(loadedConfig.pickerMultiSelect) do config.pickerMultiSelect[k] = v end
+	else
+		config.pickerMultiSelect = {}
+	end
 	config.values.multiFlingCollapsed = multiFlingCollapsed or false
 	config.values.airStrafeMultiplier = airStrafeMultiplier
 	if trollPicker then config.pickerCollapsed.Troll = trollPicker.collapsed end
@@ -4643,7 +4655,7 @@ titleBar.Position = UDim2.new(0, 10, 0, 0)
 titleBar.BackgroundTransparency = 1
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.TextXAlignment = Enum.TextXAlignment.Left
-titleBar.Text = "Adrenalin.win V7.8 — X-Hub Edition"
+titleBar.Text = "Adrenalin.win V3.7.8.26"
 titleBar.Font = Enum.Font.SourceSansBold
 titleBar.TextSize = 16.5
 titleBar.Parent = topBar
@@ -12538,11 +12550,20 @@ task.spawn(function()
 end)
 
 -- Desync (original spin technique): spin + walk, bullets pass even while moving
-desyncSpinButton = createButton("DesyncSpinButton", "Desync: OFF", 202)
+desyncSpinButton, desyncSpinInput = createDualRow("DesyncSpinButton", "Desync: OFF", "Studs", DesyncSpinOffset, 202)
 desyncSpinButton.MouseButton1Click:Connect(function()
 	toggleDesyncSpin()
 	setToggleState(desyncSpinButton, DesyncSpinActive, "Desync: ON", "Desync: OFF")
 	setExtractedBtnState("Desync", DesyncSpinActive)
+end)
+desyncSpinInput.FocusLost:Connect(function()
+	local val = tonumber(desyncSpinInput.Text)
+	if val and val > 0 then
+		DesyncSpinOffset = val
+		saveConfig()
+	else
+		desyncSpinInput.Text = tostring(DesyncSpinOffset)
+	end
 end)
 
 -- Anti-Shoot (aggressive positional desync) with adjustable scatter studs field
@@ -25260,7 +25281,7 @@ function buildConfigData()
 	config.toggles.throwingKnifeAuraEnabled = throwingKnifeAuraEnabled; config.values.throwingKnifeAuraRadius = throwingKnifeAuraRadius
 	config.values.autoInvisDeactivateDist = autoInvisDeactivateDist; config.values.autoTpDist = autoTpDist
 	config.values.autoTpTarget = autoTpTarget; config.values.MAGNET_DISTANCE = MAGNET_DISTANCE
-	config.values.DesyncOffsetRange = DesyncOffsetRange; config.values.antiAimSpeed = antiAimSpeed
+	config.values.DesyncOffsetRange = DesyncOffsetRange; config.values.DesyncSpinOffset = DesyncSpinOffset; config.values.antiAimSpeed = antiAimSpeed
 	config.values.loopSpeedValue = loopSpeedValue; config.values.customJumpPowerValue = customJumpPowerValue; config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
 	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed; config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
 	config.values.multiFlingCollapsed = multiFlingCollapsed or false; config.values.airStrafeMultiplier = airStrafeMultiplier
@@ -27214,6 +27235,7 @@ function restoreFullConfig()
 		if c.values.MAGNET_DISTANCE then MAGNET_DISTANCE = c.values.MAGNET_DISTANCE end
 		if c.values.coinAuraRadius then coinAuraRadius = math.clamp(c.values.coinAuraRadius, 1, 20); if ui.coinAuraRadiusInput then ui.coinAuraRadiusInput.Text = tostring(coinAuraRadius) end end
 		if c.values.DesyncOffsetRange then DesyncOffsetRange = c.values.DesyncOffsetRange; if desyncOffsetInput then desyncOffsetInput.Text = tostring(DesyncOffsetRange) end end
+		if c.values.DesyncSpinOffset then DesyncSpinOffset = c.values.DesyncSpinOffset; if desyncSpinInput then desyncSpinInput.Text = tostring(DesyncSpinOffset) end end
 		if c.values.antiAimSpeed then antiAimSpeed = c.values.antiAimSpeed; if antiAimSpeedInput then antiAimSpeedInput.Text = tostring(antiAimSpeed) end end
 		if c.values.antiAimSpeedGlitchValue then antiAimSpeedGlitchValue = c.values.antiAimSpeedGlitchValue; if antiAimSpeedGlitchSpdInput then antiAimSpeedGlitchSpdInput.Text = tostring(antiAimSpeedGlitchValue) end end
 		if c.values.loopSpeedValue then loopSpeedValue = c.values.loopSpeedValue; if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end end
@@ -28231,6 +28253,17 @@ do
 		if killEveryoneBtn then killEveryoneBtn.Parent = murdererFrame; killEveryoneBtn.LayoutOrder = 271 end
 		if killEveryoneNoFriendsBtn then killEveryoneNoFriendsBtn.Parent = murdererFrame; killEveryoneNoFriendsBtn.LayoutOrder = 272 end
 		if killSheriffBtn then killSheriffBtn.Parent = murdererFrame; killSheriffBtn.LayoutOrder = 273 end
+		local combatFrame2 = categoryFrames["Combat"]
+		if combatFrame2 then
+			for _, child in ipairs(combatFrame2:GetChildren()) do
+				if child.Name:match("^Kill") and child.Name:match("Picker") then
+					child.Parent = murdererFrame
+					if child.Name:match("TitleBar") then child.LayoutOrder = 274 end
+					if child.Name:match("Search") then child.LayoutOrder = 274.005 end
+					if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 274.006 end
+				end
+			end
+		end
 		if killPlayerBtn then killPlayerBtn.Parent = murdererFrame; killPlayerBtn.LayoutOrder = 275 end
 		if autoKillEveryoneBtn then autoKillEveryoneBtn.Parent = murdererFrame; autoKillEveryoneBtn.LayoutOrder = 276 end
 		if autoKillEveryoneNoFriendsBtn then autoKillEveryoneNoFriendsBtn.Parent = murdererFrame; autoKillEveryoneNoFriendsBtn.LayoutOrder = 277 end
@@ -28242,17 +28275,6 @@ do
 		if throwingKnifeAuraButton then
 			local row = throwingKnifeAuraButton.Parent
 			if row then row.Parent = murdererFrame; row.LayoutOrder = 280 end
-		end
-		local combatFrame2 = categoryFrames["Combat"]
-		if combatFrame2 then
-			for _, child in ipairs(combatFrame2:GetChildren()) do
-				if child.Name:match("^Kill") and child.Name:match("Picker") then
-					child.Parent = murdererFrame
-					if child.Name:match("TitleBar") then child.LayoutOrder = 274 end
-					if child.Name:match("Search") then child.LayoutOrder = 274.005 end
-					if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 274.006 end
-				end
-			end
 		end
 	end
 end
