@@ -404,7 +404,6 @@ config.values.murdererDieSoundPath = murdererDieSoundPath
 	config.values.roundStartSoundPath = roundStartSoundPath
 config.values.voteStartSoundPath = voteStartSoundPath
 	config.values.explicitlyClearedSoundPaths = explicitlyClearedSoundPaths
-	config.values.fakeKnifeSlot = fakeKnifeSlot
 	config.values.scriptActivationCount = scriptActivationCount
 	config.values.autofarmWebhookUrl = AUTOFARM_WEBHOOK_URL
 	config.values.autofarmTargetCoins = autofarmTargetCoins
@@ -2200,7 +2199,6 @@ if loadedConfig and loadedConfig.values then
 	if c.voteStartSoundPath ~= nil then voteStartSoundPath = c.voteStartSoundPath end
 	if c.explicitlyClearedSoundPaths ~= nil then explicitlyClearedSoundPaths = c.explicitlyClearedSoundPaths end
 	if c.useDevicePaths ~= nil then useDevicePaths = c.useDevicePaths end
-	if c.fakeKnifeSlot ~= nil then fakeKnifeSlot = c.fakeKnifeSlot end
 end
 
 function setupExploiterTracking()
@@ -7469,51 +7467,7 @@ end)
 -- Fake Knife
 fakeKnifeEnabled = false
 fakeKnifeConn = nil
-fakeKnifeCloned = nil
-fakeKnifeSlot = 0
-
-do
-	local fakeKnifeRow = Instance.new("Frame")
-	fakeKnifeRow.Name = "FakeKnifeRow"
-	fakeKnifeRow.Size = UDim2.new(1, 0, 0, 42)
-	fakeKnifeRow.BackgroundTransparency = 1
-	fakeKnifeRow.LayoutOrder = 299
-	if categoryFrames[currentCategory] then fakeKnifeRow.Parent = categoryFrames[currentCategory] end
-
-	fakeKnifeBtn = Instance.new("TextButton")
-	fakeKnifeBtn.Name = "FakeKnifeButton"
-	fakeKnifeBtn.Size = UDim2.new(1, -64, 1, 0)
-	fakeKnifeBtn.BackgroundColor3 = btnBgColor
-	fakeKnifeBtn.TextColor3 = btnTextColor
-	fakeKnifeBtn.Text = "Fake Knife: OFF"
-	fakeKnifeBtn.Font = Enum.Font.SourceSansBold
-	fakeKnifeBtn.TextSize = 15
-	fakeKnifeBtn.Parent = fakeKnifeRow
-	Instance.new("UICorner", fakeKnifeBtn).CornerRadius = UDim.new(0, 6)
-
-	fakeKnifeSlotInput = Instance.new("TextBox")
-	fakeKnifeSlotInput.Name = "FakeKnifeSlotInput"
-	fakeKnifeSlotInput.Size = UDim2.new(0, 60, 1, 0)
-	fakeKnifeSlotInput.Position = UDim2.new(1, -60, 0, 0)
-	fakeKnifeSlotInput.BackgroundColor3 = inputBgColor
-	fakeKnifeSlotInput.TextColor3 = inputTextColor
-	fakeKnifeSlotInput.PlaceholderText = "Slot"
-	fakeKnifeSlotInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
-	fakeKnifeSlotInput.Text = tostring(fakeKnifeSlot)
-	fakeKnifeSlotInput.Font = Enum.Font.SourceSansBold
-	fakeKnifeSlotInput.TextSize = 15
-	fakeKnifeSlotInput.ClearTextOnFocus = false
-	fakeKnifeSlotInput.Parent = fakeKnifeRow
-	Instance.new("UICorner", fakeKnifeSlotInput).CornerRadius = UDim.new(0, 6)
-
-	fakeKnifeSlotInput.FocusLost:Connect(function()
-		local v = tonumber(fakeKnifeSlotInput.Text)
-		if v == nil then v = 0 end
-		fakeKnifeSlot = math.clamp(math.floor(v), 0, 9)
-		fakeKnifeSlotInput.Text = tostring(fakeKnifeSlot)
-		saveConfig()
-	end)
-end
+fakeKnifeBtn = createButton("FakeKnifeButton", "Fake Knife: OFF", 299)
 fakeKnifeBtn.MouseButton1Click:Connect(function()
 	if not fakeKnifeEnabled then
 		fakeKnifeEnabled = true
@@ -7523,30 +7477,6 @@ fakeKnifeBtn.MouseButton1Click:Connect(function()
 		local Players = game:GetService('Players')
 		local RunService = game:GetService('RunService')
 		local LocalPlayer = Players.LocalPlayer
-		local function placeFakeKnifeSlot(tool)
-			-- Move a tool so it sits at the requested inventory slot (0-9) by
-			-- rebuilding the Backpack child order around it.
-			local bp = LocalPlayer.Backpack
-			if not bp or not tool or tool.Parent ~= bp then return end
-			local slot = math.clamp(math.floor(fakeKnifeSlot), 0, 9)
-			local others = {}
-			for _, c in ipairs(bp:GetChildren()) do
-				if c ~= tool then others[#others + 1] = c end
-			end
-			local rebuild = {}
-			for i = 1, #others do
-				if i == slot + 1 then rebuild[#rebuild + 1] = tool end
-				rebuild[#rebuild + 1] = others[i]
-			end
-			if #rebuild == #others then rebuild[#rebuild + 1] = tool end
-			for _, c in ipairs(rebuild) do
-				c.Parent = nil
-			end
-			task.wait()
-			for _, c in ipairs(rebuild) do
-				c.Parent = bp
-			end
-		end
 		fakeKnifeConn = RunService.RenderStepped:Connect(function()
 			if not fakeKnifeEnabled then return end
 			for _, player in pairs(Players:GetChildren()) do
@@ -7558,8 +7488,6 @@ fakeKnifeBtn.MouseButton1Click:Connect(function()
 							and not LocalPlayer.Character:FindFirstChild('Knife') then
 							local clonedKnife = knife:Clone()
 							clonedKnife.Parent = LocalPlayer.Backpack
-							fakeKnifeCloned = clonedKnife
-							placeFakeKnifeSlot(clonedKnife)
 						end
 					end
 				end
@@ -7567,16 +7495,7 @@ fakeKnifeBtn.MouseButton1Click:Connect(function()
 		end)
 	else
 		if fakeKnifeConn then fakeKnifeConn:Disconnect() end
-		fakeKnifeConn = nil
-		-- Remove the fake knife again when disabling — the clone stays in the
-		-- backpack otherwise.
-		if fakeKnifeCloned then
-			pcall(function()
-				if fakeKnifeCloned.Parent then fakeKnifeCloned:Destroy() end
-			end)
-			fakeKnifeCloned = nil
-		end
-		fakeKnifeEnabled = false
+		fakeKnifeEnabled = false; fakeKnifeConn = nil
 		fakeKnifeBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		fakeKnifeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		fakeKnifeBtn.Text = "Fake Knife: OFF"
@@ -9710,18 +9629,17 @@ korbloxEnabled = false
 local korbloxConn = nil
 
 function applyKorblox(char)
-	task.wait(1)
-	local rll = char:FindFirstChild("RightLowerLeg")
+	local rll = char:WaitForChild("RightLowerLeg", 2)
 	if rll then rll.MeshId = "http://www.roblox.com/asset/?id=902942093"; rll.Transparency = 1 end
-	local rul = char:FindFirstChild("RightUpperLeg")
+	local rul = char:WaitForChild("RightUpperLeg", 2)
 	if rul then rul.MeshId = "http://www.roblox.com/asset/?id=902942096"; rul.TextureID = "http://www.roblox.com/asset/?id=902843398" end
-	local rf = char:FindFirstChild("RightFoot")
+	local rf = char:WaitForChild("RightFoot", 2)
 	if rf then rf.MeshId = "http://www.roblox.com/asset/?id=902942089"; rf.Transparency = 1 end
 end
 
 function enableKorblox()
 	korbloxEnabled = true
-	if player.Character then applyKorblox(player.Character) end
+	if player.Character then task.spawn(applyKorblox, player.Character) end
 	korbloxConn = player.CharacterAdded:Connect(applyKorblox)
 end
 
@@ -9741,14 +9659,13 @@ headlessEnabled = false
 local headlessConn = nil
 
 function applyHeadless(char)
-	task.wait(1)
-	local head = char:FindFirstChild("Head")
+	local head = char:WaitForChild("Head", 2)
 	if head then head.MeshId = "http://www.roblox.com/asset/?id=6686307858"; head.TextureID = "http://www.roblox.com/asset/?id=6686307858"; head.Transparency = 1 end
 end
 
 function enableHeadless()
 	headlessEnabled = true
-	if player.Character then applyHeadless(player.Character) end
+	if player.Character then task.spawn(applyHeadless, player.Character) end
 	headlessConn = player.CharacterAdded:Connect(applyHeadless)
 end
 
@@ -9799,15 +9716,14 @@ local function removeHeadHats(char) -- destroy only accessories tied to the Head
 end
 
 function applyHeadlessAllHats(char)
-	task.wait(1)
-	local head = char:FindFirstChild("Head")
+	local head = char:WaitForChild("Head", 2)
 	if head then head.MeshId = "http://www.roblox.com/asset/?id=6686307858"; head.TextureID = "http://www.roblox.com/asset/?id=6686307858"; head.Transparency = 1 end
 	removeHeadHats(char)
 end
 
 function enableHeadlessAllHats()
 	headlessAllHatsEnabled = true
-	if player.Character then applyHeadlessAllHats(player.Character) end
+	if player.Character then task.spawn(applyHeadlessAllHats, player.Character) end
 	headlessAllHatsConn = player.CharacterAdded:Connect(applyHeadlessAllHats)
 end
 
@@ -10739,7 +10655,7 @@ function gameNotifSendRound(murdererName, sheriffName, perkName)
 	end)
 
 	-- Perk line (if available)
-	if perkName and perkName ~= "?" and perkName ~= "" then
+	if perkName and perkName ~= "Not detected" and perkName ~= "?" and perkName ~= "" then
 		local perkAvatar = Instance.new("ImageLabel")
 		perkAvatar.Size = UDim2.new(0, 24, 0, 24)
 		perkAvatar.Position = UDim2.new(0, 10, 0, 78)
@@ -12406,24 +12322,29 @@ combatStatsLabel.TextXAlignment = Enum.TextXAlignment.Center
 combatStatsLabel.Parent = combatStatsFrame
 
 -- Combat Stats text cache for extracted button
-combatStatsMurderer = "?"
-combatStatsSheriff = "?"
-combatStatsHero = "?"
-combatStatsPerk = "?"
+combatStatsMurderer = "Not detected"
+combatStatsSheriff = "Not detected"
+combatStatsHero = "Not detected"
+combatStatsPerk = "Not detected"
 combatStatsGunDropped = "?"
+combatStatsMurdererStatus = nil
 
 function combatStatsRefreshText()
-	-- Sheriff/Hero display: if sheriff alive -> show Sheriff (blue), if sheriff dead
-	-- but someone picked up the gun -> show Hero (yellow), otherwise -> No One (blue)
+	local murdererDisplay = combatStatsMurderer
+	if combatStatsMurdererStatus == "Dead" then
+		murdererDisplay = combatStatsMurderer .. " (Dead)"
+	elseif combatStatsMurdererStatus == "Left" then
+		murdererDisplay = combatStatsMurderer .. " (Left)"
+	end
 	local sheriffHeroText
-	if combatStatsSheriff ~= "?" and combatStatsSheriff ~= "No One" then
+	if combatStatsSheriff ~= "Not detected" then
 		sheriffHeroText = '<font color="rgb(0,0,255)">Sheriff: ' .. combatStatsSheriff .. '</font>'
-	elseif combatStatsHero ~= "?" and combatStatsHero ~= "No One" then
+	elseif combatStatsHero ~= "Not detected" then
 		sheriffHeroText = '<font color="rgb(255,255,0)">Hero: ' .. combatStatsHero .. '</font>'
 	else
-		sheriffHeroText = '<font color="rgb(0,0,255)">Sheriff/Hero: No One</font>'
+		sheriffHeroText = '<font color="rgb(0,0,255)">Sheriff/Hero: Not detected</font>'
 	end
-	local text = '<font color="rgb(255,0,0)">Murderer: ' .. combatStatsMurderer .. '</font> | ' .. sheriffHeroText .. ' | <font color="rgb(255,0,0)">Perk: ' .. combatStatsPerk .. '</font> | <font color="rgb(160,0,255)">Gun Dropped: ' .. combatStatsGunDropped .. '</font>'
+	local text = '<font color="rgb(255,0,0)">Murderer: ' .. murdererDisplay .. '</font> | ' .. sheriffHeroText .. ' | <font color="rgb(100,0,0)">Perk: ' .. combatStatsPerk .. '</font> | <font color="rgb(160,0,255)">Gun Dropped: ' .. combatStatsGunDropped .. '</font>'
 	combatStatsLabel.Text = text
 	if extractedButtons then
 		local data = extractedButtons["Combat Stats"]
@@ -12520,29 +12441,53 @@ task.spawn(function()
 			return invokePlayerData()
 		end)
 		if ok and result then
-			local murderer, perkName = "?", "?"
+			local murderer, perkName = "Not detected", "Not detected"
+			local sheriffFromData = nil
 			for name, data in pairs(result) do
 				if data.Role == "Murderer" then
 					murderer = name
 					if data.Perk then perkName = data.Perk end
+				elseif data.Role == "Sheriff" then
+					sheriffFromData = name
 				end
 			end
-			-- Physically scan for the gun holder (same method as notifications).
-			-- This is more reliable than data.Role which can lag after death.
-			local sheriff, hero = combatStatsScanGunHolder(result)
-			if not sheriff then sheriff = "No One" end
-			if not hero then hero = "No One" end
-			combatStatsRoundActive = (murderer ~= "?")
+			-- Detect murderer dead or left
+			local murdererStatus = nil
+			if murderer ~= "Not detected" then
+				local mPlr = Players:FindFirstChild(murderer)
+				if not mPlr then
+					murdererStatus = "Left"
+				else
+					local mChar = mPlr.Character
+					local mHum = mChar and mChar:FindFirstChildOfClass("Humanoid")
+					if not mChar or not mHum or mHum.Health <= 0 then
+						murdererStatus = "Dead"
+					end
+				end
+			end
+			-- Sheriff: prefer role data (detects immediately when assigned),
+			-- fall back to physical gun scan only if data has no Sheriff yet
+			local sheriff, hero
+			if sheriffFromData then
+				sheriff = sheriffFromData
+				hero = nil
+			else
+				sheriff, hero = combatStatsScanGunHolder(result)
+			end
+			if not sheriff then sheriff = "Not detected" end
+			if not hero then hero = "Not detected" end
+			combatStatsRoundActive = (murderer ~= "Not detected")
 			if combatStatsRoundActive and not combatStatsLastRoundActive then
 				combatStatsGunDropped = "No"
 			end
 			combatStatsCheckGun()
 			combatStatsLastRoundActive = combatStatsRoundActive
-			if murderer ~= combatStatsMurderer or sheriff ~= combatStatsSheriff or hero ~= combatStatsHero or perkName ~= combatStatsPerk then
+			if murderer ~= combatStatsMurderer or sheriff ~= combatStatsSheriff or hero ~= combatStatsHero or perkName ~= combatStatsPerk or murdererStatus ~= combatStatsMurdererStatus then
 				combatStatsMurderer = murderer
 				combatStatsSheriff = sheriff
 				combatStatsHero = hero
 				combatStatsPerk = perkName
+				combatStatsMurdererStatus = murdererStatus
 				combatStatsRefreshText()
 			end
 		end
@@ -18219,7 +18164,7 @@ function autofarmServerHop()
 		local data = game:GetService("HttpService"):JSONDecode(raw)
 		local candidates = {}
 		for _, srv in ipairs((data and data.data) or {}) do
-			if srv.id and srv.id ~= game.JobId and type(srv.playing) == "number" and srv.playing < (srv.maxPlayers or 12) then
+			if srv.id and srv.id ~= game.JobId and type(srv.playing) == "number" and srv.playing >= 2 and srv.playing < (srv.maxPlayers or 12) then
 				table.insert(candidates, srv.id)
 			end
 		end
@@ -18245,6 +18190,7 @@ task.spawn(function()
 				if (os.clock() - aloneSince) >= 10 then
 					hopInProgress = true
 					notify("Server Hop", "Alone on the server — hopping to another one...", 3)
+					onDisconnecting()
 					autofarmServerHop()
 					task.wait(30) -- teleport failed/throttled -> allow a retry
 					hopInProgress = false
@@ -18265,9 +18211,9 @@ local function onDisconnecting()
 	lastHopAttempt = os.clock()
 	pcall(saveConfig)
 	pcall(function() getgenv().AdrenalinWinLoaded = nil end)
-	if autofarmServerHopEnabled then
-		pcall(autofarmQueueRejoin)
-	end
+	-- Always queue the script on disconnect so it re-loads on rejoin,
+	-- regardless of whether Server Hop is enabled.
+	pcall(autofarmQueueRejoin)
 end
 if player then
 	player.OnTeleport:Connect(function(state)
@@ -18275,7 +18221,25 @@ if player then
 			onDisconnecting()
 		end
 	end)
+	-- Detect player removal (kicked / banned mid-session)
+	player.AncestryChanged:Connect(function(_, parent)
+		if parent == nil then
+			onDisconnecting()
+		end
+	end)
+	-- Detect player leaving the game (server hop, manual leave, kick)
+	Players.PlayerRemoving:Connect(function(plr)
+		if plr == player then
+			onDisconnecting()
+		end
+	end)
 end
+-- Detect game shutdown / server-side kick
+pcall(function()
+	game:BindToClose(function()
+		onDisconnecting()
+	end)
+end)
 
 autofarmServerHopBtn = createButton("AutofarmServerHopButton", "Server Hop When Alone: OFF", 335)
 autofarmServerHopBtn.MouseButton1Click:Connect(function()
@@ -19547,6 +19511,11 @@ player.CharacterAdded:Connect(function(char)
     if not changerAutoApply then return end
     task.spawn(function()
         char:WaitForChild("Humanoid", 3)
+        -- Apply Headless / Korblox BEFORE avatar so accessories added by
+        -- changerApplyData are not deleted by removeHeadHats afterwards.
+        if headlessAllHatsEnabled then applyHeadlessAllHats(char) end
+        if headlessEnabled then applyHeadless(char) end
+        if korbloxEnabled then applyKorblox(char) end
         -- Strip native accessories & clothing FIRST
         changerUnchange()
         pcall(function()
@@ -19554,25 +19523,21 @@ player.CharacterAdded:Connect(function(char)
             local nm = changerLastAvatarName
             if nm and savedAvatars[nm] then
                 changerApplyData(savedAvatars[nm])
-                return
+            else
+                nm = changerAvatarPickerState and changerAvatarPickerState.selectedName
+                if nm and savedAvatars[nm] then
+                    changerApplyData(savedAvatars[nm])
+                elseif changerLastAvatarFields and next(changerLastAvatarFields) then
+                    changerApplyData(changerLastAvatarFields)
+                else
+                    local data = {}
+                    for key, box in pairs(changerSlotInputs) do
+                        local ids = changerExtractIds(box.Text)
+                        if #ids > 0 then data[key] = table.concat(ids, ",") end
+                    end
+                    if next(data) ~= nil then changerApplyData(data) end
+                end
             end
-            nm = changerAvatarPickerState and changerAvatarPickerState.selectedName
-            if nm and savedAvatars[nm] then
-                changerApplyData(savedAvatars[nm])
-                return
-            end
-            -- Fallback: last applied fields (from config)
-            if changerLastAvatarFields and next(changerLastAvatarFields) then
-                changerApplyData(changerLastAvatarFields)
-                return
-            end
-            -- Final fallback: current slot text boxes
-            local data = {}
-            for key, box in pairs(changerSlotInputs) do
-                local ids = changerExtractIds(box.Text)
-                if #ids > 0 then data[key] = table.concat(ids, ",") end
-            end
-            if next(data) ~= nil then changerApplyData(data) end
         end)
     end)
 end)
@@ -19584,15 +19549,17 @@ task.defer(function()
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
+    -- Apply Headless / Korblox BEFORE avatar
+    if headlessAllHatsEnabled then applyHeadlessAllHats(char) end
+    if headlessEnabled then applyHeadless(char) end
+    if korbloxEnabled then applyKorblox(char) end
     -- Strip native accessories & clothing FIRST
     changerUnchange()
     pcall(function()
         local nm = changerLastAvatarName
         if nm and savedAvatars[nm] then
             changerApplyData(savedAvatars[nm])
-            return
-        end
-        if changerLastAvatarFields and next(changerLastAvatarFields) then
+        elseif changerLastAvatarFields and next(changerLastAvatarFields) then
             changerApplyData(changerLastAvatarFields)
         end
     end)
@@ -25334,7 +25301,6 @@ function buildConfigData()
 	config.values.markSoundPath = markSoundPath; config.values.unmarkSoundPath = unmarkSoundPath
 	config.values.roundStartSoundPath = roundStartSoundPath; config.values.voteStartSoundPath = voteStartSoundPath
 config.values.explicitlyClearedSoundPaths = explicitlyClearedSoundPaths
-	config.values.fakeKnifeSlot = fakeKnifeSlot
 	config.values.scriptActivationCount = scriptActivationCount
 	config.values.autofarmWebhookUrl = AUTOFARM_WEBHOOK_URL
 	config.values.autofarmTargetCoins = autofarmTargetCoins; config.values.autofarmSpeed = autofarmSpeed
@@ -26441,7 +26407,7 @@ for bindOrder, feature in ipairs(btnFeatures) do
 				line1Text.TextXAlignment = Enum.TextXAlignment.Left
 				line1Text.Font = Enum.Font.Code
 				line1Text.TextSize = combatStatsTextSize
-				line1Text.Text = '<font color="rgb(255,0,0)">Murderer: ' .. combatStatsMurderer .. '</font> | <font color="rgb(0,0,255)">Sheriff: ' .. combatStatsSheriff .. '</font> | <font color="rgb(255,0,0)">Perk: ' .. combatStatsPerk .. '</font> | <font color="rgb(160,0,255)">Gun Dropped: ' .. combatStatsGunDropped .. '</font>'
+				line1Text.Text = '<font color="rgb(255,0,0)">Murderer: ' .. combatStatsMurderer .. '</font> | <font color="rgb(0,0,255)">Sheriff: ' .. combatStatsSheriff .. '</font> | <font color="rgb(100,0,0)">Perk: ' .. combatStatsPerk .. '</font> | <font color="rgb(160,0,255)">Gun Dropped: ' .. combatStatsGunDropped .. '</font>'
 				line1Text.Parent = popupBorder
 
 				data.line1Text = line1Text
@@ -27345,7 +27311,6 @@ function restoreFullConfig()
 		if c.values.unmarkSoundPath ~= nil then unmarkSoundPath = c.values.unmarkSoundPath end
 		if c.values.roundStartSoundPath ~= nil then roundStartSoundPath = c.values.roundStartSoundPath end
 		if c.values.explicitlyClearedSoundPaths ~= nil then explicitlyClearedSoundPaths = c.values.explicitlyClearedSoundPaths end
-		if c.values.fakeKnifeSlot ~= nil then fakeKnifeSlot = c.values.fakeKnifeSlot end
 	end
 
 	-- Apply restored UI colors
@@ -28211,10 +28176,6 @@ function restoreFullConfig()
 			end
 		end
 	end
-	-- Restore Fake Knife slot UI
-	if fakeKnifeSlotInput then
-		fakeKnifeSlotInput.Text = tostring(fakeKnifeSlot)
-	end
 end
 
 -- Config restore Р±РµР· Р·Р°РґРµСЂР¶РєРё - UI СѓР¶Рµ РіРѕС‚РѕРІ Рє СЌС‚РѕРјСѓ РјРѕРјРµРЅС‚Сѓ
@@ -28473,4 +28434,4 @@ task.defer(function()
 end)
 end
 
-initToggleAndMainGUI()
+initToggleAndMainGUI() 
