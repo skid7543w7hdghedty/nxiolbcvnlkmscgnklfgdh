@@ -269,6 +269,7 @@ config.toggles.gameNotifEnabled = gameNotifEnabled
 	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled
 	config.toggles.tryhardAnimEnabled = tryhardAnimEnabled
 	config.toggles.tryhardMainEnabled = tryhardMainEnabled
+	config.toggles.r6AnimEnabled = r6AnimEnabled
 	config.toggles.korbloxEnabled = korbloxEnabled
 	config.toggles.headlessEnabled = headlessEnabled
 	config.toggles.headlessAllHatsEnabled = headlessAllHatsEnabled
@@ -9624,6 +9625,48 @@ function disableTryhardMain()
 	if tryhardMainConn then tryhardMainConn:Disconnect() tryhardMainConn = nil end
 end
 
+-- R6 Animation (toggleable) — R6-style animation set
+r6AnimEnabled = false
+local r6AnimConn = nil
+
+function applyR6Anim(char)
+	local animate = char:WaitForChild("Animate")
+	local humanoid = char:WaitForChild("Humanoid")
+	local animator = humanoid:WaitForChild("Animator")
+	for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end
+	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then return end
+	animate.idle.Animation1.AnimationId = "rbxassetid://94166452341856"
+	animate.idle.Animation2.AnimationId = "rbxassetid://94166452341856"
+	if animate.idle:FindFirstChild("Animation3") then
+		animate.idle.Animation3.AnimationId = "rbxassetid://94166452341856"
+	else
+		local pose = Instance.new("Animation"); pose.Name = "Animation3"
+		pose.AnimationId = "rbxassetid://94166452341856"; pose.Parent = animate.idle
+	end
+	animate.walk.WalkAnim.AnimationId = "rbxassetid://117695128103872"
+	animate.run.RunAnim.AnimationId = "rbxassetid://110721574762074"
+	animate.jump.JumpAnim.AnimationId = "rbxassetid://124384575411732"
+	animate.climb.ClimbAnim.AnimationId = "rbxassetid://124343044723062"
+	animate.fall.FallAnim.AnimationId = "rbxassetid://81200656715197"
+	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+	animate.Disabled = false
+end
+
+function enableR6Anim()
+	if zombieTryhardEnabled then disableZombieTryhard(); if btn.zombieBtn then setToggleState(btn.zombieBtn, false, "Zombie Tryhard: ON", "Zombie Tryhard: OFF") end end
+	if tryhardAnimEnabled then disableTryhardAnim(); if btn.tryhardAnimBtn then setToggleState(btn.tryhardAnimBtn, false, "Tryhard Anim: ON", "Tryhard Anim: OFF") end end
+	if tryhardMainEnabled then disableTryhardMain(); if btn.tryhardMainBtn then setToggleState(btn.tryhardMainBtn, false, "Tryhard Main: ON", "Tryhard Main: OFF") end end
+	if activeCustomAnimName then disableCustomAnim() end
+	r6AnimEnabled = true
+	if player.Character then task.spawn(applyR6Anim, player.Character) end
+	r6AnimConn = player.CharacterAdded:Connect(applyR6Anim)
+end
+
+function disableR6Anim()
+	r6AnimEnabled = false
+	if r6AnimConn then r6AnimConn:Disconnect() r6AnimConn = nil end
+end
+
 -- Korblox (toggleable)
 korbloxEnabled = false
 local korbloxConn = nil
@@ -18609,6 +18652,7 @@ function disableAnyOtherAnim()
 	if zombieTryhardEnabled then disableZombieTryhard() end
 	if tryhardAnimEnabled then disableTryhardAnim() end
 	if tryhardMainEnabled then disableTryhardMain() end
+	if r6AnimEnabled then disableR6Anim() end
 	if activeCustomAnimName then disableCustomAnim() end
 end
 
@@ -18701,6 +18745,13 @@ btn.tryhardMainBtn.MouseButton1Click:Connect(function()
 	if tryhardMainEnabled then disableTryhardMain()
 	else disableAnyOtherAnim(); enableTryhardMain() end
 	setToggleState(btn.tryhardMainBtn, tryhardMainEnabled, "Tryhard Main: ON", "Tryhard Main: OFF")
+end)
+
+btn.r6AnimBtn = createButton("R6AnimButton", "R6 Animation: OFF", 404)
+btn.r6AnimBtn.MouseButton1Click:Connect(function()
+	if r6AnimEnabled then disableR6Anim()
+	else disableAnyOtherAnim(); enableR6Anim() end
+	setToggleState(btn.r6AnimBtn, r6AnimEnabled, "R6 Animation: ON", "R6 Animation: OFF")
 end)
 
 -- ============ Custom animation builder ============
@@ -19507,15 +19558,12 @@ end)
 
 -- Re-apply saved avatar instantly after each respawn (zero delay).
 -- First removes all accessories/clothing, then applies the saved avatar.
+-- NOTE: Headless / Korblox are NOT called here — they have their own
+-- CharacterAdded connections via enableHeadless / enableKorblox / enableHeadlessAllHats.
 player.CharacterAdded:Connect(function(char)
     if not changerAutoApply then return end
     task.spawn(function()
         char:WaitForChild("Humanoid", 3)
-        -- Apply Headless / Korblox BEFORE avatar so accessories added by
-        -- changerApplyData are not deleted by removeHeadHats afterwards.
-        if headlessAllHatsEnabled then applyHeadlessAllHats(char) end
-        if headlessEnabled then applyHeadless(char) end
-        if korbloxEnabled then applyKorblox(char) end
         -- Strip native accessories & clothing FIRST
         changerUnchange()
         pcall(function()
@@ -19549,10 +19597,6 @@ task.defer(function()
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
-    -- Apply Headless / Korblox BEFORE avatar
-    if headlessAllHatsEnabled then applyHeadlessAllHats(char) end
-    if headlessEnabled then applyHeadless(char) end
-    if korbloxEnabled then applyKorblox(char) end
     -- Strip native accessories & clothing FIRST
     changerUnchange()
     pcall(function()
@@ -25252,7 +25296,7 @@ function buildConfigData()
 	config.toggles.notifyOnExploiters = notifyOnExploiters; config.toggles.notifyOnTeamers = notifyOnTeamers
 	config.toggles.notifyOnScammers = notifyOnScammers; config.toggles.hideButtonsEnabled = hideButtonsEnabled; config.toggles.hideMiniButtonsEnabled = hideMiniButtonsEnabled; config.toggles.skipLoadingScreenEnabled = skipLoadingScreenEnabled
 	config.toggles.notifyOnVoteStart = notifyOnVoteStart
-	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled; config.toggles.tryhardAnimEnabled = tryhardAnimEnabled; config.toggles.korbloxEnabled = korbloxEnabled; config.toggles.headlessEnabled = headlessEnabled; config.toggles.headlessAllHatsEnabled = headlessAllHatsEnabled
+	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled; config.toggles.tryhardAnimEnabled = tryhardAnimEnabled; config.toggles.tryhardMainEnabled = tryhardMainEnabled; config.toggles.r6AnimEnabled = r6AnimEnabled; config.toggles.korbloxEnabled = korbloxEnabled; config.toggles.headlessEnabled = headlessEnabled; config.toggles.headlessAllHatsEnabled = headlessAllHatsEnabled
 	config.toggles.crosshairEnabled = crosshairEnabled; config.toggles.keystrokeEnabled = keystrokeEnabled
 	config.toggles.shadersEnabled = shadersEnabled
 	config.toggles.autofarmEnabled = autofarmEnabled; config.toggles.autofarmResetInnocentEnabled = autofarmResetInnocentEnabled
@@ -27204,6 +27248,8 @@ function restoreFullConfig()
 	autoKillSheriffEnabled = T.autoKillSheriffEnabled or false
 	zombieTryhardEnabled = T.zombieTryhardEnabled or false
 	tryhardAnimEnabled = T.tryhardAnimEnabled or false
+	tryhardMainEnabled = T.tryhardMainEnabled or false
+	r6AnimEnabled = T.r6AnimEnabled or false
 	korbloxEnabled = T.korbloxEnabled or false
 	headlessEnabled = T.headlessEnabled or false
 	headlessAllHatsEnabled = T.headlessAllHatsEnabled or false
@@ -27952,6 +27998,7 @@ function restoreFullConfig()
 	if T.zombieTryhardEnabled then zombieTryhardEnabled = false; enableZombieTryhard(); if btn.zombieBtn then setToggleState(btn.zombieBtn, true, "Zombie Tryhard: ON", "Zombie Tryhard: OFF") end end
 	if T.tryhardAnimEnabled then tryhardAnimEnabled = false; enableTryhardAnim(); if btn.tryhardAnimBtn then setToggleState(btn.tryhardAnimBtn, true, "Tryhard Anim: ON", "Tryhard Anim: OFF") end end
 	if T.tryhardMainEnabled then tryhardMainEnabled = false; enableTryhardMain(); if btn.tryhardMainBtn then setToggleState(btn.tryhardMainBtn, true, "Tryhard Main: ON", "Tryhard Main: OFF") end end
+	if T.r6AnimEnabled then r6AnimEnabled = false; enableR6Anim(); if btn.r6AnimBtn then setToggleState(btn.r6AnimBtn, true, "R6 Animation: ON", "R6 Animation: OFF") end end
 	if T.korbloxEnabled then korbloxEnabled = false; enableKorblox(); if btn.korbloxBtn then setToggleState(btn.korbloxBtn, true, "Korblox: ON", "Korblox: OFF") end end
 	if T.headlessEnabled then headlessEnabled = false; enableHeadless(); if btn.headlessBtn then setToggleState(btn.headlessBtn, true, "Headless: ON", "Headless: OFF") end end
 	if T.headlessAllHatsEnabled then headlessAllHatsEnabled = false; enableHeadlessAllHats(); if btn.headlessAllHatsBtn then setToggleState(btn.headlessAllHatsBtn, true, "Headless (All Hats): ON", "Headless (All Hats): OFF") end end
