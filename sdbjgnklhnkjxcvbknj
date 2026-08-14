@@ -424,7 +424,6 @@ config.values.voteStartSoundPath = voteStartSoundPath
 	config.values.autofarmPreTpDelay = autofarmPreTpDelay
 config.values.autofarmAutoAntiShootDelay = autofarmAutoAntiShootDelay
 	config.values.autofarmCoinDelay = autofarmCoinDelay
-	config.values.autofarmShootDelay = autofarmShootDelay
 config.values.autofarmStuckTimeout = autofarmStuckTimeout
 	config.values.autofarmMode = autofarmMode
 	config.values.resetEveryoneInterval = resetEveryoneInterval
@@ -12492,25 +12491,30 @@ task.spawn(function()
 				-- frame the gun spawned. Role refresh is deferred async so the next
 				-- (rate-limited) burst still benefits from fresh data.
 				local m = aimFindMurderer()
-				if not (m and m ~= player and aimMurdererAlive(m)) then
-					-- Fresh gun but no cached role yet: the Backpack.ChildAdded
-					-- listener already triggered a background refresh — if it's
-					-- still in progress, yield briefly for it to finish instead
-					-- of blocking the Heartbeat loop with a second InvokeServer.
-					if autoShotGunRoleRefreshing then
-						task.wait(0.02)
-						m = aimFindMurderer()
-					end
-					if not (m and m ~= player and aimMurdererAlive(m)) then
-						pcall(aimRefreshRoleNow)
-						m = aimFindMurderer()
-					end
+				if m and m ~= player and aimMurdererAlive(m) then
+					task.spawn(function()
+						if not autoShotGunRoleRefreshing then
+							autoShotGunRoleRefreshing = true
+							pcall(aimRefreshRoleNow)
+							autoShotGunRoleRefreshing = false
+						end
+					end)
 				else
-					task.spawn(function() pcall(aimRefreshRoleNow) end)
+					-- No cached role yet: refresh in the BACKGROUND (never block
+					-- the loop on an InvokeServer) — the next heartbeat retries
+					-- instantly, so the shot still lands the moment the data and
+					-- the Shoot remote are both ready.
+					task.spawn(function()
+						if not autoShotGunRoleRefreshing then
+							autoShotGunRoleRefreshing = true
+							pcall(aimRefreshRoleNow)
+							autoShotGunRoleRefreshing = false
+						end
+					end)
 				end
 				if m and m ~= player and aimMurdererAlive(m) then
-					aimLastAutoShotAt = os.clock()
-					pcall(aimFireGunAtOriginal, m, AIM_CONFIG.autoShotBurst)
+					local ok, fired = pcall(aimFireGunAtOriginal, m, AIM_CONFIG.autoShotBurst)
+					if ok and fired then aimLastAutoShotAt = os.clock() end
 				end
 			end
 			aimHadGunLast = hasGun
@@ -12522,16 +12526,24 @@ task.spawn(function()
 			local murderer = aimFindMurderer()
 			if not murderer and (now - aimLastRoleRefresh) > 0.08 then
 				aimLastRoleRefresh = now
-				aimRefreshRoleNow()
+				task.spawn(function()
+					if not autoShotGunRoleRefreshing then
+						autoShotGunRoleRefreshing = true
+						pcall(aimRefreshRoleNow)
+						autoShotGunRoleRefreshing = false
+					end
+				end)
 				murderer = aimFindMurderer()
 			end
 			if murderer and murderer ~= player and aimMurdererAlive(murderer) then
-				aimLastAutoShotAt = now
 				-- Fire with zero added latency (no stable-velocity hold): the
-				-- standalone Auto Shoot Murderer must respond instantly. The
-				-- configurable autofarmShootDelay only applies inside the
-				-- autofarm path and never affects this loop.
-				pcall(aimFireGunAtOriginal, murderer, AIM_CONFIG.autoShotBurst)
+				-- standalone Auto Shoot Murderer must respond instantly. Cooldown
+				-- is set
+				-- ONLY on a successful shot, so if the Shoot remote wasn't ready
+				-- the instant the gun appeared, the next heartbeat retries
+				-- immediately instead of waiting a full autoShotCooldown.
+				local ok, fired = pcall(aimFireGunAtOriginal, murderer, AIM_CONFIG.autoShotBurst)
+				if ok and fired then aimLastAutoShotAt = now end
 			end
 		end)
 	end
@@ -16057,7 +16069,6 @@ autofarmResetSheriffEnabled = false   -- Sheriff/Hero: shoot murderer if you HAV
 autofarmResetMurdererEnabled = false
 autofarmKillAllEnabled = false        -- Murderer: kill everyone at the end of the autofarm
 autofarmShootPiercerEnabled = false   -- End of farm: auto shot at the murderer with forced Piercer Bullet (if you picked up the gun)
-autofarmShootDelay = 0.3              -- seconds to wait before the end-of-farm shot (lets the aim settle after Auto TP, 0-5)
 autofarmCoinWatched = {}              -- [coin] = true (counting connection attached, only ever once per coin)
 autofarmCoinRetries = {}              -- [coin] = failed-touch retry count
 autofarmRoleCache = nil               -- cached invokePlayerData result (refreshed every second, not every frame)
@@ -16502,16 +16513,10 @@ function autofarmFinishInnocent()
 end
 
 -- Shoot the murderer until they (or we) die, or the timeout runs out.
--- forcePiercer = true temporarily forces the Piercer Bullet (wallbang) mode
--- so the shot goes through walls, then restores the previous setting.
+-- Works EXACTLY like the standalone Auto Shoot Murderer: instant raw shot via
+-- aimFireGunAtOriginal (no velocity-stability preamble, no pre-shot delay).
 function autofarmShootMurderer(forcePiercer)
 	if not autofarmHasGun() then return false end
-	-- Short pre-shot pause so the aim settles after the end-of-farm teleport
-	-- (Auto TP can still be re-aligning the camera/position, so firing instantly
-	-- would whiff). Configurable via the "Wait Before Shot" box, default 0.3s.
-	if autofarmShootDelay > 0 then
-		task.wait(autofarmShootDelay)
-	end
 	local startedAt = os.clock()
 	while os.clock() - startedAt < 10 do
 		local m = autofarmFindMurdererPlayer()
@@ -16522,8 +16527,8 @@ function autofarmShootMurderer(forcePiercer)
 		local myChar = player.Character
 		local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 		if not myHum or myHum.Health <= 0 then return false end
-		-- Single predicted shot — path-sweep covers lead error/desync
-		pcall(aimFireGunAt, m)
+		-- Instant single predicted shot — same technique as the original
+		pcall(aimFireGunAtOriginal, m)
 		pcall(aimUnequipGun)
 		task.wait(0.12)
 	end
@@ -17677,50 +17682,7 @@ autofarmPiercerBtn.MouseButton1Click:Connect(function()
 	saveConfig()
 end)
 
--- Configurable delay before the end-of-farm shot (seconds, 0-5, default 0.3)
-autofarmShootDelayRow = Instance.new("Frame")
-autofarmShootDelayRow.Name = "AutofarmShootDelayRow"
-autofarmShootDelayRow.Size = UDim2.new(1, 0, 0, 42)
-autofarmShootDelayRow.BackgroundTransparency = 1
-autofarmShootDelayRow.LayoutOrder = 317
-autofarmShootDelayRow.Parent = categoryFrames["Autofarm"]
-
-autofarmShootDelayLabel = Instance.new("TextLabel")
-autofarmShootDelayLabel.Name = "AutofarmShootDelayLabel"
-autofarmShootDelayLabel.Size = UDim2.new(1, -80, 1, 0)
-autofarmShootDelayLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-autofarmShootDelayLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-autofarmShootDelayLabel.Text = "Wait Before Shot (0-5, Seconds)"
-autofarmShootDelayLabel.Font = Enum.Font.SourceSansBold
-autofarmShootDelayLabel.TextSize = 14
-autofarmShootDelayLabel.Parent = autofarmShootDelayRow
-Instance.new("UICorner", autofarmShootDelayLabel).CornerRadius = UDim.new(0, 6)
-
-autofarmShootDelayBox = Instance.new("TextBox")
-autofarmShootDelayBox.Name = "AutofarmShootDelayInput"
-autofarmShootDelayBox.Size = UDim2.new(0, 74, 1, 0)
-autofarmShootDelayBox.Position = UDim2.new(1, -74, 0, 0)
-autofarmShootDelayBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-autofarmShootDelayBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-autofarmShootDelayBox.Text = tostring(autofarmShootDelay)
-autofarmShootDelayBox.PlaceholderText = "Seconds"
-autofarmShootDelayBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
-autofarmShootDelayBox.Font = Enum.Font.SourceSansBold
-autofarmShootDelayBox.TextSize = 14
-autofarmShootDelayBox.ClearTextOnFocus = false
-autofarmShootDelayBox.Parent = autofarmShootDelayRow
-Instance.new("UICorner", autofarmShootDelayBox).CornerRadius = UDim.new(0, 6)
-
-autofarmShootDelayBox.FocusLost:Connect(function()
-	local n = tonumber(autofarmShootDelayBox.Text)
-	if n then
-		autofarmShootDelay = math.clamp(n, 0, 5)
-	end
-	autofarmShootDelayBox.Text = tostring(autofarmShootDelay)
-	saveConfig()
-end)
-
-autofarmKillAllBtn = createButton("AutofarmKillAllButton", "Auto Kill Everyone (Murderer): OFF", 318)
+autofarmKillAllBtn = createButton("AutofarmKillAllButton", "Auto Kill Everyone (Murderer): OFF", 317)
 autofarmKillAllBtn.MouseButton1Click:Connect(function()
 	autofarmKillAllEnabled = not autofarmKillAllEnabled
 	setToggleState(autofarmKillAllBtn, autofarmKillAllEnabled, "Auto Kill Everyone (Murderer): ON", "Auto Kill Everyone (Murderer): OFF")
@@ -25777,7 +25739,6 @@ config.values.explicitlyClearedSoundPaths = explicitlyClearedSoundPaths
 	config.values.autofarmPreTpDelay = autofarmPreTpDelay
 	config.values.autofarmAutoAntiShootDelay = autofarmAutoAntiShootDelay
 	config.values.autofarmCoinDelay = autofarmCoinDelay
-	config.values.autofarmShootDelay = autofarmShootDelay
 	config.values.autofarmStuckTimeout = autofarmStuckTimeout
 	config.values.resetEveryoneInterval = resetEveryoneInterval; config.values.autoResetPlayerInterval = autoResetPlayerInterval; config.values.autoResetEveryoneInterval = autoResetEveryoneInterval
 	config.values.autofarmScriptUrl = AUTOFARM_SCRIPT_URL
@@ -28490,10 +28451,6 @@ function restoreFullConfig()
 		if c.values.autofarmCoinDelay then
 			autofarmCoinDelay = math.clamp(c.values.autofarmCoinDelay, 0, 5)
 			if autofarmCoinDelayBox then autofarmCoinDelayBox.Text = tostring(autofarmCoinDelay) end
-		end
-		if c.values.autofarmShootDelay then
-			autofarmShootDelay = math.clamp(c.values.autofarmShootDelay, 0, 5)
-			if autofarmShootDelayBox then autofarmShootDelayBox.Text = tostring(autofarmShootDelay) end
 		end
 		if c.values.autofarmStuckTimeout then
 			autofarmStuckTimeout = math.clamp(c.values.autofarmStuckTimeout, 1, 15)
