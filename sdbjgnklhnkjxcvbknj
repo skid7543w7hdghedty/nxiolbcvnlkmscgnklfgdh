@@ -286,7 +286,8 @@ config.toggles.gameNotifEnabled = gameNotifEnabled
 	config.toggles.autofarmShootPiercerEnabled = autofarmShootPiercerEnabled
 	config.toggles.autofarmStuckEnabled = autofarmStuckEnabled
 	config.toggles.autofarmWebhookEnabled = autofarmWebhookEnabled
-	config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
+config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
+	config.toggles.rejoinOnKickEnabled = rejoinOnKickEnabled
 	config.toggles.autofarmAvoidMurdererEnabled = autofarmAvoidMurdererEnabled
 	config.toggles.autofarmAutoAntiShootEnabled = autofarmAutoAntiShootEnabled
 	config.toggles.autofarmAutoKillSheriffEnabled = autofarmAutoKillSheriffEnabled
@@ -512,6 +513,7 @@ config.values.autofarmStuckTimeout = autofarmStuckTimeout
 	config.changerAutoApply = changerAutoApply or false
 	config.changerLastAvatarName = changerLastAvatarName
 	config.changerLastAvatarFields = changerLastAvatarFields
+	config.autoReexecuteOnRejoin = autoReexecuteOnRejoin
 	if savedSkyboxes then
 		config.savedSkyboxes = savedSkyboxes
 	end
@@ -555,6 +557,12 @@ config.values.autofarmStuckTimeout = autofarmStuckTimeout
 	if emotionOrder then
 		for _, entry in ipairs(emotionOrder) do
 			config.emotionOrder[#config.emotionOrder + 1] = { id = entry.id, name = entry.name }
+		end
+	end
+	config.emotionKeyBinds = {}
+	if emotionKeyBinds then
+		for animId, kc in pairs(emotionKeyBinds) do
+			config.emotionKeyBinds[tostring(animId)] = tostring(kc):gsub("Enum.KeyCode%.", "")
 		end
 	end
 	config.customAnimations = {}
@@ -3217,6 +3225,12 @@ animationTrack = nil
 playingAnimationId = 0
 animationUiById = {}
 
+-- Per-emotion keybinds: maps animationId → Enum.KeyCode
+emotionKeyBinds = {}
+listeningForEmotionBind = false
+listeningEmotionTextBox = nil
+listeningEmotionId = nil
+
 -- Ordered emotion list (flat pairs: id, name). This is the single source of
 -- truth for the Emotions tab order + membership. Users can add, delete and
 -- reorder entries at runtime, and the whole list is persisted to the config.
@@ -3241,6 +3255,33 @@ if loadedConfig and type(loadedConfig.emotionOrder) == "table" and #loadedConfig
 	if #rebuilt > 0 then
 		emotionOrder = rebuilt
 	end
+end
+
+-- Load per-emotion keybinds from config
+if loadedConfig and type(loadedConfig.emotionKeyBinds) == "table" then
+	for idStr, keyCodeStr in pairs(loadedConfig.emotionKeyBinds) do
+		local id = tonumber(idStr)
+		if id and keyCodeStr then
+			local ok, kc = pcall(function() return Enum.KeyCode[keyCodeStr] end)
+			if ok and kc then
+				emotionKeyBinds[id] = kc
+			end
+		end
+	end
+end
+
+-- Register saved emotion keybinds into the global keyBinds table
+for animId, kc in pairs(emotionKeyBinds) do
+	keyBinds[kc] = {
+		callback = function()
+			if playingAnimationId == animId then
+				stopCurrentAnimation()
+			else
+				playAnimation(animId, "1")
+			end
+		end,
+		description = "Emotion: " .. tostring(animId),
+	}
 end
 
 function notify(title, text, duration)
@@ -7747,22 +7788,73 @@ function toggleAutoResetPlayer()
 	autoResetPlayerEnabled = not autoResetPlayerEnabled
 	if autoResetPlayerEnabled then
 		task.spawn(function()
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if not hrp or not hum then
+				autoResetPlayerEnabled = false
+				setToggleState(autoResetPlayerBtn, false, "Auto Reset Player: ON", "Auto Reset Player: OFF")
+				setExtractedBtnState("Auto Reset Player", false)
+				return
+			end
+			local savedCFrame = hrp.CFrame
+			local savedPlatformStand = hum.PlatformStand
 			while autoResetPlayerEnabled do
+				char = player.Character
+				hrp = char and char:FindFirstChild("HumanoidRootPart")
+				hum = char and char:FindFirstChildOfClass("Humanoid")
+				if not (hrp and hum and hum.Health > 0) then
+					task.wait(0.5)
+					continue
+				end
 				local selected = resetPicker and resetPicker.selectedNames or {}
 				if #selected > 0 then
-					-- Multi-select: reset EVERY selected player correctly, with the
-					-- original-position save/restore around the whole batch
-					local names = {}
-					for _, n in ipairs(selected) do table.insert(names, n) end
-					executeNanFlingNames(names)
+					for _, name in ipairs(selected) do
+						if not autoResetPlayerEnabled then break end
+						if not isPlayerWhitelisted(name) then
+							nanFlingTargetName = name
+							executeNanFling()
+							task.wait(autoResetPlayerInterval)
+						end
+					end
 				else
 					nanFlingTargetName = resetPlayerInput.Text
 					if nanFlingTargetName ~= "" then
 						executeNanFling()
 					end
+					task.wait(autoResetPlayerInterval)
 				end
-				-- Wait for fling cycle (configurable interval)
-				task.wait(autoResetPlayerInterval)
+			end
+			nanFlingCallCounter = nanFlingCallCounter + 1
+			if nanFlingConnection then
+				nanFlingConnection:Disconnect()
+				nanFlingConnection = nil
+			end
+			char = player.Character
+			hrp = char and char:FindFirstChild("HumanoidRootPart")
+			hum = char and char:FindFirstChildOfClass("Humanoid")
+			if hrp and hum then
+				pcall(sethiddenproperty, hrp, "PhysicsRepRootPart", hrp)
+				local restoreCF = savedCFrame
+				local safeY = (workspace.FallenPartsDestroyHeight or -500) + 50
+				if restoreCF.Position.Y < safeY then
+					restoreCF = CFrame.new(restoreCF.Position.X, safeY, restoreCF.Position.Z)
+				end
+				for i = 1, 15 do
+					for _, part in pairs(char:GetDescendants()) do
+						if part:IsA("BasePart") then
+							part.Velocity = Vector3.zero
+							part.RotVelocity = Vector3.zero
+							part.AssemblyLinearVelocity = Vector3.zero
+							part.AssemblyAngularVelocity = Vector3.zero
+						end
+					end
+					hrp.CFrame = restoreCF
+					char:SetPrimaryPartCFrame(restoreCF)
+					task.wait()
+				end
+				hum.PlatformStand = savedPlatformStand
+				pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
 			end
 		end)
 	end
@@ -7781,11 +7873,72 @@ function toggleAutoResetEveryone()
 	autoResetEveryoneEnabled = not autoResetEveryoneEnabled
 	if autoResetEveryoneEnabled then
 		task.spawn(function()
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			local hum = char and char:FindFirstChildOfClass("Humanoid")
+			if not hrp or not hum then
+				autoResetEveryoneEnabled = false
+				setToggleState(autoResetEveryoneBtn, false, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF")
+				setExtractedBtnState("Auto Reset Everyone", false)
+				return
+			end
+			local savedCFrame = hrp.CFrame
+			local savedPlatformStand = hum.PlatformStand
 			while autoResetEveryoneEnabled do
-				executeNanFlingEveryone()
-				-- Short pause between full loops (configurable interval; each player
-				-- already waits resetEveryoneInterval inside)
+				char = player.Character
+				hrp = char and char:FindFirstChild("HumanoidRootPart")
+				hum = char and char:FindFirstChildOfClass("Humanoid")
+				if not (hrp and hum and hum.Health > 0) then
+					task.wait(0.5)
+					continue
+				end
+				local targets = {}
+				for _, plr in ipairs(Players:GetPlayers()) do
+					if plr ~= player and not isPlayerWhitelisted(plr.Name) then
+						local c = plr.Character
+						if c and c:FindFirstChild("Humanoid") and c.Humanoid.Health > 0 then
+							targets[#targets + 1] = plr.Name
+						end
+					end
+				end
+				for _, name in ipairs(targets) do
+					if not autoResetEveryoneEnabled then break end
+					nanFlingTargetName = name
+					executeNanFling()
+					task.wait(resetEveryoneInterval)
+				end
 				task.wait(autoResetEveryoneInterval)
+			end
+			nanFlingCallCounter = nanFlingCallCounter + 1
+			if nanFlingConnection then
+				nanFlingConnection:Disconnect()
+				nanFlingConnection = nil
+			end
+			char = player.Character
+			hrp = char and char:FindFirstChild("HumanoidRootPart")
+			hum = char and char:FindFirstChildOfClass("Humanoid")
+			if hrp and hum then
+				pcall(sethiddenproperty, hrp, "PhysicsRepRootPart", hrp)
+				local restoreCF = savedCFrame
+				local safeY = (workspace.FallenPartsDestroyHeight or -500) + 50
+				if restoreCF.Position.Y < safeY then
+					restoreCF = CFrame.new(restoreCF.Position.X, safeY, restoreCF.Position.Z)
+				end
+				for i = 1, 15 do
+					for _, part in pairs(char:GetDescendants()) do
+						if part:IsA("BasePart") then
+							part.Velocity = Vector3.zero
+							part.RotVelocity = Vector3.zero
+							part.AssemblyLinearVelocity = Vector3.zero
+							part.AssemblyAngularVelocity = Vector3.zero
+						end
+					end
+					hrp.CFrame = restoreCF
+					char:SetPrimaryPartCFrame(restoreCF)
+					task.wait()
+				end
+				hum.PlatformStand = savedPlatformStand
+				pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
 			end
 		end)
 	end
@@ -7805,7 +7958,7 @@ resetEveryoneIntervalRow = Instance.new("Frame")
 resetEveryoneIntervalRow.Name = "ResetEveryoneIntervalRow"
 resetEveryoneIntervalRow.Size = UDim2.new(1, 0, 0, 42)
 resetEveryoneIntervalRow.BackgroundTransparency = 1
-resetEveryoneIntervalRow.LayoutOrder = 314.1
+resetEveryoneIntervalRow.LayoutOrder = 317
 resetEveryoneIntervalRow.Parent = categoryFrames["Reset"]
 
 resetEveryoneIntervalLabel = Instance.new("TextLabel")
@@ -7847,7 +8000,7 @@ autoResetPlayerIntervalRow = Instance.new("Frame")
 autoResetPlayerIntervalRow.Name = "AutoResetPlayerIntervalRow"
 autoResetPlayerIntervalRow.Size = UDim2.new(1, 0, 0, 42)
 autoResetPlayerIntervalRow.BackgroundTransparency = 1
-autoResetPlayerIntervalRow.LayoutOrder = 317.1
+autoResetPlayerIntervalRow.LayoutOrder = 321
 autoResetPlayerIntervalRow.Parent = categoryFrames["Reset"]
 
 autoResetPlayerIntervalLabel = Instance.new("TextLabel")
@@ -7889,7 +8042,7 @@ autoResetEveryoneIntervalRow = Instance.new("Frame")
 autoResetEveryoneIntervalRow.Name = "AutoResetEveryoneIntervalRow"
 autoResetEveryoneIntervalRow.Size = UDim2.new(1, 0, 0, 42)
 autoResetEveryoneIntervalRow.BackgroundTransparency = 1
-autoResetEveryoneIntervalRow.LayoutOrder = 318.1
+autoResetEveryoneIntervalRow.LayoutOrder = 323
 autoResetEveryoneIntervalRow.Parent = categoryFrames["Reset"]
 
 autoResetEveryoneIntervalLabel = Instance.new("TextLabel")
@@ -9490,7 +9643,7 @@ end)
 
 btn.tradeHelper = createButton("TradeHelperButton", "Trade Helper", 116)
 btn.tradeHelper.MouseButton1Click:Connect(function()
-	loadstring(game:HttpGet("https://raw.githubusercontent.com/skid7543w7hdghedty/zxcgfbhrefgdfsdfg/refs/heads/main/asrdgfdsg"))()
+	loadstring(game:HttpGet("https://raw.githubusercontent.com/WhoIAmDark/MM2-Values-Checker/refs/heads/main/Trade%20Helper%20Desktop"))()
 end)
 
 function executeAntiBang()
@@ -12285,6 +12438,45 @@ end)
 local aimHadGunLast = false
 local aimLastRoleRefresh = 0
 local aimLastAutoShotAt = 0
+
+-- [perf] Event-based gun detection: the Heartbeat loop detects the Gun tool on
+-- the NEXT frame after it appears (~16 ms at 60 fps). At round start the role
+-- cache is stale (espRoles was just reset), so the first aimFindMurderer() call
+-- falls through to a blocking aimRefreshRoleNow() (InvokeServer ~100-200 ms).
+-- By listening for Backpack.ChildAdded we trigger the role refresh the INSTANT
+-- the Gun tool arrives — up to a full frame earlier — so by the time the
+-- Heartbeat loop picks it up the data is already fresh. Mid-round the ESP cache
+-- is already populated so the event is redundant but harmless.
+autoShotGunDetectConn = nil
+autoShotGunRoleRefreshing = false
+local function autoShotOnGunDetected()
+	if not aimAutoShotEnabled then return end
+	if autoShotGunRoleRefreshing then return end
+	autoShotGunRoleRefreshing = true
+	task.spawn(function()
+		pcall(aimRefreshRoleNow)
+		autoShotGunRoleRefreshing = false
+	end)
+end
+
+autoShotGunDetectConn = player.Backpack.ChildAdded:Connect(function(child)
+	if child.Name == "Gun" then
+		autoShotOnGunDetected()
+	end
+end)
+player.CharacterAdded:Connect(function(char)
+	if not aimAutoShotEnabled then return end
+	-- Also listen inside the new character for auto-equipped guns
+	local c2 = char.ChildAdded:Connect(function(child)
+		if child.Name == "Gun" then
+			autoShotOnGunDetected()
+		end
+	end)
+	-- Store so we can disconnect later if needed
+	if autoShotCharConn then pcall(function() autoShotCharConn:Disconnect() end) end
+	autoShotCharConn = c2
+end)
+
 task.spawn(function()
 	while true do
 		RunService.Heartbeat:Wait()
@@ -12301,11 +12493,18 @@ task.spawn(function()
 				-- (rate-limited) burst still benefits from fresh data.
 				local m = aimFindMurderer()
 				if not (m and m ~= player and aimMurdererAlive(m)) then
-					-- Fresh gun but no cached role yet: pull the roles ONCE right
-					-- now so we can fire in this same frame instead of waiting for
-					-- the rate-limited branch (which would add a full cooldown).
-					pcall(aimRefreshRoleNow)
-					m = aimFindMurderer()
+					-- Fresh gun but no cached role yet: the Backpack.ChildAdded
+					-- listener already triggered a background refresh — if it's
+					-- still in progress, yield briefly for it to finish instead
+					-- of blocking the Heartbeat loop with a second InvokeServer.
+					if autoShotGunRoleRefreshing then
+						task.wait(0.02)
+						m = aimFindMurderer()
+					end
+					if not (m and m ~= player and aimMurdererAlive(m)) then
+						pcall(aimRefreshRoleNow)
+						m = aimFindMurderer()
+					end
 				else
 					task.spawn(function() pcall(aimRefreshRoleNow) end)
 				end
@@ -15918,6 +16117,11 @@ autofarmSessionStart = nil         -- os.clock() when the farming session starte
 -- to another public server — where the config restore re-enables everything.
 TeleportService = game:GetService("TeleportService")
 autofarmServerHopEnabled = false
+-- Rejoin on Kick: separate from Server Hop When Alone. Detects a server-side kick
+-- via GuiService.ErrorMessageChanged (the Hop.lua trick) and teleports straight
+-- back into the game. Can be toggled on/off independently.
+rejoinOnKickEnabled = (loadedConfig and loadedConfig.toggles and loadedConfig.toggles.rejoinOnKickEnabled ~= nil) and loadedConfig.toggles.rejoinOnKickEnabled or false
+autoReexecuteOnRejoin = (loadedConfig and loadedConfig.autoReexecuteOnRejoin ~= nil) and loadedConfig.autoReexecuteOnRejoin or true
 AUTOFARM_SCRIPT_URL = (loadedConfig.values and loadedConfig.values.autofarmScriptUrl) or ""
 
 function autofarmGetPlayerData()
@@ -16181,10 +16385,6 @@ function autofarmNearestCoin(container, fromPos)
 	local bestCoin, bestPart, bestDist = nil, nil, math.huge
 	for _, coin in ipairs(container:GetChildren()) do
 		if not autofarmCoinIsGone(coin) then
-			local touchStart = autofarmTouchedAt[coin]
-			if touchStart and (os.clock() - touchStart) > 3 then
-				autofarmSpentCoins[coin] = true
-			end
 			-- Coins already inside the Coin Aura pull are not movement targets:
 			-- the aura collects them while we fly straight on to the next coin.
 			-- If the aura somehow fails, the coin becomes targetable again after 2s.
@@ -16277,10 +16477,10 @@ function autofarmClaimCoin(coin)
 			end
 		else
 			-- Coin is STILL there after a moment — the touch failed (e.g. lag).
-			-- Allow up to 3 retries, then permanently blacklist it.
+			-- Allow up to 5 retries, then permanently blacklist it.
 			local tries = (autofarmCoinRetries[coin] or 0) + 1
 			autofarmCoinRetries[coin] = tries
-			if tries > 3 then
+			if tries > 5 then
 				autofarmSpentCoins[coin] = true
 			end
 		end
@@ -16501,6 +16701,7 @@ function startAutofarm()
 					autofarmFullTouchAt = {}
 					autofarmClaimPending = {}
 					autofarmAuraPending = {}
+					autofarmCoinRetries = {}   -- reset retry counters for new round
 					autofarmBagLabelCache = nil -- new round = the bag GUI may be rebuilt
 					autofarmBagCountCache = nil -- never trust a count carried over from the previous round
 					autofarmBagCountAt = 0      -- force an immediate rescan of the fresh HUD
@@ -16610,6 +16811,7 @@ function startAutofarm()
 									and (autofarmCoinRetries[c] or 0) < 9 then
 									autofarmSpentCoins[c] = nil
 									autofarmTouchedAt[c] = nil
+									autofarmCoinRetries[c] = nil
 									revived = true
 								end
 							end
@@ -16696,20 +16898,31 @@ function startAutofarm()
 							autofarmClaimCoin(coin)
 						end
 
-						-- Fast-mode fly-through: touch the coin as soon as we're within pickup
-						-- range, then IMMEDIATELY fly on to the next coin the moment our
-						-- distance to this one drops to autofarmAuraRetargetDist (0.8)
-						-- — slightly BELOW the aura radius, so we never appear to wait
-						-- for the aura to grab the coin; we're already moving to the
-						-- next one before the aura finishes this pickup. The threshold
-						-- is the small retarget distance (not the big pickup range), so
-						-- we don't turn away too early, and collection stays tied to
-						-- how close we physically fly (no far mass-teleport that used
-						-- to trigger the "collecting too fast" anti-cheat kick).
+						-- Fast-mode fly-through: fly directly at the coin (no under-floor
+						-- detour — that is the "slightly faster than Default" edge), touching
+						-- it with the SAME cadence as Default (HRP every frame, full-body
+						-- volley throttled to 0.15s). We do NOT hammer every coin within
+						-- pickup range with all 15 body parts on every frame — that burst
+						-- of simultaneous touches collected coins far too fast and the
+						-- anti-cheat kicked for "too-fast collection". Retarget only once
+						-- we have actually reached the coin (autofarmAuraRetargetDist),
+						-- marking it pending so the flight stays continuous.
 						if autofarmMode == 2 and dist <= autofarmPickupRange then
+							-- Touch on HRP (primary collector), every frame
 							safeFireTouch(part, hrp)
 							autofarmTouchedAt[coin] = os.clock()
 							autofarmClaimCoin(coin)
+							-- Full-body volley throttled to 0.15s per coin (same as Default)
+							if not autofarmFullTouchAt[coin] or (os.clock() - autofarmFullTouchAt[coin]) >= 0.15 then
+								autofarmFullTouchAt[coin] = os.clock()
+								for _, bp in ipairs(autofarmGetCharParts(char)) do
+									if bp ~= hrp then
+										safeFireTouch(part, bp)
+									end
+								end
+							end
+							-- Once actually on top of the coin, mark it pending (aura
+							-- finishes the pickup as we fly past) and retarget the next coin
 							if dist <= autofarmAuraRetargetDist then
 								autofarmAuraPending[coin] = os.clock()
 								local nextCoin, nextPart, nextDist = autofarmNearestCoin(container, hrp.Position)
@@ -16719,34 +16932,28 @@ function startAutofarm()
 							end
 						end
 
-						-- Route: fly UNDER the floor whenever one exists below the coin
-						-- (harder to be killed), stay directly beneath the coin.
-						-- When Coin Aura is OFF, stay just under the floor below the
-						-- coin (harder to be killed) and rise only when there is no
-						-- floor. When Coin Aura is ON we still fly under the floor, but at a
-						-- shallower depth (autofarmAuraUnderFloorDepth) so the coin is
-						-- only a short vertical gap away and a small aura radius (1-2)
-						-- grabs it. This keeps the character hidden under the map while
-						-- collecting — flying right up onto the coin exposed you to
-						-- getting killed. When Coin Aura is OFF, use the deeper/deeper
-						-- is fine: the character rises to collect.
+						-- Route: in Default mode, fly UNDER the floor whenever one exists
+						-- below the coin (harder to be killed). In Fast mode, fly DIRECTLY
+						-- to the coin position for fastest collection — the speed and
+						-- continuous movement make it hard to hit anyway.
 						local target
-						local underFloorDepth = autofarmUnderFloorDepth
 						if autofarmMode == 2 then
-							underFloorDepth = autofarmAuraUnderFloorDepth
-						end
-						autofarmFloorRayParams.FilterDescendantsInstances = {char, container}
-						local floorHit = Workspace:Raycast(
-							part.Position - Vector3.new(0, 0.5, 0),
-							Vector3.new(0, -60, 0),
-							autofarmFloorRayParams
-						)
-						if floorHit then
-							-- Always stay beneath the floor, close to the coin's XZ position
-							target = Vector3.new(part.Position.X, floorHit.Position.Y - underFloorDepth, part.Position.Z)
+							-- Fast mode: fly straight to the coin
+							target = part.Position
 						else
-							-- No floor below: approach from slightly below
-							target = part.Position - Vector3.new(0, 2, 0)
+							-- Default mode: fly under the floor
+							local underFloorDepth = autofarmUnderFloorDepth
+							autofarmFloorRayParams.FilterDescendantsInstances = {char, container}
+							local floorHit = Workspace:Raycast(
+								part.Position - Vector3.new(0, 0.5, 0),
+								Vector3.new(0, -60, 0),
+								autofarmFloorRayParams
+							)
+							if floorHit then
+								target = Vector3.new(part.Position.X, floorHit.Position.Y - underFloorDepth, part.Position.Z)
+							else
+								target = part.Position - Vector3.new(0, 2, 0)
+							end
 						end
 
 						-- SINGLE clamped 3D step at constant speed. The old code
@@ -18254,9 +18461,10 @@ local function onDisconnecting()
 	lastHopAttempt = os.clock()
 	pcall(saveConfig)
 	pcall(function() getgenv().AdrenalinWinLoaded = nil end)
-	-- Always queue the script on disconnect so it re-loads on rejoin,
-	-- regardless of whether Server Hop is enabled.
-	pcall(autofarmQueueRejoin)
+	-- Only queue the script on disconnect if auto-reexecute is enabled.
+	if autoReexecuteOnRejoin then
+		pcall(autofarmQueueRejoin)
+	end
 end
 if player then
 	player.OnTeleport:Connect(function(state)
@@ -18288,6 +18496,39 @@ autofarmServerHopBtn = createButton("AutofarmServerHopButton", "Server Hop When 
 autofarmServerHopBtn.MouseButton1Click:Connect(function()
 	autofarmServerHopEnabled = not autofarmServerHopEnabled
 	setToggleState(autofarmServerHopBtn, autofarmServerHopEnabled, "Server Hop When Alone: ON", "Server Hop When Alone: OFF")
+	saveConfig()
+end)
+
+-- Rejoin on Kick: detects a server-side kick (error message shown by the game)
+-- and teleports straight back. Independent of Server Hop When Alone — can be
+-- enabled even when alone-hopping is off. Uses the Hop.lua mechanism:
+-- GuiService.ErrorMessageChanged fires when the game kicks the player.
+local function setupRejoinOnKick()
+	local kickGuiService = game:GetService("GuiService")
+	kickGuiService.ErrorMessageChanged:Connect(function(errorMessage)
+		if not rejoinOnKickEnabled then return end
+		if errorMessage and errorMessage ~= "" and player then
+			notify("Rejoin on Kick", "Kicked — rejoining the game...", 3)
+			-- Persist state + queue the script so it reloads after the rejoin
+			pcall(saveConfig)
+			pcall(function() getgenv().AdrenalinWinLoaded = nil end)
+			if autoReexecuteOnRejoin then
+				pcall(autofarmQueueRejoin)
+			end
+			task.wait(1)
+			pcall(function() TeleportService:Teleport(game.PlaceId, player) end)
+		end
+	end)
+end
+pcall(setupRejoinOnKick)
+
+rejoinOnKickBtn = createButton("RejoinOnKickButton", "Rejoin on Kick: OFF", 334)
+if rejoinOnKickEnabled then
+	setToggleState(rejoinOnKickBtn, true, "Rejoin on Kick: ON", "Rejoin on Kick: OFF")
+end
+rejoinOnKickBtn.MouseButton1Click:Connect(function()
+	rejoinOnKickEnabled = not rejoinOnKickEnabled
+	setToggleState(rejoinOnKickBtn, rejoinOnKickEnabled, "Rejoin on Kick: ON", "Rejoin on Kick: OFF")
 	saveConfig()
 end)
 
@@ -18446,7 +18687,7 @@ function rebuildEmotions()
 
 		local animationButton = Instance.new("TextButton")
 		animationButton.Name = "AnimButton_" .. tostring(animationId)
-		animationButton.Size = UDim2.new(1, -186, 1, 0)
+		animationButton.Size = UDim2.new(1, -208, 1, 0)
 		animationButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		animationButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 		animationButton.Text = animationName
@@ -18470,9 +18711,20 @@ function rebuildEmotions()
 		speedBox.Parent = animationRow
 		Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 6)
 
+		local bindBtn = Instance.new("TextButton")
+		bindBtn.Size = UDim2.new(0, 22, 1, 0)
+		bindBtn.Position = UDim2.new(1, -102, 0, 0)
+		bindBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		bindBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		bindBtn.Text = emotionKeyBinds[animationId] and bindKeyToName(emotionKeyBinds[animationId]) or "⌨"
+		bindBtn.Font = Enum.Font.SourceSansBold
+		bindBtn.TextSize = 12
+		bindBtn.Parent = animationRow
+		Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 4)
+
 		local starBtn = Instance.new("TextButton")
 		starBtn.Size = UDim2.new(0, 22, 1, 0)
-		starBtn.Position = UDim2.new(1, -110, 0, 0)
+		starBtn.Position = UDim2.new(1, -126, 0, 0)
 		starBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		starBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		starBtn.Text = isEmoteDetached(animationId) and "★" or "☆"
@@ -18483,7 +18735,7 @@ function rebuildEmotions()
 
 		local upBtn = Instance.new("TextButton")
 		upBtn.Size = UDim2.new(0, 22, 1, 0)
-		upBtn.Position = UDim2.new(1, -132, 0, 0)
+		upBtn.Position = UDim2.new(1, -150, 0, 0)
 		upBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		upBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		upBtn.Text = "▲"
@@ -18494,7 +18746,7 @@ function rebuildEmotions()
 
 		local downBtn = Instance.new("TextButton")
 		downBtn.Size = UDim2.new(0, 22, 1, 0)
-		downBtn.Position = UDim2.new(1, -154, 0, 0)
+		downBtn.Position = UDim2.new(1, -174, 0, 0)
 		downBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		downBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		downBtn.Text = "▼"
@@ -18505,7 +18757,7 @@ function rebuildEmotions()
 
 		local delBtn = Instance.new("TextButton")
 		delBtn.Size = UDim2.new(0, 22, 1, 0)
-		delBtn.Position = UDim2.new(1, -176, 0, 0)
+		delBtn.Position = UDim2.new(1, -198, 0, 0)
 		delBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		delBtn.Text = "×"
@@ -18530,6 +18782,27 @@ function rebuildEmotions()
 				createDetachedEmote(animationId, animationName)
 				starBtn.Text = "★"
 			end
+		end)
+
+		bindBtn.MouseButton1Click:Connect(function()
+			lastUIInteract = tick()
+			if listeningForEmotionBind then
+				listeningForEmotionBind = false
+				listeningEmotionTextBox = nil
+				listeningEmotionId = nil
+				bindBtn.Text = emotionKeyBinds[animationId] and bindKeyToName(emotionKeyBinds[animationId]) or "⌨"
+				return
+			end
+			-- Remove old bind if exists
+			local oldKey = emotionKeyBinds[animationId]
+			if oldKey and keyBinds[oldKey] then
+				keyBinds[oldKey] = nil
+			end
+			emotionKeyBinds[animationId] = nil
+			bindBtn.Text = "..."
+			listeningForEmotionBind = true
+			listeningEmotionTextBox = bindBtn
+			listeningEmotionId = animationId
 		end)
 
 		animationButton.MouseButton1Click:Connect(function()
@@ -19149,6 +19422,40 @@ function changerAttachAccessory(acc, char)
     pcall(function() acc.Parent = char end)
 end
 
+-- Save the original avatar state so we can fully restore it with "Unchange"
+changerOriginalState = nil
+
+function changerSaveOriginal()
+    if changerOriginalState then return end
+    local char = player.Character
+    if not char then return end
+    local state = { accessories = {}, clothing = {} }
+    for _, d in ipairs(char:GetChildren()) do
+        pcall(function()
+            if d:IsA("Accessory") then
+                local handle = d:FindFirstChild("Handle")
+                table.insert(state.accessories, {
+                    Name = d.Name,
+                    ClassName = d.ClassName,
+                    HandleCFrame = handle and handle.CFrame or nil,
+                    HandleSize = handle and handle.Size or nil,
+                    HatAttachment = handle and handle:FindFirstChildOfClass("Attachment") and handle:FindFirstChildOfClass("Attachment"):Clone() or nil,
+                    MeshId = handle and handle:FindFirstChildOfClass("SpecialMesh") and handle:FindFirstChildOfClass("SpecialMesh").MeshId or nil,
+                    TextureId = handle and handle:FindFirstChildOfClass("SpecialMesh") and handle:FindFirstChildOfClass("SpecialMesh").TextureId or nil,
+                    OriginalSize = handle and handle:FindFirstChild("OriginalSize") and handle.OriginalSize.Value or nil,
+                })
+            elseif d:IsA("Shirt") then
+                table.insert(state.clothing, { ClassName = "Shirt", ShirtTemplate = d.ShirtTemplate })
+            elseif d:IsA("Pants") then
+                table.insert(state.clothing, { ClassName = "Pants", PantsTemplate = d.PantsTemplate })
+            elseif d:IsA("ShirtGraphic") then
+                table.insert(state.clothing, { ClassName = "ShirtGraphic", Graphic = d.Graphic })
+            end
+        end)
+    end
+    changerOriginalState = state
+end
+
 -- Apply one loaded instance to the character. Reads the REAL ShirtTemplate /
 -- PantsTemplate from the loaded clothing instance (a raw catalog ID is NOT a
 -- valid template, which is why clothing was disappearing before).
@@ -19192,6 +19499,7 @@ function changerApplyId(id)
     if not digits then return false end
     local char = player.Character
     if not char then return false end
+    changerSaveOriginal()
     local hum = char:FindFirstChildOfClass("Humanoid")
     local objs = changerLoadObjects(digits)
     local applied = false
@@ -19205,15 +19513,70 @@ end
 function changerUnchange()
     local char = player.Character
     if not char then return end
-    -- Remove accessories, clothing
+    -- Remove ChangerItem-tagged accessories (ones we added)
     for _, d in ipairs(char:GetChildren()) do
         pcall(function()
-            if d:IsA("Accessory") or d:IsA("Shirt") or d:IsA("Pants") or d:IsA("ShirtGraphic") then
+            if d:IsA("Accessory") and d:GetAttribute("ChangerItem") then
                 d:Destroy()
             end
         end)
     end
-    -- Also clean up any nested ChangerItem-tagged objects
+    -- Restore original accessories from saved state
+    if changerOriginalState and changerOriginalState.accessories then
+        for _, accData in ipairs(changerOriginalState.accessories) do
+            pcall(function()
+                local acc = Instance.new("Accessory")
+                acc.Name = accData.Name
+                local handle = Instance.new("Part")
+                handle.Name = "Handle"
+                handle.Size = accData.HandleSize or Vector3.new(1, 1, 1)
+                handle.CFrame = accData.HandleCFrame or CFrame.new(0, 0, 0)
+                handle.Anchored = false
+                handle.CanCollide = false
+                if accData.MeshId or accData.TextureId then
+                    local mesh = Instance.new("SpecialMesh")
+                    if accData.MeshId then mesh.MeshId = accData.MeshId end
+                    if accData.TextureId then mesh.TextureId = accData.TextureId end
+                    mesh.Parent = handle
+                end
+                if accData.HatAttachment then
+                    accData.HatAttachment.Parent = handle
+                end
+                if accData.OriginalSize then
+                    local osv = Instance.new("Vector3Value")
+                    osv.Name = "OriginalSize"
+                    osv.Value = accData.OriginalSize
+                    osv.Parent = handle
+                end
+                handle.Parent = acc
+                acc.Parent = char
+            end)
+        end
+    end
+    -- Restore original clothing
+    local charShirt = char:FindFirstChildOfClass("Shirt")
+    local charPants = char:FindFirstChildOfClass("Pants")
+    local charGraphic = char:FindFirstChildOfClass("ShirtGraphic")
+    if changerOriginalState and changerOriginalState.clothing then
+        for _, c in ipairs(changerOriginalState.clothing) do
+            pcall(function()
+                if c.ClassName == "Shirt" then
+                    if not charShirt then charShirt = Instance.new("Shirt"); charShirt.Parent = char end
+                    charShirt:SetAttribute("ChangerItem", nil)
+                    charShirt.ShirtTemplate = c.ShirtTemplate
+                elseif c.ClassName == "Pants" then
+                    if not charPants then charPants = Instance.new("Pants"); charPants.Parent = char end
+                    charPants:SetAttribute("ChangerItem", nil)
+                    charPants.PantsTemplate = c.PantsTemplate
+                elseif c.ClassName == "ShirtGraphic" then
+                    if not charGraphic then charGraphic = Instance.new("ShirtGraphic"); charGraphic.Parent = char end
+                    charGraphic:SetAttribute("ChangerItem", nil)
+                    charGraphic.Graphic = c.Graphic
+                end
+            end)
+        end
+    end
+    -- Remove any leftover ChangerItem-tagged clothing/accessories not in originals
     for _, d in ipairs(char:GetDescendants()) do
         pcall(function()
             if d:GetAttribute("ChangerItem") then d:Destroy() end
@@ -19222,6 +19585,7 @@ function changerUnchange()
 end
 
 function changerApplyData(data)
+    changerSaveOriginal()
     for key, rawId in pairs(data) do
         local ids = changerExtractIds(rawId)
         for _, id in ipairs(ids) do
@@ -19291,17 +19655,17 @@ function createAvatarPicker(opts)
             local entry = Instance.new("Frame")
             entry.Size = UDim2.new(1, -8, 0, 30)
             entry.Position = UDim2.new(0, 4, 0, y)
-            entry.BackgroundColor3 = isSel and Color3.fromRGB(10, 30, 45) or Color3.fromRGB(0, 0, 0)
-            entry.BorderSizePixel = 0
-            entry.Parent = scrollFrame
-            local ec = Instance.new("UICorner"); ec.CornerRadius = UDim.new(0, 6); ec.Parent = entry
+			entry.BackgroundColor3 = isSel and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(0, 0, 0)
+			entry.BorderSizePixel = 0
+			entry.Parent = scrollFrame
+			local ec = Instance.new("UICorner"); ec.CornerRadius = UDim.new(0, 6); ec.Parent = entry
 
-            local nameLabel = Instance.new("TextLabel")
-            nameLabel.Size = UDim2.new(1, -70, 1, 0)
-            nameLabel.Position = UDim2.new(0, 8, 0, 0)
-            nameLabel.BackgroundTransparency = 1
-            nameLabel.Text = name
-            nameLabel.TextColor3 = isSel and Color3.fromRGB(120, 210, 255) or Color3.fromRGB(255, 255, 255)
+			local nameLabel = Instance.new("TextLabel")
+			nameLabel.Size = UDim2.new(1, -70, 1, 0)
+			nameLabel.Position = UDim2.new(0, 8, 0, 0)
+			nameLabel.BackgroundTransparency = 1
+			nameLabel.Text = name
+			nameLabel.TextColor3 = isSel and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(255, 255, 255)
             nameLabel.TextSize = 16
             nameLabel.Font = Enum.Font.SourceSansBold
             nameLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -19495,6 +19859,7 @@ do
     local unchangeBtn = createButton("ChangerUnchangeBtn", "Unchange", 341)
     unchangeBtn.MouseButton1Click:Connect(function()
         changerUnchange()
+        changerOriginalState = nil
         changerAccumulatedIds = {}
         for key, box in pairs(changerSlotInputs) do box.Text = "" end
         notify("Changer", "Removed changer items", 2)
@@ -19564,6 +19929,8 @@ player.CharacterAdded:Connect(function(char)
     if not changerAutoApply then return end
     task.spawn(function()
         char:WaitForChild("Humanoid", 3)
+        -- Reset saved original so it captures this new character's fresh state
+        changerOriginalState = nil
         -- Strip native accessories & clothing FIRST
         changerUnchange()
         pcall(function()
@@ -19597,6 +19964,8 @@ task.defer(function()
     if not char then return end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return end
+    -- Reset saved original so it captures this character's fresh state
+    changerOriginalState = nil
     -- Strip native accessories & clothing FIRST
     changerUnchange()
     pcall(function()
@@ -19878,7 +20247,7 @@ function createSkyboxPicker(opts)
 			local entry = Instance.new("Frame")
 			entry.Size = UDim2.new(1, -8, 0, 30)
 			entry.Position = UDim2.new(0, 4, 0, y)
-			entry.BackgroundColor3 = isSel and Color3.fromRGB(10, 30, 45) or Color3.fromRGB(0, 0, 0)
+			entry.BackgroundColor3 = isSel and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(0, 0, 0)
 			entry.BorderSizePixel = 0
 			entry.Parent = scrollFrame
 			local ec = Instance.new("UICorner"); ec.CornerRadius = UDim.new(0, 6); ec.Parent = entry
@@ -19888,7 +20257,7 @@ function createSkyboxPicker(opts)
 			nameLabel.Position = UDim2.new(0, 8, 0, 0)
 			nameLabel.BackgroundTransparency = 1
 			nameLabel.Text = name
-			nameLabel.TextColor3 = isSel and Color3.fromRGB(120, 210, 255) or Color3.fromRGB(255, 255, 255)
+			nameLabel.TextColor3 = isSel and Color3.fromRGB(0, 0, 0) or Color3.fromRGB(255, 255, 255)
 			nameLabel.TextSize = 16
 			nameLabel.Font = Enum.Font.SourceSansBold
 			nameLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -20368,6 +20737,44 @@ bindableFeatures = {
 }
 
 bindInputConn = UserInputService.InputBegan:Connect(function(input, gp)
+	if listeningForEmotionBind and listeningEmotionTextBox and listeningEmotionId then
+		local isMouse = input.UserInputType == Enum.UserInputType.MouseButton1 or
+			input.UserInputType == Enum.UserInputType.MouseButton2 or
+			input.UserInputType == Enum.UserInputType.MouseButton3
+		if isMouse and tick() - lastUIInteract < 0.3 then return end
+		local bindKey
+		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode ~= Enum.KeyCode.Unknown then
+			bindKey = input.KeyCode
+		elseif isMouse then
+			bindKey = input.UserInputType
+		else
+			return
+		end
+		-- Remove old bind for this emotion if exists
+		local oldKey = emotionKeyBinds[listeningEmotionId]
+		if oldKey and keyBinds[oldKey] then
+			keyBinds[oldKey] = nil
+		end
+		emotionKeyBinds[listeningEmotionId] = bindKey
+		local animId = listeningEmotionId
+		keyBinds[bindKey] = {
+			callback = function()
+				if playingAnimationId == animId then
+					stopCurrentAnimation()
+				else
+					playAnimation(animId, "1")
+				end
+			end,
+			description = "Emotion: " .. tostring(animId),
+		}
+		listeningEmotionTextBox.Text = bindKeyToName(bindKey)
+		justBoundKey = bindKey
+		listeningForEmotionBind = false
+		listeningEmotionTextBox = nil
+		listeningEmotionId = nil
+		saveConfig()
+		return
+	end
 	if listeningForBind and listeningTextBox and listeningFeatureName then
 		local isMouse = input.UserInputType == Enum.UserInputType.MouseButton1 or
 			input.UserInputType == Enum.UserInputType.MouseButton2 or
@@ -22861,6 +23268,18 @@ hideMiniButtonsBtn.MouseButton1Click:Connect(function()
 	saveConfig()
 end)
 
+-- Auto Re-execute on Rejoin: controls whether the script auto-reloads after teleport/server hop
+autoReexecuteBtn = createButton("AutoReexecuteButton", autoReexecuteOnRejoin and "Auto Re-execute on Rejoin: ON" or "Auto Re-execute on Rejoin: OFF", 714.2)
+if autoReexecuteOnRejoin then
+	setToggleState(autoReexecuteBtn, true, "Auto Re-execute on Rejoin: ON", "Auto Re-execute on Rejoin: OFF")
+end
+autoReexecuteBtn.MouseButton1Click:Connect(function()
+	autoReexecuteOnRejoin = not autoReexecuteOnRejoin
+	setToggleState(autoReexecuteBtn, autoReexecuteOnRejoin, "Auto Re-execute on Rejoin: ON", "Auto Re-execute on Rejoin: OFF")
+	saveConfig()
+	notify("Settings", autoReexecuteOnRejoin and "Script will auto-reload on rejoin/teleport" or "Script will NOT auto-reload on rejoin", 2)
+end)
+
 -- ============== Main Menu Color ==============
 menuColorRow = Instance.new("Frame")
 menuColorRow.Size = UDim2.new(1, 0, 0, 42)
@@ -25304,6 +25723,7 @@ function buildConfigData()
 	config.toggles.autofarmKillAllEnabled = autofarmKillAllEnabled; config.toggles.autofarmShootPiercerEnabled = autofarmShootPiercerEnabled
 	config.toggles.autofarmStuckEnabled = autofarmStuckEnabled
 	config.toggles.autofarmWebhookEnabled = autofarmWebhookEnabled; config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
+	config.toggles.rejoinOnKickEnabled = rejoinOnKickEnabled
 	config.toggles.instantRoleNotifyEnabled = instantRoleNotifyEnabled
 	config.toggles.instantRolePerkNotifyEnabled = instantRolePerkNotifyEnabled
 	config.toggles.showRoundTimerEnabled = showRoundTimerEnabled
@@ -28135,6 +28555,10 @@ function restoreFullConfig()
 		autofarmServerHopEnabled = true
 		if autofarmServerHopBtn then setToggleState(autofarmServerHopBtn, true, "Server Hop When Alone: ON", "Server Hop When Alone: OFF") end
 	end
+	if T.rejoinOnKickEnabled then
+		rejoinOnKickEnabled = true
+		if rejoinOnKickBtn then setToggleState(rejoinOnKickBtn, true, "Rejoin on Kick: ON", "Rejoin on Kick: OFF") end
+	end
 	if T.autofarmAvoidMurdererEnabled then
 		autofarmAvoidMurdererEnabled = true
 		if autofarmAvoidMurdererBtn then setToggleState(autofarmAvoidMurdererBtn, true, "Avoid Murderer TP: ON", "Avoid Murderer TP: OFF") end
@@ -28314,7 +28738,7 @@ do
 end
 
 do
-	-- RESET TAB: LayoutOrder 310-330
+	-- RESET TAB: LayoutOrder 310-331 (integers only)
 	local resetFrame = categoryFrames["Reset"]
 	local utilFrame = categoryFrames["Utilities"]
 	if resetFrame and utilFrame then
@@ -28329,36 +28753,36 @@ do
 		rstSection.LayoutOrder = 310
 		rstSection.Parent = resetFrame
 		if resetPlayerRow then resetPlayerRow.Parent = resetFrame; resetPlayerRow.LayoutOrder = 311 end
-		if resetSelectedBtn then resetSelectedBtn.Parent = resetFrame; resetSelectedBtn.LayoutOrder = 313 end
-		if resetEveryoneBtn then resetEveryoneBtn.Parent = resetFrame; resetEveryoneBtn.LayoutOrder = 314 end
-		if resetSheriffBtn then resetSheriffBtn.Parent = resetFrame; resetSheriffBtn.LayoutOrder = 315 end
-		if resetMurdererBtn then resetMurdererBtn.Parent = resetFrame; resetMurdererBtn.LayoutOrder = 316 end
-		if autoResetPlayerBtn then autoResetPlayerBtn.Parent = resetFrame; autoResetPlayerBtn.LayoutOrder = 317 end
-		if autoResetEveryoneBtn then autoResetEveryoneBtn.Parent = resetFrame; autoResetEveryoneBtn.LayoutOrder = 318 end
-		if autoResetSheriffBtn then autoResetSheriffBtn.Parent = resetFrame; autoResetSheriffBtn.LayoutOrder = 319 end
-		if autoResetMurdererBtn then autoResetMurdererBtn.Parent = resetFrame; autoResetMurdererBtn.LayoutOrder = 320 end
+		if resetSelectedBtn then resetSelectedBtn.Parent = resetFrame; resetSelectedBtn.LayoutOrder = 315 end
+		if resetEveryoneBtn then resetEveryoneBtn.Parent = resetFrame; resetEveryoneBtn.LayoutOrder = 316 end
+		if resetSheriffBtn then resetSheriffBtn.Parent = resetFrame; resetSheriffBtn.LayoutOrder = 318 end
+		if resetMurdererBtn then resetMurdererBtn.Parent = resetFrame; resetMurdererBtn.LayoutOrder = 319 end
+		if autoResetPlayerBtn then autoResetPlayerBtn.Parent = resetFrame; autoResetPlayerBtn.LayoutOrder = 320 end
+		if autoResetEveryoneBtn then autoResetEveryoneBtn.Parent = resetFrame; autoResetEveryoneBtn.LayoutOrder = 322 end
+		if autoResetSheriffBtn then autoResetSheriffBtn.Parent = resetFrame; autoResetSheriffBtn.LayoutOrder = 324 end
+		if autoResetMurdererBtn then autoResetMurdererBtn.Parent = resetFrame; autoResetMurdererBtn.LayoutOrder = 325 end
 		for _, child in ipairs(utilFrame:GetChildren()) do
 			if child.Name:match("^Reset") and child.Name:match("Picker") then
 				child.Parent = resetFrame
 				if child.Name:match("TitleBar") then child.LayoutOrder = 312 end
-				if child.Name:match("Search") then child.LayoutOrder = 312.005 end
-				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 312.006 end
+				if child.Name:match("Search") then child.LayoutOrder = 313 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 314 end
 			end
 		end
 		for _, child in ipairs(utilFrame:GetChildren()) do
 			if child.Name:match("^WatchMurderer") and child.Name:match("Picker") then
 				child.Parent = resetFrame
-				if child.Name:match("TitleBar") then child.LayoutOrder = 321 end
-				if child.Name:match("Search") then child.LayoutOrder = 321.005 end
-				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 321.006 end
+				if child.Name:match("TitleBar") then child.LayoutOrder = 326 end
+				if child.Name:match("Search") then child.LayoutOrder = 327 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 328 end
 			end
 		end
 		for _, child in ipairs(utilFrame:GetChildren()) do
 			if child.Name:match("^WatchSheriff") and child.Name:match("Picker") then
 				child.Parent = resetFrame
-				if child.Name:match("TitleBar") then child.LayoutOrder = 322 end
-				if child.Name:match("Search") then child.LayoutOrder = 322.005 end
-				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 322.006 end
+				if child.Name:match("TitleBar") then child.LayoutOrder = 329 end
+				if child.Name:match("Search") then child.LayoutOrder = 330 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 331 end
 			end
 		end
 	end
