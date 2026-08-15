@@ -18698,7 +18698,7 @@ function rebuildEmotions()
 
 		local animationButton = Instance.new("TextButton")
 		animationButton.Name = "AnimButton_" .. tostring(animationId)
-		animationButton.Size = UDim2.new(1, -208, 1, 0)
+		animationButton.Size = UDim2.new(1, -222, 1, 0)
 		animationButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		animationButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 		animationButton.Text = animationName
@@ -18733,9 +18733,24 @@ function rebuildEmotions()
 		bindBtn.Parent = animationRow
 		Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 4)
 
+		-- Clear-bind button: visible only while a bind is set. Sits right next to
+		-- the bind button so bind + clear + the ▲/▼ move buttons read as one unit.
+		local clearBindBtn = Instance.new("TextButton")
+		clearBindBtn.Name = "AnimClearBind_" .. tostring(animationId)
+		clearBindBtn.Size = UDim2.new(0, 22, 1, 0)
+		clearBindBtn.Position = UDim2.new(1, -126, 0, 0)
+		clearBindBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		clearBindBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		clearBindBtn.Text = "⌫"
+		clearBindBtn.Font = Enum.Font.SourceSansBold
+		clearBindBtn.TextSize = 14
+		clearBindBtn.Visible = emotionKeyBinds[animationId] ~= nil
+		clearBindBtn.Parent = animationRow
+		Instance.new("UICorner", clearBindBtn).CornerRadius = UDim.new(0, 4)
+
 		local starBtn = Instance.new("TextButton")
 		starBtn.Size = UDim2.new(0, 22, 1, 0)
-		starBtn.Position = UDim2.new(1, -126, 0, 0)
+		starBtn.Position = UDim2.new(1, -198, 0, 0)
 		starBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		starBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		starBtn.Text = isEmoteDetached(animationId) and "★" or "☆"
@@ -18768,7 +18783,7 @@ function rebuildEmotions()
 
 		local delBtn = Instance.new("TextButton")
 		delBtn.Size = UDim2.new(0, 22, 1, 0)
-		delBtn.Position = UDim2.new(1, -198, 0, 0)
+		delBtn.Position = UDim2.new(1, -222, 0, 0)
 		delBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		delBtn.Text = "×"
@@ -18783,6 +18798,7 @@ function rebuildEmotions()
 			Box = speedBox,
 			Name = animationName,
 			PopOut = starBtn,
+			Clear = clearBindBtn,
 		}
 
 		starBtn.MouseButton1Click:Connect(function()
@@ -18804,16 +18820,47 @@ function rebuildEmotions()
 				bindBtn.Text = emotionKeyBinds[animationId] and bindKeyToName(emotionKeyBinds[animationId]) or "⌨"
 				return
 			end
-			-- Remove old bind if exists
-			local oldKey = emotionKeyBinds[animationId]
-			if oldKey and keyBinds[oldKey] then
-				keyBinds[oldKey] = nil
-			end
-			emotionKeyBinds[animationId] = nil
+			-- Enter listening mode WITHOUT dropping an existing bind: the old key
+			-- stays active until a new key is pressed (or the bind is cleared).
 			bindBtn.Text = "..."
 			listeningForEmotionBind = true
 			listeningEmotionTextBox = bindBtn
 			listeningEmotionId = animationId
+		end)
+
+		-- Right-click the bind button to remove the bind (mirrors the ⌫ button).
+		bindBtn.MouseButton2Click:Connect(function()
+			lastUIInteract = tick()
+			if listeningForEmotionBind and listeningEmotionId == animationId then
+				listeningForEmotionBind = false
+				listeningEmotionTextBox = nil
+				listeningEmotionId = nil
+			end
+			local oldKey = emotionKeyBinds[animationId]
+			if oldKey then
+				if keyBinds[oldKey] then keyBinds[oldKey] = nil end
+				emotionKeyBinds[animationId] = nil
+				bindBtn.Text = "⌨"
+				clearBindBtn.Visible = false
+				pcall(saveConfig)
+			end
+		end)
+
+		clearBindBtn.MouseButton1Click:Connect(function()
+			lastUIInteract = tick()
+			if listeningForEmotionBind and listeningEmotionId == animationId then
+				listeningForEmotionBind = false
+				listeningEmotionTextBox = nil
+				listeningEmotionId = nil
+			end
+			local oldKey = emotionKeyBinds[animationId]
+			if oldKey then
+				if keyBinds[oldKey] then keyBinds[oldKey] = nil end
+				emotionKeyBinds[animationId] = nil
+			end
+			bindBtn.Text = "⌨"
+			clearBindBtn.Visible = false
+			pcall(saveConfig)
 		end)
 
 		animationButton.MouseButton1Click:Connect(function()
@@ -18846,6 +18893,12 @@ function rebuildEmotions()
 		delBtn.MouseButton1Click:Connect(function()
 			if playingAnimationId == animationId then stopCurrentAnimation() end
 			if isEmoteDetached(animationId) then removeDetachedEmote(animationId, true) end
+			-- Remove its keybind too so no stale shortcut keeps triggering it
+			local oldKey = emotionKeyBinds[animationId]
+			if oldKey then
+				if keyBinds[oldKey] then keyBinds[oldKey] = nil end
+				emotionKeyBinds[animationId] = nil
+			end
 			for i = 1, #emotionOrder do
 				if emotionOrder[i].id == animationId then
 					table.remove(emotionOrder, i)
@@ -20768,6 +20821,9 @@ bindInputConn = UserInputService.InputBegan:Connect(function(input, gp)
 		end
 		emotionKeyBinds[listeningEmotionId] = bindKey
 		local animId = listeningEmotionId
+		-- Reveal the ⌫ clear-bind button now that this emotion has a bind
+		local boundUi = animationUiById and animationUiById[animId]
+		if boundUi and boundUi.Clear then boundUi.Clear.Visible = true end
 		keyBinds[bindKey] = {
 			callback = function()
 				if playingAnimationId == animId then
