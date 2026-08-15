@@ -425,6 +425,8 @@ config.values.voteStartSoundPath = voteStartSoundPath
 config.values.autofarmAutoAntiShootDelay = autofarmAutoAntiShootDelay
 	config.values.autofarmCoinDelay = autofarmCoinDelay
 config.values.autofarmStuckTimeout = autofarmStuckTimeout
+	config.values.autofarmAutoAntiShootModeIndex = autofarmAutoAntiShootModeIndex
+	config.values.autofarmStuckTpModeIndex = autofarmStuckTpModeIndex
 	config.values.autofarmMode = autofarmMode
 	config.values.resetEveryoneInterval = resetEveryoneInterval
 	config.values.autoResetPlayerInterval = autoResetPlayerInterval
@@ -561,7 +563,11 @@ config.values.autofarmStuckTimeout = autofarmStuckTimeout
 	config.emotionKeyBinds = {}
 	if emotionKeyBinds then
 		for animId, kc in pairs(emotionKeyBinds) do
-			config.emotionKeyBinds[tostring(animId)] = tostring(kc):gsub("Enum.KeyCode%.", "")
+			-- Save keyboard keys as "G" and mouse buttons as "MouseButton2" so
+			-- both round-trip through the config and reload correctly.
+			config.emotionKeyBinds[tostring(animId)] = tostring(kc)
+				:gsub("Enum.KeyCode%.", "")
+				:gsub("Enum.UserInputType%.", "")
 		end
 	end
 	config.customAnimations = {}
@@ -3261,7 +3267,11 @@ if loadedConfig and type(loadedConfig.emotionKeyBinds) == "table" then
 	for idStr, keyCodeStr in pairs(loadedConfig.emotionKeyBinds) do
 		local id = tonumber(idStr)
 		if id and keyCodeStr then
-			local ok, kc = pcall(function() return Enum.KeyCode[keyCodeStr] end)
+			local ok, kc = pcall(function()
+				local kc2 = Enum.KeyCode[keyCodeStr]
+				if kc2 then return kc2 end
+				return Enum.UserInputType[keyCodeStr]
+			end)
 			if ok and kc then
 				emotionKeyBinds[id] = kc
 			end
@@ -3269,7 +3279,10 @@ if loadedConfig and type(loadedConfig.emotionKeyBinds) == "table" then
 	end
 end
 
--- Register saved emotion keybinds into the global keyBinds table
+-- Register saved emotion keybinds into the global keyBinds table.
+-- keyBinds is normally initialized further down the file; make sure it exists
+-- here so a saved bind does not crash the script on startup.
+keyBinds = keyBinds or {}
 for animId, kc in pairs(emotionKeyBinds) do
 	keyBinds[kc] = {
 		callback = function()
@@ -5916,7 +5929,9 @@ function setToggleState(btn, state, onText, offText)
 end
 
 -- РЎРёСЃС‚РµРјР° Р±РёРЅРґРёРЅРіР° РєР»Р°РІРёС€
-keyBinds = {}
+-- Don't reset: emotion binds loaded from config were already registered above;
+-- wiping the table here would silently break every saved emotion shortcut.
+keyBinds = keyBinds or {}
 featureBinds = {}
 
 keyNameMap = {
@@ -9389,6 +9404,98 @@ end
 createVoidBaseplate()
 
 voidTpPreviousPos = nil
+
+-- ===== Autofarm teleport (under-map farm spot) =====
+-- Coordinates for each map's under-map farm spot (from "Maps Farm.txt").
+-- These drop the character UNDER the map (into the textures), so the farm
+-- flight must phase through walls and an invisible platform below stops the
+-- character from falling through the map into the void.
+autofarmMapCoords = {
+	Hotel = Vector3.new(-12, 270, 9014),
+	Bank2 = Vector3.new(-36, 287, 9012),
+	Mansion2 = Vector3.new(-53, 264, 8969),
+	Factory = Vector3.new(-41, 264, 8965),
+	BioLab = Vector3.new(614, 281, 9828),
+	Office3 = Vector3.new(-1, 294, 8999),
+	ResearchFacility = Vector3.new(-110, 280, 8948),
+	Hospital3 = Vector3.new(9, 272, 8931),
+	House2 = Vector3.new(-17, 255, 9020),
+	MilBase = Vector3.new(56, 211, 9007),
+	Workplace = Vector3.new(19, 283, 8989),
+	PoliceStation = Vector3.new(-5, 265, 9079),
+	Pier = Vector3.new(-714, 106, -2369),
+	Yacht = Vector3.new(3, 223, 9100),
+	BeachResort = Vector3.new(6, 242, 9107)
+}
+
+-- Invisible platform under the map at the farm spot, so the character can't
+-- fall into the void while farming there. Anchored in the workspace (like the
+-- void baseplate) and reused across rounds; it only ever sits BELOW the map
+-- floor, so the farm route's floor raycasts (from coins above the floor) are
+-- never affected by it.
+autofarmPlatforms = {}
+function createAutofarmPlatform(mapName, coords)
+	local name = "AdrenalinFarmPlatform_" .. mapName
+	local existing = workspace:FindFirstChild(name)
+	if existing then
+		autofarmPlatforms[mapName] = existing
+		return existing
+	end
+	local bp = Instance.new("Part")
+	bp.Name = name
+	bp.Size = Vector3.new(400, 1, 400)
+	bp.Position = Vector3.new(coords.X, coords.Y - 4, coords.Z)
+	bp.Anchored = true
+	bp.Transparency = 1
+	bp.CanCollide = true
+	bp.Parent = workspace
+	autofarmPlatforms[mapName] = bp
+	return bp
+end
+
+-- TP to the current map's under-map autofarm spot. All character parts are made
+-- non-colliding so the character passes THROUGH walls instead of getting stuck
+-- in the map textures, and the invisible platform below keeps it from falling
+-- through the map.
+function tpToAutofarm()
+	local myChar = player.Character
+	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	local hum = myChar and myChar:FindFirstChildOfClass("Humanoid")
+	if not (myHrp and hum) then
+		notify("Error", "Character not found", 2)
+		return false
+	end
+	for mapName, coords in pairs(autofarmMapCoords) do
+		if Workspace:FindFirstChild(mapName) then
+			createAutofarmPlatform(mapName, coords)
+			local targetCF = CFrame.new(coords)
+			pcall(function()
+				for _, p in ipairs(autofarmGetCharParts(myChar)) do
+					if p.CanCollide then p.CanCollide = false end
+				end
+			end)
+			pcall(function() hum.PlatformStand = true end)
+			for i = 1, 10 do
+				myHrp.CFrame = targetCF
+				myChar:SetPrimaryPartCFrame(targetCF)
+				myHrp.Velocity = Vector3.new(0, 0, 0)
+				myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				myHrp.RotVelocity = Vector3.new(0, 0, 0)
+			end
+			local fixConn
+			fixConn = RunService.Heartbeat:Connect(function()
+				myHrp.CFrame = targetCF
+				myHrp.Velocity = Vector3.new(0, 0, 0)
+				myHrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+				fixConn:Disconnect()
+			end)
+			notify("Teleported", "Autofarm spot: " .. mapName, 2)
+			return true
+		end
+	end
+	notify("Error", "No map found", 2)
+	return false
+end
 
 btn.voidTp = createButton("VoidTpButton", "TP to Void", 113.5)
 btn.voidTp.MouseButton1Click:Connect(function()
@@ -13722,6 +13829,10 @@ end
 -- 3D Rendering toggle (disables 3D rendering to reduce CPU usage, like Render.lua)
 do
 	rendering3dButton = createButton("Rendering3dButton", "3D Rendering: ON", 215.6)
+	-- ON by default: apply the enabled styling right away so it looks like the
+	-- rest of the active toggles (otherwise the "ON" label keeps the grey/black
+	-- off-state colors until the button is clicked).
+	setToggleState(rendering3dButton, rendering3dEnabled, "3D Rendering: ON", "3D Rendering: OFF")
 	rendering3dButton.MouseButton1Click:Connect(function()
 		rendering3dEnabled = not rendering3dEnabled
 		pcall(function() RunService:Set3dRenderingEnabled(rendering3dEnabled) end)
@@ -16518,8 +16629,10 @@ function autofarmFinishInnocent()
 end
 
 -- Shoot the murderer until they (or we) die, or the timeout runs out.
--- Works EXACTLY like the standalone Auto Shoot Murderer: instant raw shot via
--- aimFireGunAtOriginal (no velocity-stability preamble, no pre-shot delay).
+-- Uses the EXACT technique of the standalone Auto Shoot Murderer: one raw
+-- ping-predicted burst per attempt (aimFireGunAtOriginal + autoShotBurst), the
+-- SAME cooldown between attempts (autoShotCooldown), and NO unequip flicker —
+-- the gun stays equipped, exactly like the standalone auto-shot.
 function autofarmShootMurderer(forcePiercer)
 	if not autofarmHasGun() then return false end
 	local startedAt = os.clock()
@@ -16532,10 +16645,10 @@ function autofarmShootMurderer(forcePiercer)
 		local myChar = player.Character
 		local myHum = myChar and myChar:FindFirstChildOfClass("Humanoid")
 		if not myHum or myHum.Health <= 0 then return false end
-		-- Instant single predicted shot — same technique as the original
-		pcall(aimFireGunAtOriginal, m)
-		pcall(aimUnequipGun)
-		task.wait(0.12)
+		-- One burst per attempt at the standalone's cooldown (no 0.12s spamming,
+		-- no per-shot unequip) — same remote rate as the original Auto Shot.
+		pcall(aimFireGunAtOriginal, m, AIM_CONFIG.autoShotBurst)
+		task.wait(AIM_CONFIG.autoShotCooldown or 0.35)
 	end
 	return true
 end
@@ -16571,6 +16684,8 @@ function autofarmDoEndTeleport()
 			voidTpPreviousPos = myHrp.CFrame
 			myHrp.CFrame = CFrame.new(voidBaseplatePos.X, voidBaseplatePos.Y + 1, voidBaseplatePos.Z)
 		end)
+	elseif mode == "Autofarm" then
+		pcall(tpToAutofarm)
 	end
 	notify("Autofarm", "Auto TP: " .. mode, 2)
 end
@@ -16677,8 +16792,39 @@ function autofarmDoAvoidMurdererTp()
 			voidTpPreviousPos = myHrp.CFrame
 			myHrp.CFrame = CFrame.new(voidBaseplatePos.X, voidBaseplatePos.Y + 1, voidBaseplatePos.Z)
 		end)
+	elseif mode == "Autofarm" then
+		pcall(tpToAutofarm)
 	end
 	notify("Autofarm", "Avoid Murderer TP: " .. mode, 2)
+end
+
+-- ===== Anti-Stop destination: where to teleport when the farm gets stuck =====
+autofarmStuckTpModes = {"Map", "Above Map", "Void", "Autofarm", "Lobby", "VoteMap"}
+autofarmStuckTpModeIndex = 1 -- default "Map" (old behaviour)
+
+function autofarmDoStuckTp()
+	local mode = autofarmStuckTpModes[autofarmStuckTpModeIndex]
+	local myChar = player.Character
+	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
+	if not myHrp then return end
+	if mode == "Lobby" then
+		pcall(doInstantTp, myHrp, myChar, CFrame.new(-12, -67, -11))
+	elseif mode == "VoteMap" then
+		pcall(doInstantTp, myHrp, myChar, CFrame.new(-1, -65, -79))
+	elseif mode == "Map" then
+		pcall(tpToMap)
+	elseif mode == "Above Map" then
+		pcall(tpAboveMap)
+	elseif mode == "Void" then
+		pcall(createVoidBaseplate)
+		pcall(function()
+			voidTpPreviousPos = myHrp.CFrame
+			myHrp.CFrame = CFrame.new(voidBaseplatePos.X, voidBaseplatePos.Y + 1, voidBaseplatePos.Z)
+		end)
+	elseif mode == "Autofarm" then
+		pcall(tpToAutofarm)
+	end
+	notify("Autofarm", "Anti-Stop TP: " .. mode, 2)
 end
 
 -- Check distance to the murderer and teleport away if too close during autofarm
@@ -17042,8 +17188,8 @@ function startAutofarm()
 										elseif (now - autofarmStuckSince) >= autofarmStuckTimeout then
 											autofarmStuckSince = nil
 											autofarmStuckLastPos = nil
-											notify("Autofarm", "Stuck detected — teleporting to map...", 2)
-											pcall(tpToMap)
+											notify("Autofarm", "Stuck detected — teleporting...", 2)
+											pcall(autofarmDoStuckTp)
 										end
 									else
 										autofarmStuckSince = nil
@@ -17064,6 +17210,7 @@ end
 
 function setAutofarmEnabled(state, target, silent)
 	autofarmEnabled = state
+	autofarmUpdateNoclip()
 	if state then
 		autofarmTargetCoins = target or autofarmTargetCoins
 		autofarmActiveContainer = nil -- force per-round state refresh
@@ -17126,6 +17273,8 @@ function autofarmDoPreTp()
 			voidTpPreviousPos = hrp.CFrame
 			fixedCF = CFrame.new(voidBaseplatePos.X, voidBaseplatePos.Y + 1, voidBaseplatePos.Z)
 		end
+	elseif mode == "Autofarm" then
+		pcall(tpToAutofarm)
 	end
 	if fixedCF then
 		pcall(doInstantTp, hrp, myChar, fixedCF)
@@ -17189,6 +17338,23 @@ end)
 -- the moment it starts flying to coins.
 autofarmAutoAntiShootLastRound = ""
 autofarmAutoAntiShootActive = false -- true while Anti-Shoot is ON due to this feature
+
+-- Returns true when our current role matches the selected Auto Anti-Shoot mode.
+-- "Default" (index 1) always allows. "Sheriff" = only when we are the Sheriff or
+-- the gun-carrying Hero, "Murderer" = only when we are the Murderer,
+-- "Sheriff/Murderer" = any of those roles.
+function autofarmAutoAntiShootRoleAllowed()
+	if autofarmAutoAntiShootModeIndex <= 1 then return true end
+	local role = autofarmGetMyRole()
+	local isSheriff = role == "Sheriff" or role == "Hero"
+	local isMurderer = role == "Murderer"
+	local mode = autofarmAutoAntiShootModes[autofarmAutoAntiShootModeIndex]
+	if mode == "Sheriff" then return isSheriff end
+	if mode == "Murderer" then return isMurderer end
+	if mode == "Sheriff/Murderer" then return isSheriff or isMurderer end
+	return true
+end
+
 task.spawn(function()
 	while task.wait(0.4) do
 		if autofarmEnabled and autofarmAutoAntiShootEnabled then
@@ -17210,7 +17376,7 @@ task.spawn(function()
 						-- after so it protects during the remaining wait.
 						task.wait(autofarmAutoAntiShootDelay)
 						if autofarmEnabled and autofarmAutoAntiShootEnabled then
-							if not PastedSources then
+							if autofarmAutoAntiShootRoleAllowed() and not PastedSources then
 								toggleDesync()
 								if desyncButton then setToggleState(desyncButton, true, "Anti-Shoot: ON", "Anti-Shoot: OFF") end
 								setExtractedBtnState("Anti-Shoot", true)
@@ -17632,12 +17798,85 @@ antiAfkBtn.MouseButton1Click:Connect(function()
 	saveConfig()
 end)
 
--- ===== Anti-stop: teleport back to map when we haven't moved for a while =====
-autofarmStuckBtn = createButton("AutofarmStuckButton", "Anti-Stop: ON", 309)
+-- ===== Anti-stop: toggle + destination dropdown on the same row =====
+autofarmStuckRow = Instance.new("Frame")
+autofarmStuckRow.Name = "AutofarmStuckRow"
+autofarmStuckRow.Size = UDim2.new(1, 0, 0, 42)
+autofarmStuckRow.BackgroundTransparency = 1
+autofarmStuckRow.LayoutOrder = 309
+autofarmStuckRow.Parent = categoryFrames["Autofarm"]
+
+autofarmStuckBtn = Instance.new("TextButton")
+autofarmStuckBtn.Name = "AutofarmStuckButton"
+autofarmStuckBtn.Size = UDim2.new(0.5, -2, 1, 0)
+autofarmStuckBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmStuckBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmStuckBtn.Text = "Anti-Stop: ON"
+autofarmStuckBtn.Font = Enum.Font.SourceSansBold
+autofarmStuckBtn.TextSize = 14
+autofarmStuckBtn.Parent = autofarmStuckRow
+Instance.new("UICorner", autofarmStuckBtn).CornerRadius = UDim.new(0, 6)
 autofarmStuckBtn.MouseButton1Click:Connect(function()
 	autofarmStuckEnabled = not autofarmStuckEnabled
 	setToggleState(autofarmStuckBtn, autofarmStuckEnabled, "Anti-Stop: ON", "Anti-Stop: OFF")
 	saveConfig()
+end)
+
+autofarmStuckSelect = Instance.new("TextButton")
+autofarmStuckSelect.Name = "AutofarmStuckSelect"
+autofarmStuckSelect.Size = UDim2.new(0.5, -2, 1, 0)
+autofarmStuckSelect.Position = UDim2.new(0.5, 2, 0, 0)
+autofarmStuckSelect.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmStuckSelect.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmStuckSelect.Text = autofarmStuckTpModes[1] .. " ▼"
+autofarmStuckSelect.Font = Enum.Font.SourceSansBold
+autofarmStuckSelect.TextSize = 14
+autofarmStuckSelect.AutoButtonColor = false
+autofarmStuckSelect.Parent = autofarmStuckRow
+Instance.new("UICorner", autofarmStuckSelect).CornerRadius = UDim.new(0, 6)
+
+autofarmStuckDropdownFrame = Instance.new("Frame")
+autofarmStuckDropdownFrame.Size = UDim2.new(0.5, -2, 0, math.min(#autofarmStuckTpModes * 30, 180))
+autofarmStuckDropdownFrame.Position = UDim2.new(0.5, 2, 0, 42)
+autofarmStuckDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmStuckDropdownFrame.BorderSizePixel = 0
+autofarmStuckDropdownFrame.Visible = false
+autofarmStuckDropdownFrame.ZIndex = 10
+autofarmStuckDropdownFrame.Parent = autofarmStuckRow
+
+autofarmStuckDropdownList = Instance.new("ScrollingFrame")
+autofarmStuckDropdownList.Size = UDim2.new(1, 0, 1, 0)
+autofarmStuckDropdownList.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmStuckDropdownList.BorderSizePixel = 0
+autofarmStuckDropdownList.ScrollBarThickness = 4
+autofarmStuckDropdownList.CanvasSize = UDim2.new(0, 0, 0, #autofarmStuckTpModes * 30)
+autofarmStuckDropdownList.ZIndex = 10
+autofarmStuckDropdownList.Parent = autofarmStuckDropdownFrame
+Instance.new("UICorner", autofarmStuckDropdownList).CornerRadius = UDim.new(0, 6)
+
+for i, modeName in ipairs(autofarmStuckTpModes) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 30)
+	btn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+	btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Text = modeName
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 14
+	btn.AutoButtonColor = false
+	btn.ZIndex = 10
+	btn.Parent = autofarmStuckDropdownList
+	btn.MouseButton1Click:Connect(function()
+		autofarmStuckTpModeIndex = i
+		autofarmStuckSelect.Text = modeName .. " ▼"
+		autofarmStuckDropdownFrame.Visible = false
+		saveConfig()
+	end)
+	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+end
+autofarmStuckSelect.MouseButton1Click:Connect(function()
+	autofarmStuckDropdownFrame.Visible = not autofarmStuckDropdownFrame.Visible
 end)
 
 -- Configurable timeout before the anti-stop teleport (seconds, default 5)
@@ -17726,12 +17965,90 @@ autofarmKillAllBtn.MouseButton1Click:Connect(function()
 	setToggleState(autofarmKillAllBtn, autofarmKillAllEnabled, "Auto Kill Everyone (Murderer): ON", "Auto Kill Everyone (Murderer): OFF")
 end)
 
--- Auto Anti-Shoot: enable Anti-Shoot at round start, auto-disable when farming begins
-autofarmAutoAntiShootBtn = createButton("AutofarmAutoAntiShootButton", "Auto Anti-Shoot: OFF", 319)
+-- ===== Auto Anti-Shoot: toggle + role-mode dropdown on the same row =====
+-- "Default" = always enable at round start (old behaviour). "Sheriff" = only
+-- when we are the Sheriff/Hero, "Murderer" = only when we are the Murderer,
+-- "Sheriff/Murderer" = enable for either of those roles.
+autofarmAutoAntiShootModes = {"Default", "Sheriff", "Murderer", "Sheriff/Murderer"}
+autofarmAutoAntiShootModeIndex = 1
+
+autofarmAutoAntiShootRow = Instance.new("Frame")
+autofarmAutoAntiShootRow.Name = "AutofarmAutoAntiShootRow"
+autofarmAutoAntiShootRow.Size = UDim2.new(1, 0, 0, 42)
+autofarmAutoAntiShootRow.BackgroundTransparency = 1
+autofarmAutoAntiShootRow.LayoutOrder = 319
+autofarmAutoAntiShootRow.Parent = categoryFrames["Autofarm"]
+
+autofarmAutoAntiShootBtn = Instance.new("TextButton")
+autofarmAutoAntiShootBtn.Name = "AutofarmAutoAntiShootButton"
+autofarmAutoAntiShootBtn.Size = UDim2.new(0.5, -2, 1, 0)
+autofarmAutoAntiShootBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAutoAntiShootBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmAutoAntiShootBtn.Text = "Auto Anti-Shoot: OFF"
+autofarmAutoAntiShootBtn.Font = Enum.Font.SourceSansBold
+autofarmAutoAntiShootBtn.TextSize = 14
+autofarmAutoAntiShootBtn.Parent = autofarmAutoAntiShootRow
+Instance.new("UICorner", autofarmAutoAntiShootBtn).CornerRadius = UDim.new(0, 6)
 autofarmAutoAntiShootBtn.MouseButton1Click:Connect(function()
 	autofarmAutoAntiShootEnabled = not autofarmAutoAntiShootEnabled
 	setToggleState(autofarmAutoAntiShootBtn, autofarmAutoAntiShootEnabled, "Auto Anti-Shoot: ON", "Auto Anti-Shoot: OFF")
 	saveConfig()
+end)
+
+autofarmAutoAntiShootSelect = Instance.new("TextButton")
+autofarmAutoAntiShootSelect.Size = UDim2.new(0.5, -2, 1, 0)
+autofarmAutoAntiShootSelect.Position = UDim2.new(0.5, 2, 0, 0)
+autofarmAutoAntiShootSelect.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAutoAntiShootSelect.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmAutoAntiShootSelect.Text = autofarmAutoAntiShootModes[1] .. " ▼"
+autofarmAutoAntiShootSelect.Font = Enum.Font.SourceSansBold
+autofarmAutoAntiShootSelect.TextSize = 14
+autofarmAutoAntiShootSelect.AutoButtonColor = false
+autofarmAutoAntiShootSelect.Parent = autofarmAutoAntiShootRow
+Instance.new("UICorner", autofarmAutoAntiShootSelect).CornerRadius = UDim.new(0, 6)
+
+autofarmAutoAntiShootDropdownFrame = Instance.new("Frame")
+autofarmAutoAntiShootDropdownFrame.Size = UDim2.new(0.5, -2, 0, math.min(#autofarmAutoAntiShootModes * 30, 180))
+autofarmAutoAntiShootDropdownFrame.Position = UDim2.new(0.5, 2, 0, 42)
+autofarmAutoAntiShootDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAutoAntiShootDropdownFrame.BorderSizePixel = 0
+autofarmAutoAntiShootDropdownFrame.Visible = false
+autofarmAutoAntiShootDropdownFrame.ZIndex = 10
+autofarmAutoAntiShootDropdownFrame.Parent = autofarmAutoAntiShootRow
+
+autofarmAutoAntiShootDropdownList = Instance.new("ScrollingFrame")
+autofarmAutoAntiShootDropdownList.Size = UDim2.new(1, 0, 1, 0)
+autofarmAutoAntiShootDropdownList.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmAutoAntiShootDropdownList.BorderSizePixel = 0
+autofarmAutoAntiShootDropdownList.ScrollBarThickness = 4
+autofarmAutoAntiShootDropdownList.CanvasSize = UDim2.new(0, 0, 0, #autofarmAutoAntiShootModes * 30)
+autofarmAutoAntiShootDropdownList.ZIndex = 10
+autofarmAutoAntiShootDropdownList.Parent = autofarmAutoAntiShootDropdownFrame
+Instance.new("UICorner", autofarmAutoAntiShootDropdownList).CornerRadius = UDim.new(0, 6)
+
+for i, modeName in ipairs(autofarmAutoAntiShootModes) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 30)
+	btn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+	btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Text = modeName
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 14
+	btn.AutoButtonColor = false
+	btn.ZIndex = 10
+	btn.Parent = autofarmAutoAntiShootDropdownList
+	btn.MouseButton1Click:Connect(function()
+		autofarmAutoAntiShootModeIndex = i
+		autofarmAutoAntiShootSelect.Text = modeName .. " ▼"
+		autofarmAutoAntiShootDropdownFrame.Visible = false
+		saveConfig()
+	end)
+	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+end
+autofarmAutoAntiShootSelect.MouseButton1Click:Connect(function()
+	autofarmAutoAntiShootDropdownFrame.Visible = not autofarmAutoAntiShootDropdownFrame.Visible
 end)
 
 -- Auto Anti-Shoot delay (seconds after round start before Anti-Shoot turns on)
@@ -17777,7 +18094,7 @@ autofarmAutoAntiShootDelayBox.FocusLost:Connect(function()
 end)
 
 -- ===== Pre-farm TP: toggle + location dropdown on the same row =====
-autofarmPreTpModes = {"Lobby", "VoteMap", "Map", "Above Map", "Void"}
+autofarmPreTpModes = {"Lobby", "VoteMap", "Map", "Above Map", "Void", "Autofarm"}
 autofarmPreTpRow = Instance.new("Frame")
 autofarmPreTpRow.Name = "AutofarmPreTpRow"
 autofarmPreTpRow.Size = UDim2.new(1, 0, 0, 42)
@@ -17848,6 +18165,7 @@ for i, modeName in ipairs(autofarmPreTpModes) do
 		autofarmPreTpModeIndex = i
 		autofarmPreTpSelect.Text = modeName .. " ▼"
 		autofarmPreTpDropdownFrame.Visible = false
+		autofarmUpdateNoclip()
 	end)
 	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
 	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
@@ -17858,7 +18176,7 @@ end)
 
 -- ===== Post-farm TP: toggle button + location dropdown =====
 autofarmTpEnabled = false
-autofarmTpModes = {"OFF", "Lobby", "VoteMap", "Map", "Above Map", "Void"}
+autofarmTpModes = {"OFF", "Lobby", "VoteMap", "Map", "Above Map", "Void", "Autofarm"}
 autofarmTpModeIndex = 1
 
 autofarmTpRow = Instance.new("Frame")
@@ -17940,7 +18258,7 @@ autofarmTpSelect.MouseButton1Click:Connect(function()
 end)
 
 -- ===== Avoid Murderer: toggle + location dropdown + distance input =====
-autofarmAvoidMurdererModes = {"OFF", "Lobby", "VoteMap", "Map", "Above Map", "Void"}
+autofarmAvoidMurdererModes = {"OFF", "Lobby", "VoteMap", "Map", "Above Map", "Void", "Autofarm"}
 
 autofarmAvoidMurdererRow = Instance.new("Frame")
 autofarmAvoidMurdererRow.Name = "AutofarmAvoidMurdererRow"
@@ -18698,7 +19016,7 @@ function rebuildEmotions()
 
 		local animationButton = Instance.new("TextButton")
 		animationButton.Name = "AnimButton_" .. tostring(animationId)
-		animationButton.Size = UDim2.new(1, -222, 1, 0)
+		animationButton.Size = UDim2.new(1, -208, 1, 0)
 		animationButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		animationButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 		animationButton.Text = animationName
@@ -18733,24 +19051,9 @@ function rebuildEmotions()
 		bindBtn.Parent = animationRow
 		Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 4)
 
-		-- Clear-bind button: visible only while a bind is set. Sits right next to
-		-- the bind button so bind + clear + the ▲/▼ move buttons read as one unit.
-		local clearBindBtn = Instance.new("TextButton")
-		clearBindBtn.Name = "AnimClearBind_" .. tostring(animationId)
-		clearBindBtn.Size = UDim2.new(0, 22, 1, 0)
-		clearBindBtn.Position = UDim2.new(1, -126, 0, 0)
-		clearBindBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-		clearBindBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-		clearBindBtn.Text = "⌫"
-		clearBindBtn.Font = Enum.Font.SourceSansBold
-		clearBindBtn.TextSize = 14
-		clearBindBtn.Visible = emotionKeyBinds[animationId] ~= nil
-		clearBindBtn.Parent = animationRow
-		Instance.new("UICorner", clearBindBtn).CornerRadius = UDim.new(0, 4)
-
 		local starBtn = Instance.new("TextButton")
 		starBtn.Size = UDim2.new(0, 22, 1, 0)
-		starBtn.Position = UDim2.new(1, -198, 0, 0)
+		starBtn.Position = UDim2.new(1, -126, 0, 0)
 		starBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		starBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		starBtn.Text = isEmoteDetached(animationId) and "★" or "☆"
@@ -18759,31 +19062,40 @@ function rebuildEmotions()
 		starBtn.Parent = animationRow
 		Instance.new("UICorner", starBtn).CornerRadius = UDim.new(0, 4)
 
+		-- Unified ▲/▼ reorder control: ONE button-shaped group (black background,
+		-- rounded corners) holding two transparent halves. No gap between the
+		-- arrows, yet each half is its own click target.
+		local moveGroup = Instance.new("Frame")
+		moveGroup.Name = "AnimMove_" .. tostring(animationId)
+		moveGroup.Size = UDim2.new(0, 46, 1, 0)
+		moveGroup.Position = UDim2.new(1, -174, 0, 0)
+		moveGroup.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		moveGroup.Parent = animationRow
+		Instance.new("UICorner", moveGroup).CornerRadius = UDim.new(0, 4)
+
 		local upBtn = Instance.new("TextButton")
-		upBtn.Size = UDim2.new(0, 22, 1, 0)
-		upBtn.Position = UDim2.new(1, -150, 0, 0)
-		upBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		upBtn.Size = UDim2.new(0, 23, 1, 0)
+		upBtn.Position = UDim2.new(0, 0, 0, 0)
+		upBtn.BackgroundTransparency = 1
 		upBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		upBtn.Text = "▲"
 		upBtn.Font = Enum.Font.SourceSansBold
 		upBtn.TextSize = 14
-		upBtn.Parent = animationRow
-		Instance.new("UICorner", upBtn).CornerRadius = UDim.new(0, 4)
+		upBtn.Parent = moveGroup
 
 		local downBtn = Instance.new("TextButton")
-		downBtn.Size = UDim2.new(0, 22, 1, 0)
-		downBtn.Position = UDim2.new(1, -174, 0, 0)
-		downBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		downBtn.Size = UDim2.new(0, 23, 1, 0)
+		downBtn.Position = UDim2.new(0, 23, 0, 0)
+		downBtn.BackgroundTransparency = 1
 		downBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		downBtn.Text = "▼"
 		downBtn.Font = Enum.Font.SourceSansBold
 		downBtn.TextSize = 14
-		downBtn.Parent = animationRow
-		Instance.new("UICorner", downBtn).CornerRadius = UDim.new(0, 4)
+		downBtn.Parent = moveGroup
 
 		local delBtn = Instance.new("TextButton")
 		delBtn.Size = UDim2.new(0, 22, 1, 0)
-		delBtn.Position = UDim2.new(1, -222, 0, 0)
+		delBtn.Position = UDim2.new(1, -198, 0, 0)
 		delBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		delBtn.Text = "×"
@@ -18798,7 +19110,6 @@ function rebuildEmotions()
 			Box = speedBox,
 			Name = animationName,
 			PopOut = starBtn,
-			Clear = clearBindBtn,
 		}
 
 		starBtn.MouseButton1Click:Connect(function()
@@ -18828,7 +19139,7 @@ function rebuildEmotions()
 			listeningEmotionId = animationId
 		end)
 
-		-- Right-click the bind button to remove the bind (mirrors the ⌫ button).
+		-- Right-click the bind button to remove the bind (shows ⌨ again).
 		bindBtn.MouseButton2Click:Connect(function()
 			lastUIInteract = tick()
 			if listeningForEmotionBind and listeningEmotionId == animationId then
@@ -18841,26 +19152,8 @@ function rebuildEmotions()
 				if keyBinds[oldKey] then keyBinds[oldKey] = nil end
 				emotionKeyBinds[animationId] = nil
 				bindBtn.Text = "⌨"
-				clearBindBtn.Visible = false
 				pcall(saveConfig)
 			end
-		end)
-
-		clearBindBtn.MouseButton1Click:Connect(function()
-			lastUIInteract = tick()
-			if listeningForEmotionBind and listeningEmotionId == animationId then
-				listeningForEmotionBind = false
-				listeningEmotionTextBox = nil
-				listeningEmotionId = nil
-			end
-			local oldKey = emotionKeyBinds[animationId]
-			if oldKey then
-				if keyBinds[oldKey] then keyBinds[oldKey] = nil end
-				emotionKeyBinds[animationId] = nil
-			end
-			bindBtn.Text = "⌨"
-			clearBindBtn.Visible = false
-			pcall(saveConfig)
 		end)
 
 		animationButton.MouseButton1Click:Connect(function()
@@ -20821,9 +21114,6 @@ bindInputConn = UserInputService.InputBegan:Connect(function(input, gp)
 		end
 		emotionKeyBinds[listeningEmotionId] = bindKey
 		local animId = listeningEmotionId
-		-- Reveal the ⌫ clear-bind button now that this emotion has a bind
-		local boundUi = animationUiById and animationUiById[animId]
-		if boundUi and boundUi.Clear then boundUi.Clear.Visible = true end
 		keyBinds[bindKey] = {
 			callback = function()
 				if playingAnimationId == animId then
@@ -25845,6 +26135,8 @@ config.values.explicitlyClearedSoundPaths = explicitlyClearedSoundPaths
 	config.values.autofarmAutoAntiShootDelay = autofarmAutoAntiShootDelay
 	config.values.autofarmCoinDelay = autofarmCoinDelay
 	config.values.autofarmStuckTimeout = autofarmStuckTimeout
+	config.values.autofarmAutoAntiShootModeIndex = autofarmAutoAntiShootModeIndex
+	config.values.autofarmStuckTpModeIndex = autofarmStuckTpModeIndex
 	config.values.resetEveryoneInterval = resetEveryoneInterval; config.values.autoResetPlayerInterval = autoResetPlayerInterval; config.values.autoResetEveryoneInterval = autoResetEveryoneInterval
 	config.values.autofarmScriptUrl = AUTOFARM_SCRIPT_URL
 	config.values.autofarmSessionCoins = autofarmSessionCoins
@@ -27505,9 +27797,38 @@ end
 		if clumsyButton then
 			clumsyButton.Text = "Clumsy: OFF"
 			clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-		end
+end
 
-        -- ============================================
+-- Persistent noclip while farming the under-map "Autofarm" spot. The farm flight
+-- loop only makes the parts non-colliding WHILE it actively moves toward a coin;
+-- between coins, during the pre-farm hold and while waiting it never touches
+-- CanCollide, so the game can flip parts collidable again and the character gets
+-- stuck inside the map textures. This keeps every character part non-colliding
+-- for the whole time autofarm is ON and the "Autofarm" pre-TP location is selected.
+autofarmNoclipActive = false
+autofarmNoclipConn = nil
+function autofarmUpdateNoclip()
+	local want = autofarmEnabled and autofarmPreTpModes[autofarmPreTpModeIndex] == "Autofarm"
+	if want == autofarmNoclipActive then return end
+	autofarmNoclipActive = want
+	if want then
+		autofarmNoclipConn = RunService.Heartbeat:Connect(function()
+			local char = player.Character
+			if char then
+				for _, p in ipairs(autofarmGetCharParts(char)) do
+					if p.CanCollide then p.CanCollide = false end
+				end
+			end
+		end)
+	else
+		if autofarmNoclipConn then
+			autofarmNoclipConn:Disconnect()
+			autofarmNoclipConn = nil
+		end
+	end
+end
+
+-- ============================================
 -- Anti-Death On Mansion 2 (toggleable, ON by default)
 -- ============================================
 antiDeathMansion2Enabled = true
@@ -28560,6 +28881,14 @@ function restoreFullConfig()
 		if c.values.autofarmStuckTimeout then
 			autofarmStuckTimeout = math.clamp(c.values.autofarmStuckTimeout, 1, 15)
 			if autofarmStuckTimeoutBox then autofarmStuckTimeoutBox.Text = tostring(autofarmStuckTimeout) end
+		end
+		if c.values.autofarmAutoAntiShootModeIndex and autofarmAutoAntiShootModes[c.values.autofarmAutoAntiShootModeIndex] then
+			autofarmAutoAntiShootModeIndex = c.values.autofarmAutoAntiShootModeIndex
+			if autofarmAutoAntiShootSelect then autofarmAutoAntiShootSelect.Text = autofarmAutoAntiShootModes[autofarmAutoAntiShootModeIndex] .. " ▼" end
+		end
+		if c.values.autofarmStuckTpModeIndex and autofarmStuckTpModes[c.values.autofarmStuckTpModeIndex] then
+			autofarmStuckTpModeIndex = c.values.autofarmStuckTpModeIndex
+			if autofarmStuckSelect then autofarmStuckSelect.Text = autofarmStuckTpModes[autofarmStuckTpModeIndex] .. " ▼" end
 		end
 		if c.values.resetEveryoneInterval then
 			resetEveryoneInterval = math.clamp(c.values.resetEveryoneInterval, 0.5, 10)
