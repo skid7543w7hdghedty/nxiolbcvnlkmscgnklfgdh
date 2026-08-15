@@ -15999,7 +15999,9 @@ autofarmLieCF = CFrame.Angles(math.rad(90), 0, 0)
 -- Under-floor flight: whenever a floor exists below the coin we travel BENEATH it
 -- (much harder to be killed), staying as close to the coins as possible while
 -- never rising up onto them — Coin Aura pulls them in as we pass by.
-autofarmUnderFloorDepth = 1.25     -- how far below the floor surface we fly (studs) — hugs the floor, closer to the coins
+-- 2.0 = a bit deeper than the old 1.25 so the character is safer from above-ground
+-- attacks, but still within the 6-stud pickup range so coins are collected fine.
+autofarmUnderFloorDepth = 2.0    -- how far below the floor surface we fly (studs) — safely under, still collecting
 -- When Coin Aura is ON we fly closer to the coin (shallower under-floor depth,
 -- just a bit below the coin's hitbox). Keeps the character under the map (hard
 -- to be killed) while letting a small aura radius (1-2) reach the coin over the
@@ -16105,11 +16107,14 @@ autofarmPreTpModeIndex = 1
 autofarmPreTpDelay = 3           -- seconds to wait after round start before TPing (1-10)
 
 -- Autofarm technique mode, independent of the Coin Aura toggle:
---   1 = Default  : the classic stop-and-hold farm (deep under-floor route).
---   2 = Fast     : the fly-through farm (shallow under-floor route, retargets
---                  early and keeps constant movement).
+--   1 = Default   : the classic stop-and-hold farm (deep under-floor route).
+--   2 = Fast      : the fly-through farm (flies DIRECTLY at each coin, retargets
+--                   early and keeps constant movement — fastest but exposed).
+--   3 = Fast Safe : exactly like Fast (fly-through, constant movement, early
+--                   retarget) but the ROUTE flies UNDER the floor like Default —
+--                   safer than Fast, barely slower.
 autofarmMode = 1
-autofarmModeNames = {"Default", "Fast"}
+autofarmModeNames = {"Default", "Fast", "Fast Safe"}
 
 -- Auto teleport after the farm (same places as the Teleports tab, minus role TPs)
 autofarmTpModeIndex = 1               -- UI-declared later, default here for config save
@@ -16615,7 +16620,26 @@ end
 function autofarmStopFlight()
 	local char = player.Character
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
-	if hum then pcall(function() hum.PlatformStand = false end) end
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not (hum and hrp) then return end
+	-- In under-floor modes (Default/Fast Safe) the character flies BELOW the map
+	-- with CanCollide=false parts. Dropping it (PlatformStand=false) there makes it
+	-- fall straight through the map into the void. If there is no solid ground
+	-- within the same 60-stud range the route uses (i.e. we are under the lowest
+	-- floor / in the void), float in place instead; the round-end / avoid-murderer
+	-- teleport moves us afterwards. Anywhere a floor exists below, drop normally.
+	local below = nil
+	local ok = pcall(function()
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {char}
+		below = Workspace:Raycast(hrp.Position, Vector3.new(0, -60, 0), params)
+	end)
+	if ok and below then
+		pcall(function() hum.PlatformStand = false end)
+	else
+		pcall(function() hum.PlatformStand = true end)
+	end
 end
 
 -- Pause flight between coins WITHOUT dropping the character: zero velocity,
@@ -16785,7 +16809,7 @@ function startAutofarm()
 					-- Are any coins still being pulled in by the Coin Aura? If so, the
 					-- round is NOT over even when no targetable coin is left.
 					local auraStillPulling = false
-					if autofarmMode == 2 then
+					if autofarmMode == 2 or autofarmMode == 3 then
 						for c, t in pairs(autofarmAuraPending) do
 							if (os.clock() - t) < 2 and not autofarmCoinIsGone(c) then
 								auraStillPulling = true
@@ -16903,16 +16927,21 @@ function startAutofarm()
 							autofarmClaimCoin(coin)
 						end
 
-						-- Fast-mode fly-through: fly directly at the coin (no under-floor
-						-- detour — that is the "slightly faster than Default" edge), touching
-						-- it with the SAME cadence as Default (HRP every frame, full-body
-						-- volley throttled to 0.15s). We do NOT hammer every coin within
-						-- pickup range with all 15 body parts on every frame — that burst
-						-- of simultaneous touches collected coins far too fast and the
-						-- anti-cheat kicked for "too-fast collection". Retarget only once
-						-- we have actually reached the coin (autofarmAuraRetargetDist),
-						-- marking it pending so the flight stays continuous.
-						if autofarmMode == 2 and dist <= autofarmPickupRange then
+						-- Fast / Fast Safe fly-through: fly through the coins touching
+						-- them with the SAME cadence as Default (HRP every frame, full-body
+						-- volley throttled to 0.15s). Fast flies directly at each coin
+						-- (no under-floor detour — the "slightly faster than Default" edge);
+						-- Fast Safe takes the under-floor route (see below) which is safer,
+						-- so its vertical gap to the coin stays constant. We do NOT hammer
+						-- every coin within pickup range with all 15 body parts on every
+						-- frame — that burst of simultaneous touches collected coins far too
+						-- fast and the anti-cheat kicked for "too-fast collection". Retarget
+						-- only once we have actually reached the coin, marking it pending so
+						-- the flight stays continuous. For Fast Safe, reached means the
+						-- character is DIRECTLY UNDER the coin (vertical gap is constant, so
+						-- compare horizontally), not that the 3D distance shrank to the
+						-- retarget radius.
+						if (autofarmMode == 2 or autofarmMode == 3) and dist <= autofarmPickupRange then
 							-- Touch on HRP (primary collector), every frame
 							safeFireTouch(part, hrp)
 							autofarmTouchedAt[coin] = os.clock()
@@ -16926,9 +16955,18 @@ function startAutofarm()
 									end
 								end
 							end
-							-- Once actually on top of the coin, mark it pending (aura
-							-- finishes the pickup as we fly past) and retarget the next coin
-							if dist <= autofarmAuraRetargetDist then
+							-- Once actually on top of the coin (or directly under it for
+							-- Fast Safe), mark it pending (aura finishes the pickup as we
+							-- fly past) and retarget the next coin
+							local reachedCoin
+							if autofarmMode == 2 then
+								reachedCoin = dist <= autofarmAuraRetargetDist
+							else
+								local dx = hrp.Position.X - part.Position.X
+								local dz = hrp.Position.Z - part.Position.Z
+								reachedCoin = (dx * dx + dz * dz) <= (autofarmAuraRetargetDist * autofarmAuraRetargetDist)
+							end
+							if reachedCoin then
 								autofarmAuraPending[coin] = os.clock()
 								local nextCoin, nextPart, nextDist = autofarmNearestCoin(container, hrp.Position)
 								if nextCoin then
@@ -16937,10 +16975,10 @@ function startAutofarm()
 							end
 						end
 
-						-- Route: in Default mode, fly UNDER the floor whenever one exists
-						-- below the coin (harder to be killed). In Fast mode, fly DIRECTLY
-						-- to the coin position for fastest collection — the speed and
-						-- continuous movement make it hard to hit anyway.
+						-- Route: in Default and Fast Safe modes, fly UNDER the floor
+						-- whenever one exists below the coin (harder to be killed). In Fast
+						-- mode, fly DIRECTLY to the coin position for fastest collection —
+						-- the speed and continuous movement make it hard to hit anyway.
 						local target
 						if autofarmMode == 2 then
 							-- Fast mode: fly straight to the coin
@@ -18346,7 +18384,14 @@ createSection("Server Hop", 334)
 -- new server and the config restore re-enables everything that was turned on.
 -- REQUIRES: the 'Script URL' box filled with a raw link to THIS script
 -- (e.g. https://raw.githubusercontent.com/your-user/your-repo/main/script.lua)
+-- Only queue the script ONCE per session. Kicks fire several events at once
+-- (ErrorMessageChanged, PlayerRemoving, AncestryChanged, OnTeleport) and some
+-- executors APPEND to the queue_on_teleport queue, so without this guard the
+-- script gets queued several times and spam-loads after the rejoin.
+autofarmRejoinQueued = false
 function autofarmQueueRejoin()
+	if autofarmRejoinQueued then return true end
+	autofarmRejoinQueued = true
 	local url = tostring(AUTOFARM_SCRIPT_URL or ""):gsub("^%s+", ""):gsub("%s+$", "")
 	if url == "" then return false end
 	local q = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
@@ -18467,9 +18512,13 @@ end)
 -- GuiService.ErrorMessageChanged fires when the game kicks the player.
 local function setupRejoinOnKick()
 	local kickGuiService = game:GetService("GuiService")
+	-- ErrorMessageChanged can fire several times per kick; run the rejoin flow only once.
+	local rejoinInProgress = false
 	kickGuiService.ErrorMessageChanged:Connect(function(errorMessage)
 		if not rejoinOnKickEnabled then return end
 		if errorMessage and errorMessage ~= "" and player then
+			if rejoinInProgress then return end
+			rejoinInProgress = true
 			notify("Rejoin on Kick", "Kicked — rejoining the game...", 3)
 			-- Persist state + queue the script so it reloads after the rejoin
 			pcall(saveConfig)
