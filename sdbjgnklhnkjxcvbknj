@@ -4707,7 +4707,7 @@ titleBar.Position = UDim2.new(0, 10, 0, 0)
 titleBar.BackgroundTransparency = 1
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.TextXAlignment = Enum.TextXAlignment.Left
-titleBar.Text = "Adrenalin.win V3.7.8.26"
+titleBar.Text = "Adrenalin.win V3.7.8.26 — Murder Mystery 2"
 titleBar.Font = Enum.Font.SourceSansBold
 titleBar.TextSize = 16.5
 titleBar.Parent = topBar
@@ -6581,10 +6581,11 @@ function autoGrabStartMagnet(drop)
 	if autoGrabGunMagnets[drop] then return end
 	local isModel = drop:IsA("Model")
 	local isPart = drop:IsA("BasePart")
-	autoGrabGunMagnets[drop] = RunService.Heartbeat:Connect(function()
+	-- PreSimulation fires earliest in frame -- faster than Heartbeat for stealing
+	local conn
+	conn = RunService.PreSimulation:Connect(function()
 		if not drop or not drop.Parent then
-			local c = autoGrabGunMagnets[drop]
-			if c then c:Disconnect() end
+			if conn then conn:Disconnect() end
 			autoGrabGunMagnets[drop] = nil
 			return
 		end
@@ -6596,12 +6597,13 @@ function autoGrabStartMagnet(drop)
 		if isPart then
 			drop.CFrame = cf
 		elseif isModel then
-			drop:PivotTo(cf)
+			pcall(function() drop:PivotTo(cf) end)
 		else
 			local part = drop:FindFirstChildWhichIsA("BasePart", true)
 			if part then part.CFrame = cf end
 		end
 	end)
+	autoGrabGunMagnets[drop] = conn
 end
 
 function autoGrabStopMagnet(drop)
@@ -6646,101 +6648,104 @@ function autoGrabClaimDrop(drop)
 	local cf = root.CFrame
 	local zero = Vector3.zero
 
-	-- INSTANT: teleport + touch in same frame (no anchor delay — direct CFrame set)
-	for i = 1, #parts do
-		local part = parts[i]
-		part.CanCollide = false
-		part.AssemblyLinearVelocity = zero
-		part.AssemblyAngularVelocity = zero
-		part.CFrame = cf
+	-- ULTRA FAST: triple teleport + triple touch in same frame (no yield) -- beats competitors by 1 frame
+	for _ = 1, 3 do
+		for i = 1, #parts do
+			local part = parts[i]
+			part.CanCollide = false
+			part.AssemblyLinearVelocity = zero
+			part.AssemblyAngularVelocity = zero
+			part.CFrame = cf
+		end
+		if drop:IsA("Model") then pcall(function() drop:PivotTo(cf) end) end
+		for i = 1, #parts do safeFireTouch(root, parts[i]) safeFireTouch(parts[i], root) end
 	end
-	if drop:IsA("Model") then drop:PivotTo(cf) end
 
-	-- First burst: immediate firetouchinterest
-	for i = 1, #parts do safeFireTouch(root, parts[i]) end
-
-	-- Second burst: RenderStepped (fires before next render — faster than task.defer)
+	-- PreSimulation burst (earliest possible -- before physics)
+	local preConn
+	preConn = RunService.PreSimulation:Connect(function()
+		preConn:Disconnect()
+		if not drop or not drop.Parent then return end
+		local r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not r then return end
+		for i = 1, #parts do parts[i].CFrame = r.CFrame; safeFireTouch(r, parts[i]) end
+	end)
+	-- RenderStepped burst (before render)
 	local renderConn
 	renderConn = RunService.RenderStepped:Connect(function()
 		renderConn:Disconnect()
 		if not drop or not drop.Parent then return end
 		local r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		if not r then return end
-		for i = 1, #parts do
-			parts[i].CFrame = r.CFrame
-			safeFireTouch(r, parts[i])
-		end
+		for i = 1, #parts do parts[i].CFrame = r.CFrame; safeFireTouch(r, parts[i]) end
 	end)
-
-	-- Third burst: task.defer (extra safety net)
+	-- task.defer burst
 	task.defer(function()
 		if not drop or not drop.Parent then return end
 		local r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
 		if not r then return end
-		for i = 1, #parts do
-			parts[i].CFrame = r.CFrame
-			safeFireTouch(r, parts[i])
-		end
+		for i = 1, #parts do parts[i].CFrame = r.CFrame; safeFireTouch(r, parts[i]) end
 	end)
+	-- Heartbeat bursts x2
+	for _ = 1, 2 do
+		local hbOnce
+		hbOnce = RunService.Heartbeat:Connect(function()
+			hbOnce:Disconnect()
+			if not drop or not drop.Parent then return end
+			local r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+			if not r then return end
+			for i = 1, #parts do parts[i].CFrame = r.CFrame; safeFireTouch(r, parts[i]) end
+		end)
+	end
 
-	-- Fourth burst: next Heartbeat
-	local hbOnce
-	hbOnce = RunService.Heartbeat:Connect(function()
-		hbOnce:Disconnect()
-		if not drop or not drop.Parent then return end
-		local r = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if not r then return end
-		for i = 1, #parts do
-			parts[i].CFrame = r.CFrame
-			safeFireTouch(r, parts[i])
-		end
-	end)
-
-	-- Start magnet (keeps drop glued to player every frame)
+	-- Start magnet (keeps drop glued every PreSimulation)
 	autoGrabStartMagnet(drop)
 
-	-- Continuous Heartbeat: keep drop on player and fire touch every frame until grabbed
-	local touchConn
-	touchConn = RunService.Heartbeat:Connect(function()
-		if not drop or not drop.Parent then
-			touchConn:Disconnect(); touchConn = nil
-			return
-		end
-		if not autoGrabGunEnabled then
-			touchConn:Disconnect(); touchConn = nil
-			return
-		end
-		local freshRoot = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-		if not freshRoot then return end
-		local freshCf = freshRoot.CFrame
-		for i = 1, #parts do
-			local part = parts[i]
-			part.CFrame = freshCf
-			part.AssemblyLinearVelocity = zero
-			safeFireTouch(freshRoot, part)
-		end
-	end)
+	-- Continuous ultra-fast touch: PreSimulation + Heartbeat every frame until grabbed
+	local touchConns = {}
+	local function stopTouch()
+		for _, c in ipairs(touchConns) do pcall(function() c:Disconnect() end) end
+		touchConns = {}
+	end
+	table.insert(touchConns, RunService.PreSimulation:Connect(function()
+		if not drop or not drop.Parent then stopTouch(); return end
+		if not autoGrabGunEnabled then stopTouch(); return end
+		local fr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not fr then return end
+		local fc = fr.CFrame
+		for i = 1, #parts do local p = parts[i]; p.CFrame = fc; p.AssemblyLinearVelocity = zero; safeFireTouch(fr, p) end
+	end))
+	table.insert(touchConns, RunService.Heartbeat:Connect(function()
+		if not drop or not drop.Parent then stopTouch(); return end
+		if not autoGrabGunEnabled then stopTouch(); return end
+		local fr = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+		if not fr then return end
+		local fc = fr.CFrame
+		for i = 1, #parts do local p = parts[i]; p.CFrame = fc; p.AssemblyLinearVelocity = zero; safeFireTouch(fr, p) end
+	end))
 
 	drop.AncestryChanged:Connect(function()
 		if not drop.Parent or drop.Parent == Workspace then
 			autoGrabStopMagnet(drop)
+			stopTouch()
 			autoGrabGunProcessed[drop] = nil
 		end
 	end)
+	task.delay(1.5, function() if drop and drop.Parent then autoGrabGunProcessed[drop] = nil end end)
 end
 
 function autoGrabConnectModel(model)
 	if autoGrabGunConnectedModels[model] then return end
 	autoGrabGunConnectedModels[model] = true
 
-	-- РњРіРЅРѕРІРµРЅРЅР°СЏ РїСЂРѕРІРµСЂРєР° СЃСѓС‰РµСЃС‚РІСѓСЋС��РёС…
+	-- Instant check of existing
 	for _, child in ipairs(model:GetDescendants()) do
 		if child.Name == "GunDrop" then
 			autoGrabClaimDrop(child)
 		end
 	end
 
-	-- DescendantAdded - РїСЂСЏРјРѕР№ РІС‹Р·РѕРІ Р±РµР· Р·Р°РґРµСЂР¶РєРё (Р±С‹СЃС‚СЂРµРµ task.defer)
+	-- DescendantAdded - direct call without delay (faster than task.defer)
 	local conn = model.DescendantAdded:Connect(function(descendant)
 		if not autoGrabGunEnabled then return end
 		if descendant.Name == "GunDrop" then
@@ -6749,7 +6754,7 @@ function autoGrabConnectModel(model)
 	end)
 	autoGrabGunConnections[model] = conn
 
-	-- ChildAdded - РґСѓР±Р»РёСЂСѓСЋС‰РёР№ РїРµСЂРµС…РІР°С‚
+	-- ChildAdded - duplicate catch
 	local conn2 = model.ChildAdded:Connect(function(child)
 		if not autoGrabGunEnabled then return end
 		if child.Name == "GunDrop" then
@@ -6781,7 +6786,7 @@ function autoGrabScanWorkspace()
 		if obj:IsA("Model") and autoGrabGunTargets[obj.Name] then
 			autoGrabConnectModel(obj)
 		end
-		-- РўР°РєР¶Рµ Р»РѕРІРёРј GunDrop РЅР°РїСЂСЏРјСѓСЋ
+		-- Also catch GunDrop directly
 		if obj.Name == "GunDrop" then
 			autoGrabClaimDrop(obj)
 		end
@@ -6803,18 +6808,18 @@ function enableAutoGrabGun()
 
 	autoGrabScanWorkspace()
 
-	-- Workspace.DescendantAdded - РїСЂСЏРјРѕР№ РІС‹Р·РѕРІ, Р±РµР· Р·Р°РґРµСЂР¶РєРё
+	-- Workspace.DescendantAdded - direct call, no delay
 	table.insert(autoGrabGunConnections, Workspace.DescendantAdded:Connect(function(obj)
 		if not autoGrabGunEnabled then return end
 		if obj.Name == "GunDrop" then
-			-- GunDrop РІ РїРµСЂРІСѓСЋ РѕС‡РµСЂРµРґСЊ - СЃР°РјС‹Р№ РїСЂРёРѕСЂРёС‚РµС‚РЅС‹Р№ СЃР»СѓС‡Р°Р№
+			-- GunDrop first priority - most important
 			autoGrabClaimDrop(obj)
 		elseif obj:IsA("Model") and autoGrabGunTargets[obj.Name] then
 			autoGrabConnectModel(obj)
 		end
 	end))
 
-	-- Workspace.ChildAdded - РґРѕРїРѕР»РЅРёС‚РµР»СЊРЅС‹Р№ РїРµСЂРµС…РІР°С‚ РІРµСЂС…РЅРµРіРѕ СѓСЂРѕРІРЅСЏ
+	-- Workspace.ChildAdded - additional top-level catch
 	table.insert(autoGrabGunConnections, Workspace.ChildAdded:Connect(function(obj)
 		if not autoGrabGunEnabled then return end
 		if obj.Name == "GunDrop" then
@@ -6837,7 +6842,7 @@ function enableAutoGrabGun()
 		autoGrabScanWorkspace()
 	end))
 
-	-- РџРµСЂРёРѕРґРёС‡РµСЃРєРѕРµ СЃРє��°РЅРёСЂРѕРІР°РЅРёРµ - РєР°Р¶РґС‹Рµ 5 СЃРµРєСѓРЅРґ (DescendantAdded Р»РѕРІРёС‚ РјРіРЅРѕРІРµРЅРЅРѕ)
+	-- Periodic scan - every 5 sec (DescendantAdded catches instantly)
 	task.spawn(function()
 		-- [perf] DescendantAdded already catches every new drop instantly, so the
 		-- full-Workspace rescan is only a safety net. 1s full scans were freezing
@@ -6846,6 +6851,16 @@ function enableAutoGrabGun()
 			task.wait(5)
 			if autoGrabGunEnabled then
 				autoGrabScanWorkspace()
+			end
+		end
+	end)
+	-- Ultra-fast GunDrop poll: FindFirstChild is C++ fast, catches even if DescendantAdded missed (0.06s)
+	task.spawn(function()
+		while autoGrabGunEnabled do
+			task.wait(0.06)
+			if autoGrabGunEnabled then
+				local d = Workspace:FindFirstChild("GunDrop", true)
+				if d then autoGrabClaimDrop(d) end
 			end
 		end
 	end)
@@ -9762,31 +9777,57 @@ function executeAntiBang()
 	workspace.FallenPartsDestroyHeight = -500
 end
 
--- Zombie Tryhard (toggleable)
-zombieTryhardEnabled = false
+-- Helper: waits until Animate LocalScript has built its folder structure after respawn
+-- Fixes "idle is not a valid member of LocalScript Workspace.XXX.Animate" race after death
+local function ensureAnimateReady(animate, timeout)
+    timeout = timeout or 5
+    local ok, idle = pcall(animate.WaitForChild, animate, "idle", timeout)
+    if not ok or not idle then return false end
+    -- wait for main folders
+    local walk = animate:WaitForChild("walk", timeout)
+    local run = animate:WaitForChild("run", timeout)
+    local jump = animate:WaitForChild("jump", timeout)
+    local climb = animate:WaitForChild("climb", timeout)
+    local fall = animate:WaitForChild("fall", timeout)
+    if not (walk and run and jump and climb and fall) then return false end
+    -- ensure inner Animation objects exist (created asynchronously by Roblox Animate script)
+    pcall(function() idle:WaitForChild("Animation1", 2) end)
+    pcall(function() idle:WaitForChild("Animation2", 2) end)
+    pcall(function() walk:WaitForChild("WalkAnim", 2) end)
+    pcall(function() run:WaitForChild("RunAnim", 2) end)
+    return true
+end
+
+-- Zombie Tryhard (toggleable)zombieTryhardEnabled = false
 local zombieTryhardConn = nil
 
 function applyZombieAnimations(char)
-	local animate = char:WaitForChild("Animate")
-	local humanoid = char:WaitForChild("Humanoid")
-	local animator = humanoid:WaitForChild("Animator")
-	for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end
+	local animate = char:WaitForChild("Animate", 10)
+	if not animate then return end
+	if not ensureAnimateReady(animate) then task.wait(0.3) if not ensureAnimateReady(animate, 2) then return end end
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if not humanoid then return end
+	local animator = humanoid:FindFirstChild("Animator") or humanoid:WaitForChild("Animator", 5)
+	if not animator then return end
+	pcall(function() for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end end)
 	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then return end
-	animate.idle.Animation1.AnimationId = "rbxassetid://891621366"
-	animate.idle.Animation2.AnimationId = "rbxassetid://891633237"
-	if animate.idle:FindFirstChild("Animation3") then
-		animate.idle.Animation3.AnimationId = "rbxassetid://1047759695"
-	else
-		local pose = Instance.new("Animation"); pose.Name = "Animation3"
-		pose.AnimationId = "rbxassetid://1047759695"; pose.Parent = animate.idle
-	end
-	animate.walk.WalkAnim.AnimationId = "rbxassetid://707897309"
-	animate.run.RunAnim.AnimationId = "rbxassetid://616163682"
-	animate.jump.JumpAnim.AnimationId = "rbxassetid://656117878"
-	animate.climb.ClimbAnim.AnimationId = "rbxassetid://10921229866"
-	animate.fall.FallAnim.AnimationId = "rbxassetid://656115606"
-	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-	animate.Disabled = false
+	pcall(function()
+		animate.idle.Animation1.AnimationId = "rbxassetid://891621366"
+		animate.idle.Animation2.AnimationId = "rbxassetid://891633237"
+		if animate.idle:FindFirstChild("Animation3") then
+			animate.idle.Animation3.AnimationId = "rbxassetid://1047759695"
+		else
+			local pose = Instance.new("Animation"); pose.Name = "Animation3"
+			pose.AnimationId = "rbxassetid://1047759695"; pose.Parent = animate.idle
+		end
+		animate.walk.WalkAnim.AnimationId = "rbxassetid://707897309"
+		animate.run.RunAnim.AnimationId = "rbxassetid://616163682"
+		animate.jump.JumpAnim.AnimationId = "rbxassetid://656117878"
+		animate.climb.ClimbAnim.AnimationId = "rbxassetid://10921229866"
+		animate.fall.FallAnim.AnimationId = "rbxassetid://656115606"
+	end)
+	pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+	pcall(function() animate.Disabled = false end)
 end
 
 function enableZombieTryhard()
@@ -9805,26 +9846,32 @@ tryhardAnimEnabled = false
 local tryhardAnimConn = nil
 
 function applyTryhardAnim(char)
-	local animate = char:WaitForChild("Animate")
-	local humanoid = char:WaitForChild("Humanoid")
-	local animator = humanoid:WaitForChild("Animator")
-	for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end
+	local animate = char:WaitForChild("Animate", 10)
+	if not animate then return end
+	if not ensureAnimateReady(animate) then task.wait(0.3) if not ensureAnimateReady(animate, 2) then return end end
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if not humanoid then return end
+	local animator = humanoid:FindFirstChild("Animator") or humanoid:WaitForChild("Animator", 5)
+	if not animator then return end
+	pcall(function() for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end end)
 	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then return end
-	animate.idle.Animation1.AnimationId = "rbxassetid://782841498"
-	animate.idle.Animation2.AnimationId = "rbxassetid://782845736"
-	if animate.idle:FindFirstChild("Animation3") then
-		animate.idle.Animation3.AnimationId = "rbxassetid://980952228"
-	else
-		local pose = Instance.new("Animation"); pose.Name = "Animation3"
-		pose.AnimationId = "rbxassetid://980952228"; pose.Parent = animate.idle
-	end
-	animate.walk.WalkAnim.AnimationId = "rbxassetid://616122287"
-	animate.run.RunAnim.AnimationId = "rbxassetid://782842708"
-	animate.jump.JumpAnim.AnimationId = "rbxassetid://10921242013"
-	animate.climb.ClimbAnim.AnimationId = "rbxassetid://10921229866"
-	animate.fall.FallAnim.AnimationId = "rbxassetid://782846423"
-	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-	animate.Disabled = false
+	pcall(function()
+		animate.idle.Animation1.AnimationId = "rbxassetid://782841498"
+		animate.idle.Animation2.AnimationId = "rbxassetid://782845736"
+		if animate.idle:FindFirstChild("Animation3") then
+			animate.idle.Animation3.AnimationId = "rbxassetid://980952228"
+		else
+			local pose = Instance.new("Animation"); pose.Name = "Animation3"
+			pose.AnimationId = "rbxassetid://980952228"; pose.Parent = animate.idle
+		end
+		animate.walk.WalkAnim.AnimationId = "rbxassetid://616122287"
+		animate.run.RunAnim.AnimationId = "rbxassetid://782842708"
+		animate.jump.JumpAnim.AnimationId = "rbxassetid://10921242013"
+		animate.climb.ClimbAnim.AnimationId = "rbxassetid://10921229866"
+		animate.fall.FallAnim.AnimationId = "rbxassetid://782846423"
+	end)
+	pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+	pcall(function() animate.Disabled = false end)
 end
 
 function enableTryhardAnim()
@@ -9847,26 +9894,32 @@ tryhardMainEnabled = false
 local tryhardMainConn = nil
 
 function applyTryhardMain(char)
-	local animate = char:WaitForChild("Animate")
-	local humanoid = char:WaitForChild("Humanoid")
-	local animator = humanoid:WaitForChild("Animator")
-	for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end
+	local animate = char:WaitForChild("Animate", 10)
+	if not animate then return end
+	if not ensureAnimateReady(animate) then task.wait(0.3) if not ensureAnimateReady(animate, 2) then return end end
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if not humanoid then return end
+	local animator = humanoid:FindFirstChild("Animator") or humanoid:WaitForChild("Animator", 5)
+	if not animator then return end
+	pcall(function() for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end end)
 	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then return end
-	animate.idle.Animation1.AnimationId = "rbxassetid://782841498"
-	animate.idle.Animation2.AnimationId = "rbxassetid://782845736"
-	if animate.idle:FindFirstChild("Animation3") then
-		animate.idle.Animation3.AnimationId = "rbxassetid://980952228"
-	else
-		local pose = Instance.new("Animation"); pose.Name = "Animation3"
-		pose.AnimationId = "rbxassetid://980952228"; pose.Parent = animate.idle
-	end
-	animate.walk.WalkAnim.AnimationId = "rbxassetid://616122287"
-	animate.run.RunAnim.AnimationId = "rbxassetid://707861613"
-	animate.jump.JumpAnim.AnimationId = "rbxassetid://10921242013"
-	animate.climb.ClimbAnim.AnimationId = "rbxassetid://10921229866"
-	animate.fall.FallAnim.AnimationId = "rbxassetid://782846423"
-	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-	animate.Disabled = false
+	pcall(function()
+		animate.idle.Animation1.AnimationId = "rbxassetid://782841498"
+		animate.idle.Animation2.AnimationId = "rbxassetid://782845736"
+		if animate.idle:FindFirstChild("Animation3") then
+			animate.idle.Animation3.AnimationId = "rbxassetid://980952228"
+		else
+			local pose = Instance.new("Animation"); pose.Name = "Animation3"
+			pose.AnimationId = "rbxassetid://980952228"; pose.Parent = animate.idle
+		end
+		animate.walk.WalkAnim.AnimationId = "rbxassetid://616122287"
+		animate.run.RunAnim.AnimationId = "rbxassetid://707861613"
+		animate.jump.JumpAnim.AnimationId = "rbxassetid://10921242013"
+		animate.climb.ClimbAnim.AnimationId = "rbxassetid://10921229866"
+		animate.fall.FallAnim.AnimationId = "rbxassetid://782846423"
+	end)
+	pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+	pcall(function() animate.Disabled = false end)
 end
 
 function enableTryhardMain()
@@ -9889,26 +9942,32 @@ r6AnimEnabled = false
 local r6AnimConn = nil
 
 function applyR6Anim(char)
-	local animate = char:WaitForChild("Animate")
-	local humanoid = char:WaitForChild("Humanoid")
-	local animator = humanoid:WaitForChild("Animator")
-	for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end
+	local animate = char:WaitForChild("Animate", 10)
+	if not animate then return end
+	if not ensureAnimateReady(animate) then task.wait(0.3) if not ensureAnimateReady(animate, 2) then return end end
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if not humanoid then return end
+	local animator = humanoid:FindFirstChild("Animator") or humanoid:WaitForChild("Animator", 5)
+	if not animator then return end
+	pcall(function() for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end end)
 	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then return end
-	animate.idle.Animation1.AnimationId = "rbxassetid://94166452341856"
-	animate.idle.Animation2.AnimationId = "rbxassetid://94166452341856"
-	if animate.idle:FindFirstChild("Animation3") then
-		animate.idle.Animation3.AnimationId = "rbxassetid://94166452341856"
-	else
-		local pose = Instance.new("Animation"); pose.Name = "Animation3"
-		pose.AnimationId = "rbxassetid://94166452341856"; pose.Parent = animate.idle
-	end
-	animate.walk.WalkAnim.AnimationId = "rbxassetid://117695128103872"
-	animate.run.RunAnim.AnimationId = "rbxassetid://110721574762074"
-	animate.jump.JumpAnim.AnimationId = "rbxassetid://124384575411732"
-	animate.climb.ClimbAnim.AnimationId = "rbxassetid://124343044723062"
-	animate.fall.FallAnim.AnimationId = "rbxassetid://81200656715197"
-	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-	animate.Disabled = false
+	pcall(function()
+		animate.idle.Animation1.AnimationId = "rbxassetid://94166452341856"
+		animate.idle.Animation2.AnimationId = "rbxassetid://94166452341856"
+		if animate.idle:FindFirstChild("Animation3") then
+			animate.idle.Animation3.AnimationId = "rbxassetid://94166452341856"
+		else
+			local pose = Instance.new("Animation"); pose.Name = "Animation3"
+			pose.AnimationId = "rbxassetid://94166452341856"; pose.Parent = animate.idle
+		end
+		animate.walk.WalkAnim.AnimationId = "rbxassetid://117695128103872"
+		animate.run.RunAnim.AnimationId = "rbxassetid://110721574762074"
+		animate.jump.JumpAnim.AnimationId = "rbxassetid://124384575411732"
+		animate.climb.ClimbAnim.AnimationId = "rbxassetid://124343044723062"
+		animate.fall.FallAnim.AnimationId = "rbxassetid://81200656715197"
+	end)
+	pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+	pcall(function() animate.Disabled = false end)
 end
 
 function enableR6Anim()
@@ -11909,12 +11968,12 @@ AIM_CONFIG = {
 	renderDelta        = 1/60,
 	maxLeadSec         = 0.45,
 	aimPart            = "Torso",          -- center mass for bigger hitbox
-	rolePollRate       = 0.15,
+	rolePollRate       = 0.08,
 	gravityComp        = true,
 	shotsPerClick      = 1,                -- the gun fires ONE real bullet per shot; extra FireServer calls never spawn more bullets
 	shotSpacing        = 0.0,
 	wallbangOriginDist = 0.6,              -- very close origin = almost guaranteed piercer hit
-	autoShotCooldown   = 0.35,             -- min seconds between Auto Shot bursts (0.0 spammed 300+ remotes/sec and lagged the game)
+	autoShotCooldown   = 0.08,             -- ultra-fast: no real delay, ~12 shots/sec, instant vs 0.35
 	autoShotBurst      = 1,                -- one real bullet per auto attempt too
 	scatterRadius      = 0.35,             -- scatter radius around the full-lead point (covers strafe direction changes)
 	scatterShots       = 2,
@@ -11925,7 +11984,7 @@ AIM_CONFIG = {
 	pathSegHalf        = 2.4,              -- (legacy, kept for config compatibility)
 	sweepBackFrac      = -0.6,             -- single-bullet path ray: starts this far BEHIND the current position (in lead fractions)
 	sweepAheadFrac     = 1.3,              -- ...and ends this far PAST the full ping-lead point
-	stableWaitMax      = 0.25,             -- max seconds to wait for a stable velocity read before firing anyway
+	stableWaitMax      = 0.06,             -- instant: no long wait for stable velocity
 	stableAngleDeg     = 25,               -- per-frame direction change below which the target counts as moving steadily
 }
 
@@ -12503,7 +12562,7 @@ function doShootMurderer()
 		game.StarterGui:SetCore("SendNotification", {Title = "Error", Text = "No target to shoot.", Duration = 2})
 		return
 	end
-	local ok = aimFireGunAt(murderer)
+	local ok = aimFireGunAtOriginal(murderer)
 	aimUnequipGun()
 	game.StarterGui:SetCore("SendNotification", {
 		Title = ok and "Shot Fired" or "Shot Failed",
@@ -17767,10 +17826,12 @@ end)
 -- ===== Anti-Afk: keeps you connected by simulating input when the game goes idle =====
 antiAfkEnabled = false
 antiAfkConnection = nil
+antiAfkLoop = nil
 antiAfkVirtualUser = game:GetService("VirtualUser")
 
 function setupAntiAfk()
 	if antiAfkConnection then antiAfkConnection:Disconnect(); antiAfkConnection = nil end
+	if antiAfkLoop then pcall(task.cancel, antiAfkLoop); antiAfkLoop = nil end
 	if not antiAfkEnabled then return end
 	antiAfkConnection = player.Idled:Connect(function()
 		pcall(function()
@@ -17778,11 +17839,22 @@ function setupAntiAfk()
 			antiAfkVirtualUser:ClickButton2(Vector2.new())
 		end)
 	end)
+	antiAfkLoop = task.spawn(function()
+		while antiAfkEnabled do
+			task.wait(300)
+			if not antiAfkEnabled then break end
+			pcall(function()
+				antiAfkVirtualUser:CaptureController()
+				antiAfkVirtualUser:ClickButton2(Vector2.new())
+			end)
+		end
+	end)
 end
 
 function stopAntiAfk()
 	antiAfkEnabled = false
 	if antiAfkConnection then antiAfkConnection:Disconnect(); antiAfkConnection = nil end
+	if antiAfkLoop then pcall(task.cancel, antiAfkLoop); antiAfkLoop = nil end
 end
 
 currentCategory = "Autofarm"
@@ -19307,30 +19379,36 @@ local function customSlotId(holder, child, id)
 end
 
 function applyCustomAnim(char, slots)
-	local animate = char:WaitForChild("Animate")
-	local humanoid = char:WaitForChild("Humanoid")
-	local animator = humanoid:WaitForChild("Animator")
-	for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end
+	local animate = char:WaitForChild("Animate", 10)
+	if not animate then return end
+	if not ensureAnimateReady(animate) then task.wait(0.3) if not ensureAnimateReady(animate, 2) then return end end
+	local humanoid = char:WaitForChild("Humanoid", 5)
+	if not humanoid then return end
+	local animator = humanoid:FindFirstChild("Animator") or humanoid:WaitForChild("Animator", 5)
+	if not animator then return end
+	pcall(function() for _, track in pairs(animator:GetPlayingAnimationTracks()) do track:Stop() end end)
 	if humanoid.RigType ~= Enum.HumanoidRigType.R15 then return end
-	customSlotId(animate.idle, "Animation1", slots.idle1 or slots.idle)
-	customSlotId(animate.idle, "Animation2", slots.idle2 or slots.idle)
-	if slots.pose then
-		if animate.idle:FindFirstChild("Animation3") then
-			animate.idle.Animation3.AnimationId = "rbxassetid://" .. tostring(slots.pose)
-		else
-			local pose = Instance.new("Animation"); pose.Name = "Animation3"
-			pose.AnimationId = "rbxassetid://" .. tostring(slots.pose); pose.Parent = animate.idle
+	pcall(function()
+		customSlotId(animate.idle, "Animation1", slots.idle1 or slots.idle)
+		customSlotId(animate.idle, "Animation2", slots.idle2 or slots.idle)
+		if slots.pose then
+			if animate.idle:FindFirstChild("Animation3") then
+				animate.idle.Animation3.AnimationId = "rbxassetid://" .. tostring(slots.pose)
+			else
+				local pose = Instance.new("Animation"); pose.Name = "Animation3"
+				pose.AnimationId = "rbxassetid://" .. tostring(slots.pose); pose.Parent = animate.idle
+			end
 		end
-	end
-	customSlotId(animate.walk, "WalkAnim", slots.walk)
-	customSlotId(animate.run, "RunAnim", slots.run)
-	customSlotId(animate.jump, "JumpAnim", slots.jump)
-	customSlotId(animate.climb, "ClimbAnim", slots.climb)
-	customSlotId(animate.fall, "FallAnim", slots.fall)
-	customSlotId(animate.swim, "Swim", slots.swim)
-	customSlotId(animate.swimidle, "SwimIdle", slots.swimid)
-	humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-	animate.Disabled = false
+		customSlotId(animate.walk, "WalkAnim", slots.walk)
+		customSlotId(animate.run, "RunAnim", slots.run)
+		customSlotId(animate.jump, "JumpAnim", slots.jump)
+		customSlotId(animate.climb, "ClimbAnim", slots.climb)
+		customSlotId(animate.fall, "FallAnim", slots.fall)
+		customSlotId(animate.swim, "Swim", slots.swim)
+		customSlotId(animate.swimidle, "SwimIdle", slots.swimid)
+	end)
+	pcall(function() humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+	pcall(function() animate.Disabled = false end)
 end
 
 function enableCustomAnim(name)
