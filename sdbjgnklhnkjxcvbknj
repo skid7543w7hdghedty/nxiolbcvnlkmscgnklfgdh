@@ -560,6 +560,12 @@ config.values.autofarmStuckTimeout = autofarmStuckTimeout
 			config.emotionOrder[#config.emotionOrder + 1] = { id = entry.id, name = entry.name }
 		end
 	end
+	config.emoteOrder = {}
+	if emoteOrder then
+		for _, entry in ipairs(emoteOrder) do
+			config.emoteOrder[#config.emoteOrder + 1] = { id = entry.id, name = entry.name }
+		end
+	end
 	config.emotionKeyBinds = {}
 	if emotionKeyBinds then
 		for animId, kc in pairs(emotionKeyBinds) do
@@ -3216,11 +3222,11 @@ getgenv().OldPos = nil
 getgenv().FPDH = workspace.FallenPartsDestroyHeight
 
 animationButtons = {
-	79480770273758, "Anti-Aim", 122919757436131, "Low Cortisol", 83265734904502, "Take the L", 92249489340640, "Dahood Stomp",
+	79480770273758, "Anti-Aim", 91843209666952, "Low Cortisol", 134266965723502, "Low Cortisol 2", 83265734904502, "Take the L", 92249489340640, "Dahood Stomp",
 	121368513461476, "Six Seven dance", 120852662885277, "Six Seven emote", 92618727772186, "IShowSpeed Dance", 122840737847239, "Man Squat",
-	98974619620224, "Laugh Ragebait", 127118661424463, "Caramell Dance", 139395178419877, "Burmaldance",
-	125329959146841, "Massive Poop", 72007752012770, "Poop sniff", 90333292347820, "The Worm",
-	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 112878048586682, "Hide Inside",
+	98974619620224, "Laugh Ragebait", 127118661424463, "Caramell Dance", 122552540313866, "Burmaldance", 114994865534242, "Burmaldance 2", 136095999219650, "Rambunctious", 16270690701, "Sol de Janeiro - Samba", 10713981723, "Around Town", 123655453292191, "Static - Hatsune Miku", 72074117297678, "Aura Farm", 73185821232627, "Kazotsky", 127034365069293, "Head Juggling", 138023220998216, "Hakari (R6)", 81217869654335, "Foreign Shuffle", 117394346715743, "Rabbit Hole - Miku", 125080663978632, "Prince Egypt Dance", 122949783568599, "Teto Dance", 120750310395205, "Lemon Melon Cookie - Miku", 140323733616101, "Springtrap Dance", 130137560767056, "Head Basketball", 114758771881411, "Kawaii Groove", 105305467283648, "MM2 RageBait", 105724034352954, "Zero Two Dance",
+	125329959146841, "Massive Poop", 72007752012770, "Poop sniff", 127512208797261, "The Worm",
+	133566007754001, "Drop Kick", 115518346414107, "Gangnam Style", 89006630491540, "Hide Inside", 101265429230273, "Hide Inside 2",
 	108747312576405, "Les goooo", 108242544356577, "Shake Dance",
 	99499783161907, "Aura farm", 114400428765989, "180° Flip", 70432904702322, "Get skinwalked", 109873544976020, "Weird Spin",
 	126264342780589, "Punch Anim"
@@ -3881,6 +3887,7 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 	btn.BorderSizePixel = 0
 	btn.ClipsDescendants = true
 	btn.Parent = frame
+	btn.MouseButton1Click:Connect(function() playSoundFile(clickSoundPath) end)
 	if addBtnPressAnim then addBtnPressAnim(btn) end
 	local btnTSC = Instance.new("UITextSizeConstraint")
 	btnTSC.MaxTextSize = 17
@@ -3902,6 +3909,7 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 	lockBtn.AutoButtonColor = false
 	lockBtn.BorderSizePixel = 0
 	lockBtn.Parent = frame
+	lockBtn.MouseButton1Click:Connect(function() playSoundFile(clickSoundPath) end)
 
 	local lockCorner = Instance.new("UICorner")
 	lockCorner.CornerRadius = UDim.new(0, 4)
@@ -3960,17 +3968,33 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 			if wasDragged then
 				pcall(saveConfig)
 			else
-				-- FIX: fire the emote on release, exactly like regular extracted buttons do.
-				-- The old MouseButton1Click handler could also fire during a drag (the pill
-				-- follows the pointer, so the release always lands on the button), which
-				-- made dragging involuntarily start the emote.
-				if playingAnimationId == animationId then
-					stopCurrentAnimation()
-				else
-					local spd = (animationUiById[animationId] and animationUiById[animationId].Box and animationUiById[animationId].Box.Text) or "1"
-					playAnimation(animationId, spd)
+				-- FIX: one-time use, Dance.lua principle, no toggle - just play
+				local char2 = player.Character
+				local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+				if hum2 and hum2.RigType == Enum.HumanoidRigType.R15 then
+					local desc = hum2:FindFirstChildOfClass("HumanoidDescription")
+					local isEmote = false
+					if emoteOrder then for _, e in ipairs(emoteOrder) do if e.id == animationId then isEmote = true; break end end end
+					local track
+					local ok = false
+					if isEmote then
+						ok = pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
+						if not ok and desc then
+							local nm = (emoteUiById[animationId] and emoteUiById[animationId].Name) or ("Emote "..tostring(animationId))
+							pcall(function() desc:AddEmote(nm, animationId) end)
+							pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
+						end
+					end
+					if not track then
+						local spd = (emoteUiById[animationId] and emoteUiById[animationId].Box and emoteUiById[animationId].Box.Text) or (animationUiById[animationId] and animationUiById[animationId].Box and animationUiById[animationId].Box.Text) or "1"
+						pcall(function() playAnimation(animationId, spd) end)
+					elseif track then
+						local s = tonumber((emoteUiById[animationId] and emoteUiById[animationId].Box and emoteUiById[animationId].Box.Text) or "1") or 1
+						pcall(function() track:AdjustSpeed(s) end)
+					end
+				elseif hum2 then
+					notify("Ragebait", "R15 required", 2)
 				end
-				updateDetachedEmoteVisual(animationId)
 			end
 		end
 	end))
@@ -5248,6 +5272,7 @@ createCategoryScrollFrame("Teamers")
 createCategoryScrollFrame("Exploiters")
 createCategoryScrollFrame("Scammers")
 createCategoryScrollFrame("Autofarm")
+createCategoryScrollFrame("Ragebait")
 createCategoryScrollFrame("Emotions")
 createCategoryScrollFrame("Animations")
 createCategoryScrollFrame("Changer")
@@ -5294,6 +5319,7 @@ function createCategoryButton(shortName, layoutOrder)
 		["Scam"] = "Scammers",
 		["Farm"] = "Autofarm",
 		["Emo"] = "Emotions",
+		["Emt"] = "Ragebait",
 		["Anim"] = "Animations",
 		["Bind"] = "Binds",
 		["Expl"] = "Exploiters",
@@ -5390,6 +5416,7 @@ createCategoryButton("Team", 5.5)
 createCategoryButton("Expl", 6)
 createCategoryButton("Scam", 6.5)
 createCategoryButton("Farm", 6.7)
+createCategoryButton("Emt", 6.9)
 createCategoryButton("Emo", 7)
 createCategoryButton("Anim", 7.05)
 createCategoryButton("Changer", 7.5)
@@ -18981,7 +19008,370 @@ autofarmScriptUrlBox.FocusLost:Connect(function()
 	end
 end)
 
-currentCategory = "Emotions"
+currentCategory = "Ragebait"
+createSection("Ragebait", 390)
+
+-- Emote tab: only favorited emotes (20 ids), single row like Emotions, full controls, under 200
+emoteFavoritedIds = {79017619155911,89957022802046,140469688115066,86830387246209,92237689732858,84970595664091,78745928442381,71851362653894,124963840388798,97847706148165,113890289455724,77152953688098,131683926643291,96293409369770,132151459316300,79874689836683,93031502567721,133751526608969,133481721436918,101507732056031,127103118569243,82224981519682,97629500912487,88042995626011,84534006084837,3576747102,16276506814,111426928948833,78755795767408,134311528115559}
+-- Map favorited IDs to original English names from Dance.lua where available
+emoteOriginalNames = {[79017619155911]="Wall Phase (Glitch)",[89957022802046]="Low Cortisol",[140469688115066]="Low Cortisol 2",[86830387246209]="Take The L",[92237689732858]="Dahood Stomp",[84970595664091]="Burmaldance",[78745928442381]="Burmaldance 2",[71851362653894]="MM2 RageBait",[124963840388798]="Zero Two Dance",[97847706148165]="Caramell Dance",[113890289455724]="Onion",[77152953688098]="Kawaii Groove",[131683926643291]="Smeeze",[96293409369770]="Ballin",[132151459316300]="Luxurious / Springtrap",[79874689836683]="lemon melon cookie - Miku",[93031502567721]="Teto Dance",[133751526608969]="What U Want / Prince Egypt",[133481721436918]="Rabbit Hole - Miku",[101507732056031]="Foreign Shuffle",[127103118569243]="Hakari (R6)",[82224981519682]="Head Juggling",[97629500912487]="Kazotsky",[88042995626011]="Aura Farm Boat",[84534006084837]="Static [Hatsune Miku]",[3576747102]="Around Town",[16276506814]="Sol de Janeiro - Samba",[111426928948833]="Floating on Clouds",[78755795767408]="Aura Fly",[134311528115559]="Rambunctious"}
+-- emoteOrder is the single source of truth for Emote tab (like emotionOrder)
+emoteOrder = {}
+for i, id in ipairs(emoteFavoritedIds) do
+	local origName = emoteOriginalNames[id]
+	if origName then
+		emoteOrder[#emoteOrder+1] = {id = id, name = origName}
+	else
+		emoteOrder[#emoteOrder+1] = {id = id, name = "Emote "..tostring(id)}
+	end
+end
+-- apply saved emoteOrder if exists (persist like Emotions)
+if loadedConfig and type(loadedConfig.emoteOrder) == "table" and #loadedConfig.emoteOrder > 0 then
+	local rebuilt = {}
+	local seen = {}
+	for _, e in ipairs(loadedConfig.emoteOrder) do
+		local id = tonumber(e and e.id)
+		if id and not seen[id] then
+			seen[id] = true
+			rebuilt[#rebuilt+1] = {id = id, name = e.name or ("Emote "..tostring(id))}
+		end
+	end
+	if #rebuilt > 0 then emoteOrder = rebuilt end
+	-- enforce strict English names from Dance.lua for favorited
+	for _, e in ipairs(emoteOrder) do
+		local strict = emoteOriginalNames[e.id]
+		if strict then e.name = strict end
+	end
+end
+emoteUiById = {}
+emoteSearchText = ""
+emoteSearchBox = Instance.new("TextBox")
+emoteSearchBox.Name = "EmoteSearchBox"
+emoteSearchBox.Size = UDim2.new(1, 0, 0, 42)
+emoteSearchBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+emoteSearchBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+emoteSearchBox.PlaceholderText = "Search emotes"
+emoteSearchBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+emoteSearchBox.Text = ""
+emoteSearchBox.Font = Enum.Font.SourceSansBold
+emoteSearchBox.TextSize = 16
+emoteSearchBox.ClearTextOnFocus = false
+emoteSearchBox.LayoutOrder = 391
+emoteSearchBox.Parent = categoryFrames["Ragebait"]
+Instance.new("UICorner", emoteSearchBox).CornerRadius = UDim.new(0, 6)
+
+emoteAddRow = Instance.new("Frame")
+emoteAddRow.Name = "EmoteAddRow"
+emoteAddRow.Size = UDim2.new(1, 0, 0, 42)
+emoteAddRow.BackgroundTransparency = 1
+emoteAddRow.LayoutOrder = 392
+emoteAddRow.Parent = categoryFrames["Ragebait"]
+local emoteAddName = Instance.new("TextBox")
+emoteAddName.Name = "EmoteAddName"
+emoteAddName.Size = UDim2.new(1, -290, 1, 0)
+emoteAddName.Position = UDim2.new(0, 0, 0, 0)
+emoteAddName.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+emoteAddName.TextColor3 = Color3.fromRGB(255, 255, 255)
+emoteAddName.PlaceholderText = "Name"
+emoteAddName.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+emoteAddName.Text = ""
+emoteAddName.Font = Enum.Font.SourceSansBold
+emoteAddName.TextSize = 14
+emoteAddName.ClearTextOnFocus = false
+emoteAddName.Parent = emoteAddRow
+Instance.new("UICorner", emoteAddName).CornerRadius = UDim.new(0, 6)
+local emoteAddId = Instance.new("TextBox")
+emoteAddId.Name = "EmoteAddId"
+emoteAddId.Size = UDim2.new(0, 140, 1, 0)
+emoteAddId.Position = UDim2.new(1, -280, 0, 0)
+emoteAddId.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+emoteAddId.TextColor3 = Color3.fromRGB(255, 255, 255)
+emoteAddId.PlaceholderText = "ID"
+emoteAddId.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+emoteAddId.Text = ""
+emoteAddId.Font = Enum.Font.SourceSansBold
+emoteAddId.TextSize = 14
+emoteAddId.ClearTextOnFocus = false
+emoteAddId.Parent = emoteAddRow
+Instance.new("UICorner", emoteAddId).CornerRadius = UDim.new(0, 6)
+local emoteAddBtn = Instance.new("TextButton")
+emoteAddBtn.Name = "EmoteAddBtn"
+emoteAddBtn.Size = UDim2.new(0, 130, 1, 0)
+emoteAddBtn.Position = UDim2.new(1, -130, 0, 0)
+emoteAddBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+emoteAddBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+emoteAddBtn.Text = "Add Emote"
+emoteAddBtn.Font = Enum.Font.SourceSansBold
+emoteAddBtn.TextSize = 14
+emoteAddBtn.Parent = emoteAddRow
+Instance.new("UICorner", emoteAddBtn).CornerRadius = UDim.new(0, 6)
+
+local function saveEmoteOrder()
+	if not saveConfig then return end
+	pcall(saveConfig)
+end
+
+function rebuildEmote()
+	for _, entry in pairs(emoteUiById) do
+		if entry and entry.Row then pcall(function() entry.Row:Destroy() end) end
+	end
+	emoteUiById = {}
+	local order = 393
+	for index = 1, #emoteOrder do
+		local entry = emoteOrder[index]
+		local animationId = entry.id
+		local animationName = entry.name or ("Emote " .. tostring(animationId))
+		local animationRow = Instance.new("Frame")
+		animationRow.Name = "EmoteRow_" .. tostring(animationId)
+		animationRow.Size = UDim2.new(1, 0, 0, 42)
+		animationRow.BackgroundTransparency = 1
+		animationRow.LayoutOrder = order
+		animationRow.Parent = categoryFrames["Ragebait"]
+		order = order + 1
+		local animationButton = Instance.new("TextButton")
+		animationButton.Name = "EmoteButton_" .. tostring(animationId)
+		animationButton.Size = UDim2.new(1, -208, 1, 0)
+		animationButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		animationButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+		animationButton.Text = animationName
+		animationButton.Font = Enum.Font.SourceSansBold
+		animationButton.TextSize = 15
+		animationButton.Parent = animationRow
+		Instance.new("UICorner", animationButton).CornerRadius = UDim.new(0, 6)
+		local speedBox = Instance.new("TextBox")
+		speedBox.Name = "EmoteSpeed_" .. tostring(animationId)
+		speedBox.Size = UDim2.new(0, 78, 1, 0)
+		speedBox.Position = UDim2.new(1, -78, 0, 0)
+		speedBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		speedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+		speedBox.PlaceholderText = "Speed"
+		speedBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		speedBox.Text = "1"
+		speedBox.Font = Enum.Font.SourceSansBold
+		speedBox.TextSize = 15
+		speedBox.ClearTextOnFocus = false
+		speedBox.Parent = animationRow
+		Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 6)
+		local bindBtn = Instance.new("TextButton")
+		bindBtn.Size = UDim2.new(0, 22, 1, 0)
+		bindBtn.Position = UDim2.new(1, -102, 0, 0)
+		bindBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		bindBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		bindBtn.Text = emotionKeyBinds[animationId] and bindKeyToName(emotionKeyBinds[animationId]) or "⌨"
+		bindBtn.Font = Enum.Font.SourceSansBold
+		bindBtn.TextSize = 12
+		bindBtn.Parent = animationRow
+		Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 4)
+		local starBtn = Instance.new("TextButton")
+		starBtn.Size = UDim2.new(0, 22, 1, 0)
+		starBtn.Position = UDim2.new(1, -126, 0, 0)
+		starBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		starBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		starBtn.Text = isEmoteDetached(animationId) and "★" or "☆"
+		starBtn.Font = Enum.Font.SourceSansBold
+		starBtn.TextSize = 14
+		starBtn.Parent = animationRow
+		Instance.new("UICorner", starBtn).CornerRadius = UDim.new(0, 4)
+		local moveGroup = Instance.new("Frame")
+		moveGroup.Name = "EmoteMove_" .. tostring(animationId)
+		moveGroup.Size = UDim2.new(0, 46, 1, 0)
+		moveGroup.Position = UDim2.new(1, -174, 0, 0)
+		moveGroup.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		moveGroup.Parent = animationRow
+		Instance.new("UICorner", moveGroup).CornerRadius = UDim.new(0, 4)
+		local upBtn = Instance.new("TextButton")
+		upBtn.Size = UDim2.new(0, 23, 1, 0)
+		upBtn.Position = UDim2.new(0, 0, 0, 0)
+		upBtn.BackgroundTransparency = 1
+		upBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		upBtn.Text = "▲"
+		upBtn.Font = Enum.Font.SourceSansBold
+		upBtn.TextSize = 14
+		upBtn.Parent = moveGroup
+		local downBtn = Instance.new("TextButton")
+		downBtn.Size = UDim2.new(0, 23, 1, 0)
+		downBtn.Position = UDim2.new(0, 23, 0, 0)
+		downBtn.BackgroundTransparency = 1
+		downBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		downBtn.Text = "▼"
+		downBtn.Font = Enum.Font.SourceSansBold
+		downBtn.TextSize = 14
+		downBtn.Parent = moveGroup
+		local delBtn = Instance.new("TextButton")
+		delBtn.Size = UDim2.new(0, 22, 1, 0)
+		delBtn.Position = UDim2.new(1, -198, 0, 0)
+		delBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		delBtn.Text = "×"
+		delBtn.Font = Enum.Font.SourceSansBold
+		delBtn.TextSize = 16
+		delBtn.Parent = animationRow
+		Instance.new("UICorner", delBtn).CornerRadius = UDim.new(0, 4)
+		emoteUiById[animationId] = {
+			Row = animationRow,
+			Button = animationButton,
+			Box = speedBox,
+			Name = animationName,
+			PopOut = starBtn,
+		}
+		starBtn.MouseButton1Click:Connect(function()
+			if isEmoteDetached(animationId) then
+				removeDetachedEmote(animationId)
+				starBtn.Text = "☆"
+			else
+				createDetachedEmote(animationId, animationName)
+				starBtn.Text = "★"
+			end
+		end)
+		bindBtn.MouseButton1Click:Connect(function()
+			lastUIInteract = tick()
+			if listeningForEmotionBind then
+				listeningForEmotionBind = false
+				listeningEmotionTextBox = nil
+				listeningEmotionId = nil
+				bindBtn.Text = emotionKeyBinds[animationId] and bindKeyToName(emotionKeyBinds[animationId]) or "⌨"
+				return
+			end
+			bindBtn.Text = "..."
+			listeningForEmotionBind = true
+			listeningEmotionTextBox = bindBtn
+			listeningEmotionId = animationId
+		end)
+		bindBtn.MouseButton2Click:Connect(function()
+			lastUIInteract = tick()
+			if listeningForEmotionBind and listeningEmotionId == animationId then
+				listeningForEmotionBind = false
+				listeningEmotionTextBox = nil
+				listeningEmotionId = nil
+			end
+			local oldKey = emotionKeyBinds[animationId]
+			if oldKey then
+				if keyBinds[oldKey] then keyBinds[oldKey] = nil end
+				emotionKeyBinds[animationId] = nil
+				bindBtn.Text = "⌨"
+				pcall(saveConfig)
+			end
+		end)
+		animationButton.MouseButton1Click:Connect(function()
+			-- Emote one-time use (no toggle, no stop) - Dance.lua principle, can walk with emote like Emotions
+			local char2 = player.Character
+			local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+			if not hum2 then return end
+			if hum2.RigType ~= Enum.HumanoidRigType.R15 then
+				notify("Ragebait", "R15 required", 2)
+				return
+			end
+			local desc = hum2:FindFirstChildOfClass("HumanoidDescription")
+			local track
+			local ok = pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
+			if not ok and desc then
+				pcall(function() desc:AddEmote(animationName, animationId) end)
+				pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
+			end
+			if track then
+				local s = tonumber(speedBox.Text) or 1
+				pcall(function() track:AdjustSpeed(s) end)
+			end
+		end)
+		speedBox.FocusLost:Connect(function()
+			local numericSpeed = tonumber(speedBox.Text)
+			if not numericSpeed then
+				speedBox.Text = "1"
+				numericSpeed = 1
+			end
+			if playingAnimationId == animationId and animationTrack then
+				animationTrack:AdjustSpeed(numericSpeed)
+			end
+			pcall(saveConfig)
+		end)
+		local function applySearchRowVisible()
+			local searchText = string.lower(emoteSearchText)
+			animationRow.Visible = searchText == "" or string.find(string.lower(animationName), searchText, 1, true) ~= nil
+		end
+		applySearchRowVisible()
+		delBtn.MouseButton1Click:Connect(function()
+			if isEmoteDetached(animationId) then removeDetachedEmote(animationId, true) end
+			local oldKey = emotionKeyBinds[animationId]
+			if oldKey then
+				if keyBinds[oldKey] then keyBinds[oldKey] = nil end
+				emotionKeyBinds[animationId] = nil
+			end
+			for i = 1, #emoteOrder do
+				if emoteOrder[i].id == animationId then
+					table.remove(emoteOrder, i)
+					break
+				end
+			end
+			saveEmoteOrder()
+			rebuildEmote()
+		end)
+		upBtn.MouseButton1Click:Connect(function()
+			for i = 1, #emoteOrder do
+				if emoteOrder[i].id == animationId and i > 1 then
+					emoteOrder[i], emoteOrder[i - 1] = emoteOrder[i - 1], emoteOrder[i]
+					break
+				end
+			end
+			saveEmoteOrder()
+			rebuildEmote()
+		end)
+		downBtn.MouseButton1Click:Connect(function()
+			for i = 1, #emoteOrder do
+				if emoteOrder[i].id == animationId and i < #emoteOrder then
+					emoteOrder[i], emoteOrder[i + 1] = emoteOrder[i + 1], emoteOrder[i]
+					break
+				end
+			end
+			saveEmoteOrder()
+			rebuildEmote()
+		end)
+	end
+end
+
+emoteSearchBox:GetPropertyChangedSignal("Text"):Connect(function()
+	emoteSearchText = emoteSearchBox.Text or ""
+	for _, entry in pairs(emoteUiById) do
+		entry.Row.Visible = emoteSearchText == "" or string.find(string.lower(entry.Name), emoteSearchText, 1, true) ~= nil
+	end
+end)
+
+emoteAddBtn.MouseButton1Click:Connect(function()
+	local rawId = emoteAddId.Text:gsub("%s", "")
+	local name = (emoteAddName.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
+	if not rawId or rawId == "" then
+		notify("Ragebait", "Enter an animation ID", 2)
+		return
+	end
+	local numericId
+	if tonumber(rawId) then
+		numericId = tonumber(rawId)
+	else
+		numericId = tonumber(rawId:match("(%d+)$"))
+	end
+	if not numericId or numericId <= 0 then
+		notify("Ragebait", "Invalid animation ID", 2)
+		return
+	end
+	if name == "" then name = "Emote " .. tostring(numericId) end
+	for _, e in ipairs(emoteOrder) do
+		if e.id == numericId then
+			notify("Ragebait", "This emote already exists", 2)
+			return
+		end
+	end
+	emoteOrder[#emoteOrder+1] = {id = numericId, name = name}
+	emoteAddId.Text = ""
+	emoteAddName.Text = ""
+	saveEmoteOrder()
+	rebuildEmote()
+	notify("Ragebait", "Added '"..name.."'", 2)
+end)
+
+-- strict names from Dance.lua kept, no Marketplace fetch to avoid strange names
+
+rebuildEmote()
+
+currentCategory = "Emotions"currentCategory = "Emotions"
 createSection("Emotions", 400)
 
 animationSearchBox = Instance.new("TextBox")
@@ -19256,7 +19646,6 @@ function rebuildEmotions()
 
 		-- Delete emotion (both built-in and user-added entries)
 		delBtn.MouseButton1Click:Connect(function()
-			if playingAnimationId == animationId then stopCurrentAnimation() end
 			if isEmoteDetached(animationId) then removeDetachedEmote(animationId, true) end
 			-- Remove its keybind too so no stale shortcut keeps triggering it
 			local oldKey = emotionKeyBinds[animationId]
@@ -20368,6 +20757,7 @@ player.CharacterAdded:Connect(function(char)
         changerOriginalState = nil
         -- Strip native accessories & clothing FIRST
         changerUnchange()
+        changerRemoveAllAccessories()
         pcall(function()
             -- Priority: 1) last applied avatar name, 2) selected picker, 3) current fields
             local nm = changerLastAvatarName
@@ -20403,6 +20793,7 @@ task.defer(function()
     changerOriginalState = nil
     -- Strip native accessories & clothing FIRST
     changerUnchange()
+    changerRemoveAllAccessories()
     pcall(function()
         local nm = changerLastAvatarName
         if nm and savedAvatars[nm] then
@@ -21192,15 +21583,32 @@ bindInputConn = UserInputService.InputBegan:Connect(function(input, gp)
 		end
 		emotionKeyBinds[listeningEmotionId] = bindKey
 		local animId = listeningEmotionId
+		-- Emote tab: one-time Dance.lua principle, Emotions: toggle walkable
+		local isEmote = false
+		if emoteOrder then for _, e in ipairs(emoteOrder) do if e.id == animId then isEmote = true; break end end end
 		keyBinds[bindKey] = {
 			callback = function()
-				if playingAnimationId == animId then
-					stopCurrentAnimation()
+				if isEmote then
+					local char2 = player.Character
+					local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+					if hum2 and hum2.RigType == Enum.HumanoidRigType.R15 then
+						local desc = hum2:FindFirstChildOfClass("HumanoidDescription")
+						local ok = pcall(function() hum2:PlayEmoteAndGetAnimTrackById(animId) end)
+						if not ok and desc then
+							local nm = (emoteUiById[animId] and emoteUiById[animId].Name) or ("Emote "..tostring(animId))
+							pcall(function() desc:AddEmote(nm, animId) end)
+							pcall(function() hum2:PlayEmoteAndGetAnimTrackById(animId) end)
+						end
+					end
 				else
-					playAnimation(animId, "1")
+					if playingAnimationId == animId then
+						stopCurrentAnimation()
+					else
+						playAnimation(animId, "1")
+					end
 				end
 			end,
-			description = "Emotion: " .. tostring(animId),
+			description = (isEmote and "Ragebait: " or "Emotion: ") .. tostring(animId),
 		}
 		listeningEmotionTextBox.Text = bindKeyToName(bindKey)
 		justBoundKey = bindKey
@@ -27514,7 +27922,7 @@ local hookedBtns = {}
 local function hookButton(btn)
 	if btn:IsA("TextButton") and not hookedBtns[btn] then
 		hookedBtns[btn] = true
-		btn.MouseButton1Click:Connect(playClickSound)
+		btn.MouseButton1Click:Connect(function() playSoundFile(clickSoundPath) end)
 	end
 end
 local function hookDescendants(container)
