@@ -4041,7 +4041,7 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 						pcall(function() track:AdjustSpeed(s) end)
 					end
 				elseif hum2 then
-					notify("Ragebait", "R15 required", 2)
+					notify("Emotions", "R15 required", 2)
 				end
 			end
 		end
@@ -5320,8 +5320,8 @@ createCategoryScrollFrame("Teamers")
 createCategoryScrollFrame("Exploiters")
 createCategoryScrollFrame("Scammers")
 createCategoryScrollFrame("Autofarm")
-createCategoryScrollFrame("Ragebait")
 createCategoryScrollFrame("Emotions")
+createCategoryScrollFrame("Ragebait")
 createCategoryScrollFrame("Animations")
 createCategoryScrollFrame("Changer")
 createCategoryScrollFrame("Skybox")
@@ -5366,8 +5366,8 @@ function createCategoryButton(shortName, layoutOrder)
 		["Team"] = "Teamers",
 		["Scam"] = "Scammers",
 		["Farm"] = "Autofarm",
-		["Emo"] = "Emotions",
-		["Emt"] = "Ragebait",
+		["Emo"] = "Ragebait",
+		["Emt"] = "Emotions",
 		["Anim"] = "Animations",
 		["Bind"] = "Binds",
 		["Expl"] = "Exploiters",
@@ -19056,8 +19056,8 @@ autofarmScriptUrlBox.FocusLost:Connect(function()
 	end
 end)
 
-currentCategory = "Ragebait"
-createSection("Ragebait", 390)
+currentCategory = "Emotions"
+createSection("Emotions", 390)
 
 -- Emote tab: only favorited emotes (20 ids), single row like Emotions, full controls, under 200
 emoteFavoritedIds = {79017619155911,89957022802046,140469688115066,86830387246209,92237689732858,84970595664091,78745928442381,71851362653894,124963840388798,97847706148165,113890289455724,77152953688098,131683926643291,96293409369770,132151459316300,79874689836683,93031502567721,133751526608969,133481721436918,101507732056031,127103118569243,82224981519682,97629500912487,88042995626011,84534006084837,3576747102,16276506814,111426928948833,78755795767408,134311528115559}
@@ -19131,7 +19131,7 @@ emoteSearchBox.Font = Enum.Font.SourceSansBold
 emoteSearchBox.TextSize = 16
 emoteSearchBox.ClearTextOnFocus = false
 emoteSearchBox.LayoutOrder = 391
-emoteSearchBox.Parent = categoryFrames["Ragebait"]
+emoteSearchBox.Parent = categoryFrames["Emotions"]
 Instance.new("UICorner", emoteSearchBox).CornerRadius = UDim.new(0, 6)
 
 emoteAddRow = Instance.new("Frame")
@@ -19139,7 +19139,7 @@ emoteAddRow.Name = "EmoteAddRow"
 emoteAddRow.Size = UDim2.new(1, 0, 0, 42)
 emoteAddRow.BackgroundTransparency = 1
 emoteAddRow.LayoutOrder = 392
-emoteAddRow.Parent = categoryFrames["Ragebait"]
+emoteAddRow.Parent = categoryFrames["Emotions"]
 local emoteAddName = Instance.new("TextBox")
 emoteAddName.Name = "EmoteAddName"
 emoteAddName.Size = UDim2.new(1, -290, 1, 0)
@@ -19200,7 +19200,7 @@ function rebuildEmote()
 		animationRow.Size = UDim2.new(1, 0, 0, 42)
 		animationRow.BackgroundTransparency = 1
 		animationRow.LayoutOrder = order
-		animationRow.Parent = categoryFrames["Ragebait"]
+		animationRow.Parent = categoryFrames["Emotions"]
 		order = order + 1
 		local animationButton = Instance.new("TextButton")
 		animationButton.Name = "EmoteButton_" .. tostring(animationId)
@@ -19332,7 +19332,7 @@ function rebuildEmote()
 			local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
 			if not hum2 then return end
 			if hum2.RigType ~= Enum.HumanoidRigType.R15 then
-				notify("Ragebait", "R15 required", 2)
+				notify("Emotions", "R15 required", 2)
 				return
 			end
 			local desc = hum2:FindFirstChildOfClass("HumanoidDescription")
@@ -19413,7 +19413,7 @@ emoteAddBtn.MouseButton1Click:Connect(function()
 	local rawId = emoteAddId.Text:gsub("%s", "")
 	local name = (emoteAddName.Text or ""):gsub("^%s+", ""):gsub("%s+$", "")
 	if not rawId or rawId == "" then
-		notify("Ragebait", "Enter an animation ID", 2)
+		notify("Emotions", "Enter an animation ID", 2)
 		return
 	end
 	local numericId
@@ -19423,13 +19423,13 @@ emoteAddBtn.MouseButton1Click:Connect(function()
 		numericId = tonumber(rawId:match("(%d+)$"))
 	end
 	if not numericId or numericId <= 0 then
-		notify("Ragebait", "Invalid animation ID", 2)
+		notify("Emotions", "Invalid animation ID", 2)
 		return
 	end
 	if name == "" then name = "Emote " .. tostring(numericId) end
 	for _, e in ipairs(emoteOrder) do
 		if e.id == numericId then
-			notify("Ragebait", "This emote already exists", 2)
+			notify("Emotions", "This emote already exists", 2)
 			return
 		end
 	end
@@ -19438,15 +19438,15 @@ emoteAddBtn.MouseButton1Click:Connect(function()
 	emoteAddName.Text = ""
 	saveEmoteOrder()
 	rebuildEmote()
-	notify("Ragebait", "Added '"..name.."'", 2)
+	notify("Emotions", "Added '"..name.."'", 2)
 end)
 
 -- strict names from Dance.lua kept, no Marketplace fetch to avoid strange names
 
 rebuildEmote()
 
-currentCategory = "Emotions"currentCategory = "Emotions"
-createSection("Emotions", 400)
+currentCategory = "Ragebait"currentCategory = "Ragebait"
+createSection("Ragebait", 400)
 
 animationSearchBox = Instance.new("TextBox")
 animationSearchBox.Name = "AnimationSearchBox"
@@ -19460,7 +19460,7 @@ animationSearchBox.Font = Enum.Font.SourceSansBold
 animationSearchBox.TextSize = 16
 animationSearchBox.ClearTextOnFocus = false
 animationSearchBox.LayoutOrder = 401
-animationSearchBox.Parent = categoryFrames["Emotions"]
+animationSearchBox.Parent = categoryFrames["Ragebait"]
 
 animationSearchCorner = Instance.new("UICorner")
 animationSearchCorner.CornerRadius = UDim.new(0, 6)
@@ -19472,7 +19472,7 @@ animAddRow.Name = "AnimAddRow"
 animAddRow.Size = UDim2.new(1, 0, 0, 42)
 animAddRow.BackgroundTransparency = 1
 animAddRow.LayoutOrder = 402
-animAddRow.Parent = categoryFrames["Emotions"]
+animAddRow.Parent = categoryFrames["Ragebait"]
 
 local animAddName = Instance.new("TextBox")
 animAddName.Name = "AnimAddName"
@@ -19547,7 +19547,7 @@ function rebuildEmotions()
 		animationRow.Size = UDim2.new(1, 0, 0, 42)
 		animationRow.BackgroundTransparency = 1
 		animationRow.LayoutOrder = order
-		animationRow.Parent = categoryFrames["Emotions"]
+		animationRow.Parent = categoryFrames["Ragebait"]
 		order = order + 1
 
 		local animationButton = Instance.new("TextButton")
@@ -19774,7 +19774,7 @@ animAddBtn.MouseButton1Click:Connect(function()
 	local rawId = animAddId.Text:gsub("%s", "")
 	local name = trimEmoteName(animAddName.Text)
 	if not rawId or rawId == "" then
-		notify("Emotions", "Enter an animation ID", 2)
+		notify("Ragebait", "Enter an animation ID", 2)
 		return
 	end
 	local numericId
@@ -19784,14 +19784,14 @@ animAddBtn.MouseButton1Click:Connect(function()
 		numericId = tonumber(rawId:match("(%d+)$"))
 	end
 	if not numericId or numericId <= 0 then
-		notify("Emotions", "Invalid animation ID", 2)
+		notify("Ragebait", "Invalid animation ID", 2)
 		return
 	end
 	if name == "" then name = "Emotion " .. tostring(numericId) end
 	-- Avoid duplicates (same id)
 	for _, e in ipairs(emotionOrder) do
 		if e.id == numericId then
-			notify("Emotions", "This emotion already exists", 2)
+			notify("Ragebait", "This emotion already exists", 2)
 			return
 		end
 	end
@@ -19800,7 +19800,7 @@ animAddBtn.MouseButton1Click:Connect(function()
 	animAddName.Text = ""
 	saveEmotionOrder()
 	rebuildEmotions()
-	notify("Emotions", "Added '" .. name .. "'", 2)
+	notify("Ragebait", "Added '" .. name .. "'", 2)
 end)
 
 rebuildEmotions()
