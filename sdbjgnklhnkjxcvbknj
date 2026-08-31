@@ -3256,16 +3256,50 @@ end
 if loadedConfig and type(loadedConfig.emotionOrder) == "table" and #loadedConfig.emotionOrder > 0 then
 	local rebuilt = {}
 	local seen = {}
+	local idMap = {[122919757436131]=91843209666952,[90333292347820]=127512208797261,[112878048586682]=89006630491540,[105724034352954]=105305467283648,[105305467283648]=105724034352954}
 	for _, e in ipairs(loadedConfig.emotionOrder) do
 		local id = tonumber(e and e.id)
-		if id and not seen[id] then
-			seen[id] = true
-			rebuilt[#rebuilt + 1] = { id = id, name = e.name or ("Emotion " .. tostring(id)) }
+		if id then
+			if idMap[id] then id = idMap[id] end
+			if not seen[id] then
+				seen[id] = true
+				local n = e.name
+				if id == 91843209666952 then n = "Low Cortisol"
+				elseif id == 127512208797261 then n = "The Worm"
+				elseif id == 89006630491540 then n = "Hide Inside"
+				elseif id == 105305467283648 then n = "MM2 RageBait"
+				elseif id == 105724034352954 then n = "Zero Two Dance"
+				end
+				rebuilt[#rebuilt + 1] = { id = id, name = n or ("Emotion " .. tostring(id)) }
+			end
 		end
 	end
-	if #rebuilt > 0 then
-		emotionOrder = rebuilt
+	-- rebuild in correct animationButtons order, keeping custom ones at end
+	local final = {}
+	local finalSeen = {}
+	for idx = 1, #animationButtons - 1, 2 do
+		local nid = animationButtons[idx]
+		local nname = animationButtons[idx+1]
+		if nid and not finalSeen[nid] then
+			-- if it was in rebuilt, use that entry (preserves user custom name if they renamed), else use default
+			local found = nil
+			for _, r in ipairs(rebuilt) do if r.id == nid then found = r; break end end
+			if found then
+				final[#final+1] = found
+			else
+				final[#final+1] = {id = nid, name = nname}
+			end
+			finalSeen[nid] = true
+		end
 	end
+	-- append any custom emotes from rebuilt that are not in animationButtons (user added)
+	for _, r in ipairs(rebuilt) do
+		if not finalSeen[r.id] then
+			final[#final+1] = r
+			finalSeen[r.id] = true
+		end
+	end
+	if #final > 0 then emotionOrder = final end
 end
 
 -- Load per-emotion keybinds from config
@@ -3286,19 +3320,33 @@ if loadedConfig and type(loadedConfig.emotionKeyBinds) == "table" then
 end
 
 -- Register saved emotion keybinds into the global keyBinds table.
--- keyBinds is normally initialized further down the file; make sure it exists
--- here so a saved bind does not crash the script on startup.
 keyBinds = keyBinds or {}
 for animId, kc in pairs(emotionKeyBinds) do
+	local isEmote = false
+	if emoteOrder then for _, e in ipairs(emoteOrder) do if e.id == animId then isEmote = true; break end end end
 	keyBinds[kc] = {
 		callback = function()
-			if playingAnimationId == animId then
-				stopCurrentAnimation()
+			if isEmote then
+				local char2 = player.Character
+				local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+				if hum2 and hum2.RigType == Enum.HumanoidRigType.R15 then
+					local desc = hum2:FindFirstChildOfClass("HumanoidDescription")
+					local ok = pcall(function() hum2:PlayEmoteAndGetAnimTrackById(animId) end)
+					if not ok and desc then
+						local nm = (emoteUiById[animId] and emoteUiById[animId].Name) or ("Emote "..tostring(animId))
+						pcall(function() desc:AddEmote(nm, animId) end)
+						pcall(function() hum2:PlayEmoteAndGetAnimTrackById(animId) end)
+					end
+				end
 			else
-				playAnimation(animId, "1")
+				if playingAnimationId == animId then
+					stopCurrentAnimation()
+				else
+					playAnimation(animId, "1")
+				end
 			end
 		end,
-		description = "Emotion: " .. tostring(animId),
+		description = (isEmote and "Ragebait: " or "Emotion: ") .. tostring(animId),
 	}
 end
 
@@ -19043,6 +19091,32 @@ if loadedConfig and type(loadedConfig.emoteOrder) == "table" and #loadedConfig.e
 		if strict then e.name = strict end
 	end
 end
+-- Fix new favorited order
+do
+	local seen2={}
+	for _,e in ipairs(emoteOrder) do seen2[e.id]=true end
+	local final={}
+	local finalSeen={}
+	for _,fid in ipairs(emoteFavoritedIds) do
+		if not finalSeen[fid] then
+			local found=nil
+			for _,r in ipairs(emoteOrder) do if r.id==fid then found=r;break end end
+			if found then
+				local strict=emoteOriginalNames[fid]
+				if strict then found.name=strict end
+				final[#final+1]=found
+			else
+				local strict=emoteOriginalNames[fid]
+				final[#final+1]={id=fid,name=strict or ("Emote "..tostring(fid))}
+			end
+			finalSeen[fid]=true
+		end
+	end
+	for _,r in ipairs(emoteOrder) do
+		if not finalSeen[r.id] then final[#final+1]=r;finalSeen[r.id]=true end
+	end
+	if #final>0 then emoteOrder=final end
+end
 emoteUiById = {}
 emoteSearchText = ""
 emoteSearchBox = Instance.new("TextBox")
@@ -22378,12 +22452,15 @@ function createTeamerPlayerButton(plr)
 			local root = char and char:FindFirstChild("HumanoidRootPart")
 			if not hum or not root then return end
 			local function updateJP()
-				if jumpLine and jumpLine.Parent then
-					jumpLine.Text = "Jump Power: " .. hum.JumpPower
+				if jumpLine and jumpLine.Parent and hum.Parent then
+					local jpVal = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
+					jumpLine.Text = "Jump Power: " .. math.floor(jpVal + 0.5) .. (hum.UseJumpPower and "" or " (Height)")
 				end
 			end
 			updateJP()
 			table.insert(teamerConns, hum:GetPropertyChangedSignal("JumpPower"):Connect(updateJP))
+			table.insert(teamerConns, hum:GetPropertyChangedSignal("JumpHeight"):Connect(updateJP))
+			table.insert(teamerConns, hum:GetPropertyChangedSignal("UseJumpPower"):Connect(updateJP))
 		end
 
 		attachTeamerStats(plr.Character)
@@ -22404,6 +22481,10 @@ function createTeamerPlayerButton(plr)
 						local horizSpeed = math.floor(math.sqrt(vel.X*vel.X + vel.Z*vel.Z) + 0.5)
 						if speedLine and speedLine.Parent then
 							speedLine.Text = "Walk Speed: " .. horizSpeed
+						end
+						if jumpLine and jumpLine.Parent and hum then
+							local jpVal = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
+							jumpLine.Text = "Jump Power: " .. math.floor(jpVal + 0.5) .. (hum.UseJumpPower and "" or " (Height)")
 						end
 						if healthLine and healthLine.Parent then
 							healthLine.Text = "Health: " .. math.floor(hum.Health) .. "/" .. hum.MaxHealth
@@ -23503,7 +23584,8 @@ function updatePlayerStats()
 		local hum = char:FindFirstChildOfClass("Humanoid")
 		if hum then
 			speedLabel.Text = "Walk Speed: " .. hum.WalkSpeed
-			jumpPowerLabel.Text = "Jump Power: " .. hum.JumpPower
+			local jpVal = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
+			jumpPowerLabel.Text = "Jump Power: " .. math.floor(jpVal + 0.5) .. (hum.UseJumpPower and "" or " (Height)")
 			healthLabel.Text = "Health: " .. math.floor(hum.Health) .. "/" .. hum.MaxHealth
 		else
 			speedLabel.Text = "Walk Speed: N/A"
@@ -23533,10 +23615,16 @@ function attachMainStats(char)
 	local hum = char and char:FindFirstChildOfClass("Humanoid")
 	if not hum then return end
 	local function updateJP()
-		jumpPowerLabel.Text = "Jump Power: " .. hum.JumpPower
+		if hum.Parent then
+			local jpVal = hum.UseJumpPower and hum.JumpPower or hum.JumpHeight
+			jumpPowerLabel.Text = "Jump Power: " .. math.floor(jpVal + 0.5) .. (hum.UseJumpPower and "" or " (Height)")
+		end
 	end
 	updateJP()
 	mainJumpConn = hum:GetPropertyChangedSignal("JumpPower"):Connect(updateJP)
+	-- also listen to JumpHeight and UseJumpPower for modern rigs
+	pcall(function() mainJumpConn2 = hum:GetPropertyChangedSignal("JumpHeight"):Connect(updateJP) end)
+	pcall(function() mainJumpConn3 = hum:GetPropertyChangedSignal("UseJumpPower"):Connect(updateJP) end)
 end
 
 attachMainStats(player.Character)
