@@ -23482,7 +23482,7 @@ createProfileLabel("Discord: Verified", 54)
 createProfileLabel("Subscription: WIN-X Premium & Star+", 98)
 scriptActivationLabel = createProfileLabel("Script Activations: " .. scriptActivationCount, 120)
 serverTimeLabel = createProfileLabel("Server Time: 0d 0h 0m 0s", 142)
-createProfileLabel("Roles: Owner & Developer", 76)
+createProfileLabel("Roles: Owner | Developer & Beta Tester", 76)
 
 createProfileLabel("Display Name: " .. player.DisplayName, 164)
 createProfileLabel("Username: " .. player.Name, 186)
