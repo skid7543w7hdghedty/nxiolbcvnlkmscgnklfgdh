@@ -237,7 +237,6 @@ function saveConfig()
 	config.toggles.autoMuteCoinsEnabled = autoMuteCoinsEnabled
 	config.toggles.autoDeleteCorpsesEnabled = autoDeleteCorpsesEnabled
 	config.toggles.antiDeathMansion2Enabled = antiDeathMansion2Enabled
-	config.toggles.antiWaterKillEnabled = antiWaterKillEnabled
 	config.toggles.hiddenfling = hiddenfling
 	config.toggles.airStrafeEnabled = airStrafeEnabled
 	config.toggles.autoResetPlayerEnabled = autoResetPlayerEnabled
@@ -2410,7 +2409,7 @@ end
 ESP_MAP_NAMES = {
 	"Hotel", "Factory", "BioLab", "Mansion2", "House2",
 	"Workplace", "Hospital3", "MilBase", "Bank2", "Office3",
-	"ResearchFacility", "Pier", "Yacht", "BeachResort"
+	"ResearchFacility"
 }
 
 function espGetRoleColor(plr)
@@ -6642,8 +6641,7 @@ autoGrabGunMagnets = {}
 autoGrabGunTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
-	Pier = true, Yacht = true, BeachResort = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
 }
 
 function autoGrabGetRoot()
@@ -8609,8 +8607,7 @@ MAGNET_DISTANCE = 6
 gunAuraTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
-	Pier = true, Yacht = true, BeachResort = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
 }
 
 function gunAuraGetRoot()
@@ -9027,8 +9024,7 @@ autoDeleteCoinsConnections = {}
 autoDeleteCoinsTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
-	Pier = true, Yacht = true, BeachResort = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
 }
 
 function isInsideTargetModel(instance)
@@ -9213,7 +9209,7 @@ btn.tpLobby.MouseButton1Click:Connect(function()
 	local myChar = player.Character
 	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	if myHrp then
-		myHrp.CFrame = CFrame.new(-12, -67, -11)
+		myHrp.CFrame = CFrame.new(14, 505, -57)
 		notify("Teleported", "Teleported to Lobby", 2)
 	else
 		notify("Error", "Character not found", 2)
@@ -9225,7 +9221,7 @@ btn.tpVoteMap.MouseButton1Click:Connect(function()
 	local myChar = player.Character
 	local myHrp = myChar and myChar:FindFirstChild("HumanoidRootPart")
 	if myHrp then
-		myHrp.CFrame = CFrame.new(-1, -65, -79)
+		myHrp.CFrame = CFrame.new(14, 507, 35)
 		notify("Teleported", "Teleported to VoteMap", 2)
 	else
 		notify("Error", "Character not found", 2)
@@ -9373,10 +9369,7 @@ tpMapCoords = {
 	House2 = Vector3.new(49, 265, 9057),
 	MilBase = Vector3.new(85, 202, 9195),
 	Workplace = Vector3.new(19, 292, 8936),
-	PoliceStation = Vector3.new(-31, 289, 8927),
-	Pier = Vector3.new(-716, 107, -2496),
-	Yacht = Vector3.new(-28, 220, 9175),
-	BeachResort = Vector3.new(33, 254, 9107)
+	PoliceStation = Vector3.new(-31, 289, 8927)
 }
 
 function tpToMap()
@@ -9430,10 +9423,7 @@ tpAboveMapCoords = {
 	Workplace = Vector3.new(-3, 319, 9002),
 	PoliceStation = Vector3.new(-14, 307, 8934),
 	Bank2 = Vector3.new(-5, 328, 9008),
-	BioLab = Vector3.new(539, 322, 9856),
-	Pier = Vector3.new(-738, 267, -2189),
-	Yacht = Vector3.new(3, 413, 9006),
-	BeachResort = Vector3.new(42, 419, 9121)
+	BioLab = Vector3.new(539, 322, 9856)
 }
 
 function tpAboveMap()
@@ -9512,10 +9502,7 @@ autofarmMapCoords = {
 	House2 = Vector3.new(-17, 255, 9020),
 	MilBase = Vector3.new(56, 211, 9007),
 	Workplace = Vector3.new(19, 283, 8989),
-	PoliceStation = Vector3.new(-5, 265, 9079),
-	Pier = Vector3.new(-714, 106, -2369),
-	Yacht = Vector3.new(3, 223, 9100),
-	BeachResort = Vector3.new(6, 242, 9107)
+	PoliceStation = Vector3.new(-5, 265, 9079)
 }
 
 -- Invisible platform under the map at the farm spot, so the character can't
@@ -9688,10 +9675,10 @@ function autoTpToTarget()
 	local hrp = char and char:FindFirstChild("HumanoidRootPart")
 	if not hrp then return end
 	if autoTpTarget == 1 then
-		hrp.CFrame = CFrame.new(-12, -67, -11)
+		hrp.CFrame = CFrame.new(14, 505, -57)
 		notify("Auto TP", "Teleported to Lobby", 2)
 	elseif autoTpTarget == 2 then
-		hrp.CFrame = CFrame.new(-1, -65, -79)
+		hrp.CFrame = CFrame.new(14, 507, 35)
 		notify("Auto TP", "Teleported to VoteMap", 2)
 	elseif autoTpTarget == 3 then
 		for mapName, coords in pairs(tpAboveMapCoords) do
@@ -9779,7 +9766,7 @@ autoTpBtn.MouseButton1Click:Connect(toggleAutoTp)
 autoTpTargetDropdownFrame = Instance.new("Frame")
 autoTpTargetDropdownFrame.Name = "AutoTpTargetDropdown"
 autoTpTargetDropdownFrame.Size = UDim2.new(0, 110, 0, #autoTpTargetNames * 30)
-autoTpTargetDropdownFrame.Position = UDim2.new(1, -106, 0, 42)
+autoTpTargetDropdownFrame.Position = UDim2.new(1, -106, 0, -120)
 autoTpTargetDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 autoTpTargetDropdownFrame.BorderSizePixel = 0
 autoTpTargetDropdownFrame.Visible = false
@@ -10693,18 +10680,6 @@ btn.antiDeathMansion2.MouseButton1Click:Connect(function()
 		removeGlitchProof()
 	else
 		notify("Anti-Death On Mansion 2", "Disabled", 1)
-	end
-end)
-
-btn.antiWaterKill = createButton("AntiWaterKillButton", "Anti-Water Kill: ON", 108)
-btn.antiWaterKill.MouseButton1Click:Connect(function()
-	antiWaterKillEnabled = not antiWaterKillEnabled
-	setToggleState(btn.antiWaterKill, antiWaterKillEnabled, "Anti-Water Kill: ON", "Anti-Water Kill: OFF")
-	setExtractedBtnState("Anti-Water Kill", antiWaterKillEnabled)
-	if antiWaterKillEnabled then
-		removeWaterClient()
-	else
-		notify("Anti-Water Kill", "Disabled", 1)
 	end
 end)
 
@@ -21484,12 +21459,6 @@ bindableFeatures = {
 		setExtractedBtnState("Anti-Death On Mansion 2", antiDeathMansion2Enabled)
 		if antiDeathMansion2Enabled then removeGlitchProof() end
 	end},
-	{name = "Anti-Water Kill", defaultKey = nil, getState = function() return antiWaterKillEnabled end, callback = function()
-		antiWaterKillEnabled = not antiWaterKillEnabled
-		setToggleState(btn.antiWaterKill, antiWaterKillEnabled, "Anti-Water Kill: ON", "Anti-Water Kill: OFF")
-		setExtractedBtnState("Anti-Water Kill", antiWaterKillEnabled)
-		if antiWaterKillEnabled then removeWaterClient() end
-	end},
 	{name = "Touch Fling", defaultKey = nil, getState = function() return hiddenfling end, callback = function()
 		hiddenfling = not hiddenfling
 		setToggleState(touchFlingButton, hiddenfling, "Touch Fling: ON", "Touch Fling: OFF")
@@ -21576,11 +21545,11 @@ bindableFeatures = {
 	end},
 	{name = "TP to Lobby", defaultKey = nil, getState = function() return false end, callback = function()
 		local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
-		if h then h.CFrame = CFrame.new(-12, -67, -11); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end
+		if h then h.CFrame = CFrame.new(14, 505, -57); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end
 	end},
 	{name = "TP to VoteMap", defaultKey = nil, getState = function() return false end, callback = function()
 		local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart")
-		if h then h.CFrame = CFrame.new(-1, -65, -79); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end
+		if h then h.CFrame = CFrame.new(14, 507, 35); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end
 	end},
 	{name = "TP to Map", defaultKey = nil, getState = function() return false end, callback = function()
 		tpToMap()
@@ -26632,7 +26601,6 @@ function buildConfigData()
 	config.toggles.autoKillEveryoneEnabled = autoKillEveryoneEnabled; config.toggles.autoKillEveryoneNoFriendsEnabled = autoKillEveryoneNoFriendsEnabled
 	config.toggles.autoKillSheriffEnabled = autoKillSheriffEnabled; config.toggles.autoMuteCoinsEnabled = autoMuteCoinsEnabled
 	config.toggles.autoDeleteCorpsesEnabled = autoDeleteCorpsesEnabled; config.toggles.hiddenfling = hiddenfling
-	config.toggles.antiDeathMansion2Enabled = antiDeathMansion2Enabled; config.toggles.antiWaterKillEnabled = antiWaterKillEnabled
 	config.toggles.airStrafeEnabled = airStrafeEnabled; config.toggles.autoResetPlayerEnabled = autoResetPlayerEnabled
 	config.toggles.autoResetEveryoneEnabled = autoResetEveryoneEnabled; config.toggles.autoResetSheriffEnabled = autoResetSheriffEnabled
 	config.toggles.autoResetMurdererEnabled = autoResetMurdererEnabled; config.toggles.aimWallbangEnabled = aimWallbangEnabled
@@ -27017,9 +26985,6 @@ btnFeatures = {
 	{name = "Anti-Death On Mansion 2",
 	 toggle = function() antiDeathMansion2Enabled = not antiDeathMansion2Enabled; setToggleState(btn.antiDeathMansion2, antiDeathMansion2Enabled, "Anti-Death On Mansion 2: ON", "Anti-Death On Mansion 2: OFF"); setExtractedBtnState("Anti-Death On Mansion 2", antiDeathMansion2Enabled); if antiDeathMansion2Enabled then removeGlitchProof() end end,
 	 getState = function() return antiDeathMansion2Enabled end},
-	{name = "Anti-Water Kill",
-	 toggle = function() antiWaterKillEnabled = not antiWaterKillEnabled; setToggleState(btn.antiWaterKill, antiWaterKillEnabled, "Anti-Water Kill: ON", "Anti-Water Kill: OFF"); setExtractedBtnState("Anti-Water Kill", antiWaterKillEnabled); if antiWaterKillEnabled then removeWaterClient() end end,
-	 getState = function() return antiWaterKillEnabled end},
 	{name = "Anti-Shoot",
 	 toggle = function() toggleDesync(); setToggleState(desyncButton, PastedSources, "Anti-Shoot: ON", "Anti-Shoot: OFF"); setExtractedBtnState("Anti-Shoot", PastedSources) end,
 	 getState = function() return PastedSources end},
@@ -27070,9 +27035,9 @@ btnFeatures = {
 	 toggle = function() toggleLoopSpeed() end,
 	 getState = function() return loopSpeedEnabled end},
 	{name = "TP to Lobby",
-	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(-12, -67, -11); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end end},
+	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(14, 505, -57); notify("Teleported", "Teleported to Lobby", 2) else notify("Error", "Character not found", 2) end end},
 	{name = "TP to VoteMap",
-	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(-1, -65, -79); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end end},
+	 toggle = function() local c = player.Character; local h = c and c:FindFirstChild("HumanoidRootPart"); if h then h.CFrame = CFrame.new(14, 507, 35); notify("Teleported", "Teleported to VoteMap", 2) else notify("Error", "Character not found", 2) end end},
 	{name = "TP to Map",
 	 toggle = function() tpToMap() end},
 	{name = "TP Above Map",
@@ -28406,7 +28371,6 @@ end
 -- Anti-Death On Mansion 2 (toggleable, ON by default)
 -- ============================================
 antiDeathMansion2Enabled = true
-antiWaterKillEnabled = true
 
 function removeGlitchProof()
 	if not antiDeathMansion2Enabled then return end
@@ -28465,107 +28429,6 @@ task.spawn(function()
 	end
 end)
 
--- Anti-Water Kill: instantly removes the WaterClient on Pier and Yacht maps
--- so the player can never die from touching water. Uses event-driven hooks
--- plus a slow fallback sweep (no frequent scanning, no lag).
--- ============================================
-function removeWaterClient()
-	if not antiWaterKillEnabled then return end
-	for _, mapName in ipairs({"Pier", "Yacht"}) do
-		local map = Workspace:FindFirstChild(mapName)
-		if map then
-			local path = nil
-			if mapName == "Pier" then
-				local respawn = map:FindFirstChild("Respawn")
-				if respawn then path = respawn:FindFirstChild("WaterClient", true) end
-			else
-				local interactive = map:FindFirstChild("Intereactive")
-				if interactive then
-					local water = interactive:FindFirstChild("Water")
-					if water then path = water:FindFirstChild("WaterClient", true) end
-				end
-			end
-			if path then
-				path:Destroy()
-			end
-		end
-	end
-end
-
-removeWaterClient()
-
-Workspace.ChildAdded:Connect(function(child)
-	if (child.Name == "Pier" or child.Name == "Yacht") and antiWaterKillEnabled then
-		task.wait(1)
-		removeWaterClient()
-		if child.Name == "Pier" then
-			local respawn = child:FindFirstChild("Respawn")
-			if respawn then
-				respawn.DescendantAdded:Connect(function(desc)
-					if desc.Name == "WaterClient" and antiWaterKillEnabled then
-						task.defer(function()
-							if desc and desc.Parent then
-								desc:Destroy()
-							end
-						end)
-					end
-				end)
-			end
-		else
-			local interactive = child:FindFirstChild("Intereactive")
-			if interactive then
-				local water = interactive:FindFirstChild("Water")
-				if water then
-					water.DescendantAdded:Connect(function(desc)
-						if desc.Name == "WaterClient" and antiWaterKillEnabled then
-							task.defer(function()
-								if desc and desc.Parent then
-									desc:Destroy()
-								end
-							end)
-						end
-					end)
-				end
-			end
-		end
-	end
-end)
-
-for _, mapName in ipairs({"Pier", "Yacht"}) do
-	local existing = Workspace:FindFirstChild(mapName)
-	if existing then
-		local watchPart = nil
-		if mapName == "Pier" then
-			local respawn = existing:FindFirstChild("Respawn")
-			if respawn then watchPart = respawn end
-		else
-			local interactive = existing:FindFirstChild("Intereactive")
-			if interactive then
-				local water = interactive:FindFirstChild("Water")
-				if water then watchPart = water end
-			end
-		end
-		if watchPart then
-			watchPart.DescendantAdded:Connect(function(desc)
-				if desc.Name == "WaterClient" and antiWaterKillEnabled then
-					task.defer(function()
-						if desc and desc.Parent then
-							desc:Destroy()
-						end
-					end)
-				end
-			end)
-		end
-	end
-end
-
-task.spawn(function()
-	while true do
-		task.wait(5)
-		removeWaterClient()
-	end
-end)
-
 -- ============================================
 -- Restore full config after UI is loaded
 -- ============================================
@@ -28599,8 +28462,6 @@ function restoreFullConfig()
 	autoDeleteCorpsesEnabled = T.autoDeleteCorpsesEnabled or false
 	antiDeathMansion2Enabled = T.antiDeathMansion2Enabled
 	if antiDeathMansion2Enabled == nil then antiDeathMansion2Enabled = true end
-	antiWaterKillEnabled = T.antiWaterKillEnabled
-	if antiWaterKillEnabled == nil then antiWaterKillEnabled = true end
 	hiddenfling = T.hiddenfling or false
 	currentMode = 0
 	fakeDuckEnabled = T.fakeDuckEnabled or false
@@ -29221,10 +29082,6 @@ function restoreFullConfig()
 	if antiDeathMansion2Enabled then
 		if btn.antiDeathMansion2 then setToggleState(btn.antiDeathMansion2, true, "Anti-Death On Mansion 2: ON", "Anti-Death On Mansion 2: OFF") end
 		setExtractedBtnState("Anti-Death On Mansion 2", true)
-	end
-	if antiWaterKillEnabled then
-		if btn.antiWaterKill then setToggleState(btn.antiWaterKill, true, "Anti-Water Kill: ON", "Anti-Water Kill: OFF") end
-		setExtractedBtnState("Anti-Water Kill", true)
 	end
 	if T.hiddenfling then
 		if touchFlingButton then setToggleState(touchFlingButton, true, "Touch Fling: ON", "Touch Fling: OFF") end
