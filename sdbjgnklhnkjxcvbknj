@@ -4778,7 +4778,7 @@ titleBar.Position = UDim2.new(0, 10, 0, 0)
 titleBar.BackgroundTransparency = 1
 titleBar.TextColor3 = Color3.fromRGB(255, 255, 255)
 titleBar.TextXAlignment = Enum.TextXAlignment.Left
-titleBar.Text = "Adrenalin.win V3.7.8.26 — Murder Mystery 2"
+titleBar.Text = "Adrenalin.win V3.1.9.26 — Murder Mystery 2"
 titleBar.Font = Enum.Font.SourceSansBold
 titleBar.TextSize = 16.5
 titleBar.Parent = topBar
@@ -8445,9 +8445,9 @@ end)
 -- Map Vote Dupe (3 buttons) — Utilities tab
 -- ============================================
 voteMapCoords = {
-	CFrame.new(-10, -64, -94),  -- Map 1
-	CFrame.new(-1, -64, -95),   -- Map 2
-	CFrame.new(10, -64, -94),   -- Map 3
+	CFrame.new(25, 507, 49),   -- Map 1
+	CFrame.new(14, 507, 52),   -- Map 2
+	CFrame.new(2, 507, 48),    -- Map 3
 }
 
 voteDupeActive = false
