@@ -115,9 +115,45 @@ DesyncOffsetRange = 1000
 DesyncSpinActive = false
 desyncSpinConnection = nil
 DesyncSpinOffset = 5
+-- Desync mode switch for the Desync row: "Spoof Pos" (current behaviour with
+-- positional offset from the Studs field) or "No Spoof" (Old.lua behaviour:
+-- small rotation-only spoof, no positional offset, Studs field hidden).
+-- NOTE: globals on purpose (file is near the 200 local registers limit).
+DesyncMode = DesyncMode or "Spoof Pos"
+DesyncRotX, DesyncRotY, DesyncRotZ = 0, 0, 0
+function RegenerateDesyncRotation()
+	DesyncRotX = math.rad(RandomNumberRange(5))
+	DesyncRotY = math.rad(RandomNumberRange(5))
+	DesyncRotZ = math.rad(RandomNumberRange(5))
+end
+function UpdateDesyncModeUI()
+	if desyncModeButton then desyncModeButton.Text = "Mode: " .. DesyncMode end
+	if desyncSpinInput then
+		if DesyncMode == "No Spoof" then
+			desyncSpinInput.Visible = false
+			if desyncSpinButton then desyncSpinButton.Size = UDim2.new(1, 0, 1, 0) end
+		else
+			desyncSpinInput.Visible = true
+			if desyncSpinButton then desyncSpinButton.Size = UDim2.new(1, -70, 1, 0) end
+		end
+	end
+end
+function ToggleDesyncMode()
+	if DesyncMode == "Spoof Pos" then DesyncMode = "No Spoof" else DesyncMode = "Spoof Pos" end
+	if DesyncMode == "No Spoof" then RegenerateDesyncRotation() end
+	UpdateDesyncModeUI()
+	saveConfig()
+end
+task.spawn(function()
+	while true do
+		task.wait(2)
+		if DesyncSpinActive and DesyncMode == "No Spoof" then RegenerateDesyncRotation() end
+	end
+end)
 function RandomNumberRange(a)
 	return math.random(-a * 100, a * 100) / 100
 end
+RegenerateDesyncRotation()
 
 -- Keeps the character's physics assembly AWAKE so per-frame position spoofs keep
 -- replicating to the server even while standing still (the post-update "idle sleep"
@@ -320,6 +356,7 @@ config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
 	config.values.coinAuraRadius = coinAuraRadius
 	config.values.DesyncOffsetRange = DesyncOffsetRange
 	config.values.DesyncSpinOffset = DesyncSpinOffset
+	config.values.DesyncMode = DesyncMode
 	config.values.antiAimSpeed = antiAimSpeed
 	config.values.loopSpeedValue = loopSpeedValue
 	config.values.customJumpPowerValue = customJumpPowerValue
@@ -4395,6 +4432,7 @@ function toggleDesyncSpin()
 			if desyncButton then setToggleState(desyncButton, false, "Anti-Shoot: ON", "Anti-Shoot: OFF") end
 			setExtractedBtnState("Anti-Shoot", false)
 		end
+		if DesyncMode == "No Spoof" then RegenerateDesyncRotation() end
 		desyncSpinConnection = RunService.Heartbeat:Connect(function()
 			local char = player.Character
 			if char and char:FindFirstChild("HumanoidRootPart") and char:FindFirstChild("Humanoid") and char.Humanoid.Health > 0 then
@@ -4405,17 +4443,23 @@ function toggleDesyncSpin()
 				-- walking, PLUS a random positional offset each frame so your replicated
 				-- position desyncs from your real one even while moving -> bullets pass
 				-- through while you walk, not only while standing still.
-				local SpoofThis = (DesyncTypes[1] + Vector3.new(
-					RandomNumberRange(DesyncSpinOffset),
-					RandomNumberRange(DesyncSpinOffset),
-					RandomNumberRange(DesyncSpinOffset)
-				)) * CFrame.Angles(
-					math.rad(RandomNumberRange(180)),
-					math.rad(RandomNumberRange(180)),
-					math.rad(RandomNumberRange(180))
-				)
-				hrp.CFrame = SpoofThis
-				hrp.AssemblyLinearVelocity = Vector3.new(1, 1, 1) * 16384
+				-- "No Spoof" mode (Old.lua): small rotation-only spoof, no positional offset.
+				if DesyncMode == "No Spoof" then
+					hrp.CFrame = DesyncTypes[1] * CFrame.Angles(DesyncRotX, DesyncRotY, DesyncRotZ)
+					hrp.AssemblyLinearVelocity = Vector3.new(1, 1, 1) * 16384
+				else
+					local SpoofThis = (DesyncTypes[1] + Vector3.new(
+						RandomNumberRange(DesyncSpinOffset),
+						RandomNumberRange(DesyncSpinOffset),
+						RandomNumberRange(DesyncSpinOffset)
+					)) * CFrame.Angles(
+						math.rad(RandomNumberRange(180)),
+						math.rad(RandomNumberRange(180)),
+						math.rad(RandomNumberRange(180))
+					)
+					hrp.CFrame = SpoofThis
+					hrp.AssemblyLinearVelocity = Vector3.new(1, 1, 1) * 16384
+				end
 				RunService.RenderStepped:Wait()
 				hrp.CFrame = DesyncTypes[1]
 				hrp.AssemblyLinearVelocity = DesyncTypes[2]
@@ -12981,6 +13025,15 @@ desyncSpinInput.FocusLost:Connect(function()
 	end
 end)
 
+-- Desync mode switch (right after the Studs field): Spoof Pos <-> No Spoof (Old.lua).
+-- In No Spoof mode the Studs field is hidden (not needed); Desync ON / extracted
+-- "Desync" button / keybind always run the currently selected mode.
+desyncModeButton = createButton("DesyncModeButton", "Mode: Spoof Pos", 202.05)
+desyncModeButton.MouseButton1Click:Connect(function()
+	ToggleDesyncMode()
+end)
+UpdateDesyncModeUI()
+
 -- Anti-Shoot (aggressive positional desync) with adjustable scatter studs field
 desyncButton, desyncOffsetInput = createDualRow("DesyncButton", "Anti-Shoot: OFF", "Studs", DesyncOffsetRange, 203)
 desyncButton.MouseButton1Click:Connect(function()
@@ -14357,13 +14410,21 @@ onlineExploitersCollapseBtn.MouseButton1Click:Connect(function()
 	onlineExploitersCollapseBtn.Text = onlineExploitersCollapsed and "+" or "-"
 end)
 
+-- Avatar thumbnail cache: GetUserThumbnailAsync is a yielding web call. Without a
+-- cache every list rebuild re-fetches avatars for ALL marked players online, so the
+-- network stalls and image-streaming hitches grow with the marked list.
+-- NOTE: globals on purpose (file is near the 200 local registers limit).
+thumbCache = thumbCache or {}
+function getCachedThumb(userId)
+	if thumbCache[userId] then return thumbCache[userId] end
+	local ok, thumb = pcall(function()
+		return Players:GetUserThumbnailAsync(userId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
+	end)
+	if ok and thumb and thumb ~= "" then thumbCache[userId] = thumb return thumb end
+	return ""
+end
 function refreshOnlineExploiters()
 	if not onlineExploitersList then return end
-	for _, child in ipairs(onlineExploitersList:GetChildren()) do
-		if not child:IsA("UIListLayout") then
-			child:Destroy()
-		end
-	end
 
 	local markedOnline = {}
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -14372,6 +14433,19 @@ function refreshOnlineExploiters()
 		end
 	end
 	table.sort(markedOnline, function(a, b) return a.Name:lower() < b.Name:lower() end)
+	-- Skip redundant rebuilds: same marked-online membership -> same UI.
+	-- (checked BEFORE destroying children so a skip keeps the current list intact)
+	local onlineExploiterSigParts = {}
+	for _, plr in ipairs(markedOnline) do onlineExploiterSigParts[#onlineExploiterSigParts + 1] = plr.Name end
+	local onlineExploiterSig = table.concat(onlineExploiterSigParts, ",")
+	if onlineExploiterSig == onlineExploitersLastSig then return end
+	onlineExploitersLastSig = onlineExploiterSig
+
+	for _, child in ipairs(onlineExploitersList:GetChildren()) do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
 
 	local count = #markedOnline
 	local entryHeight = 60
@@ -14418,8 +14492,8 @@ function refreshOnlineExploiters()
 		avatarCorner.Parent = avatar
 
 		coroutine.wrap(function()
-			local thumb = Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-			avatar.Image = thumb
+			local thumb = getCachedThumb(plr.UserId)
+			if avatar.Parent then avatar.Image = thumb end
 		end)()
 
 		local nameLabel = Instance.new("TextLabel")
@@ -14681,6 +14755,17 @@ function updateExploiterStatus()
 	exploiterStatusLabel.TextColor3 = count == 0 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(255, 80, 80)
 end
 
+-- Coalesce rapid successive refresh triggers (join/leave bursts) into one rebuild.
+-- Mark/unmark clicks still refresh synchronously; only background events debounce.
+exploiterListRefreshPending = false
+function requestExploiterListRefresh()
+	if exploiterListRefreshPending then return end
+	exploiterListRefreshPending = true
+	task.delay(0.5, function()
+		exploiterListRefreshPending = false
+		refreshExploiterList()
+	end)
+end
 function refreshExploiterList()
 	if not exploiterScrollFrame then return end
 	if refreshSavedExploiters then refreshSavedExploiters() end
@@ -14839,7 +14924,11 @@ end
 function showPlayerInfoPopup(plr)
 	if not plr then return end
 	if exploiterPopupCache and exploiterPopupCache[plr.Name] and exploiterPopupCache[plr.Name].Parent then
-		exploiterPopupCache[plr.Name].Enabled = not exploiterPopupCache[plr.Name].Enabled
+		-- Second click fully closes (destroy): a merely hidden popup would keep
+		-- its 0.15s live-stats loop running forever -> periodic freezes stacking up.
+		local oldPopup = exploiterPopupCache[plr.Name]
+		exploiterPopupCache[plr.Name] = nil
+		oldPopup:Destroy()
 		return
 	end
 	if not exploiterPopupCache then exploiterPopupCache = {} end
@@ -14888,7 +14977,10 @@ function showPlayerInfoPopup(plr)
 	popupCloseCorner.Parent = popupClose
 
 	popupClose.MouseButton1Click:Connect(function()
-		popupGui.Enabled = false
+		-- Full close (not just hide): otherwise the 0.15s live-stats loop and the
+		-- popup connections keep running forever and stack up -> periodic freezes.
+		exploiterPopupCache[plr.Name] = nil
+		popupGui:Destroy()
 	end)
 
 	local scroll = Instance.new("ScrollingFrame")
@@ -15066,9 +15158,11 @@ function showPlayerInfoPopup(plr)
 
 	addInfoLine("Gravity: " .. math.floor(workspace.Gravity))
 
+	local escConn
 	popupGui.Destroying:Connect(function()
 		popupAlive = false
 		disconnectConns()
+		if escConn then escConn:Disconnect() end
 	end)
 
 	-- Draggable popup
@@ -15107,10 +15201,10 @@ function showPlayerInfoPopup(plr)
 		popupDragCon:Disconnect()
 	end)
 
-	local escConn
 	escConn = UserInputService.InputBegan:Connect(function(input)
 		if input.KeyCode == Enum.KeyCode.Escape then
-			popupGui.Enabled = false
+			exploiterPopupCache[plr.Name] = nil
+			popupGui:Destroy()
 		end
 	end)
 
@@ -15180,15 +15274,14 @@ end
 
 -- Also refresh when players join/leave (for exploiter tab)
 Players.PlayerAdded:Connect(function()
-	refreshExploiterList()
+	requestExploiterListRefresh()
 end)
 Players.PlayerRemoving:Connect(function(plr)
 	if exploiterPopupCache and exploiterPopupCache[plr.Name] then
 		exploiterPopupCache[plr.Name]:Destroy()
 		exploiterPopupCache[plr.Name] = nil
 	end
-	task.wait(0.1)
-	refreshExploiterList()
+	requestExploiterListRefresh()
 end)
 
 -- Refresh exploiter list when tab is switched to
@@ -15439,11 +15532,6 @@ end)
 
 function refreshOnlineScammers()
 	if not onlineScammersList then return end
-	for _, child in ipairs(onlineScammersList:GetChildren()) do
-		if not child:IsA("UIListLayout") then
-			child:Destroy()
-		end
-	end
 
 	local markedOnline = {}
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -15452,6 +15540,19 @@ function refreshOnlineScammers()
 		end
 	end
 	table.sort(markedOnline, function(a, b) return a.Name:lower() < b.Name:lower() end)
+	-- Skip redundant rebuilds: same marked-online membership -> same UI.
+	-- (checked BEFORE destroying children so a skip keeps the current list intact)
+	local onlineScammerSigParts = {}
+	for _, plr in ipairs(markedOnline) do onlineScammerSigParts[#onlineScammerSigParts + 1] = plr.Name end
+	local onlineScammerSig = table.concat(onlineScammerSigParts, ",")
+	if onlineScammerSig == onlineScammersLastSig then return end
+	onlineScammersLastSig = onlineScammerSig
+
+	for _, child in ipairs(onlineScammersList:GetChildren()) do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
 
 	local count = #markedOnline
 	local entryHeight = 60
@@ -15498,8 +15599,8 @@ function refreshOnlineScammers()
 		avatarCorner.Parent = avatar
 
 		coroutine.wrap(function()
-			local thumb = Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-			avatar.Image = thumb
+			local thumb = getCachedThumb(plr.UserId)
+			if avatar.Parent then avatar.Image = thumb end
 		end)()
 
 		local nameLabel = Instance.new("TextLabel")
@@ -15755,6 +15856,15 @@ function updateScammerStatus()
 	scammerStatusLabel.TextColor3 = count == 0 and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(180, 50, 50)
 end
 
+scammerListRefreshPending = false
+function requestScammerListRefresh()
+	if scammerListRefreshPending then return end
+	scammerListRefreshPending = true
+	task.delay(0.5, function()
+		scammerListRefreshPending = false
+		refreshScammerList()
+	end)
+end
 function refreshScammerList()
 	if not scammerScrollFrame then return end
 	if refreshSavedScammers then refreshSavedScammers() end
@@ -15972,15 +16082,14 @@ end
 
 -- Also refresh when players join/leave (for scammer tab)
 Players.PlayerAdded:Connect(function()
-	refreshScammerList()
+	requestScammerListRefresh()
 end)
 Players.PlayerRemoving:Connect(function(plr)
 	if scammerPopupCache and scammerPopupCache[plr.Name] then
 		scammerPopupCache[plr.Name]:Destroy()
 		scammerPopupCache[plr.Name] = nil
 	end
-	task.wait(0.1)
-	refreshScammerList()
+	requestScammerListRefresh()
 end)
 
 -- ============================================
@@ -22087,7 +22196,11 @@ function createTeamerPlayerButton(plr)
 
 	button.MouseButton1Click:Connect(function()
 		if teamerPopupCache[plr.Name] and teamerPopupCache[plr.Name].Parent then
-			teamerPopupCache[plr.Name].Enabled = not teamerPopupCache[plr.Name].Enabled
+			-- Second click fully closes (destroy): a merely hidden popup would keep
+			-- its 0.15s stats loop AND the 2s friend-list loop running forever.
+			local oldTeamerPopup = teamerPopupCache[plr.Name]
+			teamerPopupCache[plr.Name] = nil
+			oldTeamerPopup:Destroy()
 			return
 		end
 		local popupGui = Instance.new("ScreenGui")
@@ -22135,7 +22248,10 @@ function createTeamerPlayerButton(plr)
 		popupCloseCorner.Parent = popupClose
 
 		popupClose.MouseButton1Click:Connect(function()
-			popupGui.Enabled = false
+			-- Full close (not just hide): otherwise the 0.15s stats loop and the 2s
+			-- friend-list loop keep running forever and stack up -> periodic freezes.
+			teamerPopupCache[plr.Name] = nil
+			popupGui:Destroy()
 		end)
 
 		-- Inspect Avatar button (below title bar)
@@ -22482,10 +22598,12 @@ function createTeamerPlayerButton(plr)
 			end
 		end)
 
+		local escConn
 		popupGui.Destroying:Connect(function()
 			teamerLoopAlive = false
 			friendRefreshAlive = false
 			disconnectTeamerConns()
+			if escConn then escConn:Disconnect() end
 		end)
 
 		addInfoLine("Gravity: " .. math.floor(workspace.Gravity))
@@ -22526,10 +22644,10 @@ function createTeamerPlayerButton(plr)
 			popupDragCon:Disconnect()
 		end)
 
-		local escConn
 		escConn = UserInputService.InputBegan:Connect(function(input)
 			if input.KeyCode == Enum.KeyCode.Escape then
-				popupGui.Enabled = false
+				teamerPopupCache[plr.Name] = nil
+				popupGui:Destroy()
 			end
 		end)
 
@@ -22708,11 +22826,6 @@ end)
 
 function refreshOnlineTeamers()
 	if not onlineTeamersList then return end
-	for _, child in ipairs(onlineTeamersList:GetChildren()) do
-		if not child:IsA("UIListLayout") then
-			child:Destroy()
-		end
-	end
 
 	local markedOnline = {}
 	for _, plr in ipairs(Players:GetPlayers()) do
@@ -22721,6 +22834,19 @@ function refreshOnlineTeamers()
 		end
 	end
 	table.sort(markedOnline, function(a, b) return a.Name:lower() < b.Name:lower() end)
+	-- Skip redundant rebuilds: same marked-online membership -> same UI.
+	-- (checked BEFORE destroying children so a skip keeps the current list intact)
+	local onlineTeamerSigParts = {}
+	for _, plr in ipairs(markedOnline) do onlineTeamerSigParts[#onlineTeamerSigParts + 1] = plr.Name end
+	local onlineTeamerSig = table.concat(onlineTeamerSigParts, ",")
+	if onlineTeamerSig == onlineTeamersLastSig then return end
+	onlineTeamersLastSig = onlineTeamerSig
+
+	for _, child in ipairs(onlineTeamersList:GetChildren()) do
+		if not child:IsA("UIListLayout") then
+			child:Destroy()
+		end
+	end
 
 	local count = #markedOnline
 	local entryHeight = 60
@@ -22767,8 +22893,8 @@ function refreshOnlineTeamers()
 		avatarCorner.Parent = avatar
 
 		coroutine.wrap(function()
-			local thumb = Players:GetUserThumbnailAsync(plr.UserId, Enum.ThumbnailType.HeadShot, Enum.ThumbnailSize.Size100x100)
-			avatar.Image = thumb
+			local thumb = getCachedThumb(plr.UserId)
+			if avatar.Parent then avatar.Image = thumb end
 		end)()
 
 		local nameLabel = Instance.new("TextLabel")
@@ -23014,6 +23140,15 @@ espLabelTeamersButton.MouseButton1Click:Connect(function()
 end)
 
 -- Teamer list functions
+teamerListRefreshPending = false
+function requestTeamerListRefresh()
+	if teamerListRefreshPending then return end
+	teamerListRefreshPending = true
+	task.delay(0.5, function()
+		teamerListRefreshPending = false
+		refreshTeamerList()
+	end)
+end
 function refreshTeamerList()
 	if not teamerScrollFrame then return end
 	if refreshOnlineTeamers then refreshOnlineTeamers() end
@@ -23382,10 +23517,10 @@ refreshTeamerList()
 
 -- PlayerAdded/Removing for teamer marking list
 Players.PlayerAdded:Connect(function()
-	refreshTeamerList()
+	requestTeamerListRefresh()
 end)
 Players.PlayerRemoving:Connect(function()
-	refreshTeamerList()
+	requestTeamerListRefresh()
 end)
 
 -- ============================================
@@ -26637,7 +26772,7 @@ function buildConfigData()
 	config.toggles.throwingKnifeAuraEnabled = throwingKnifeAuraEnabled; config.values.throwingKnifeAuraRadius = throwingKnifeAuraRadius
 	config.values.autoInvisDeactivateDist = autoInvisDeactivateDist; config.values.autoTpDist = autoTpDist
 	config.values.autoTpTarget = autoTpTarget; config.values.MAGNET_DISTANCE = MAGNET_DISTANCE
-	config.values.DesyncOffsetRange = DesyncOffsetRange; config.values.DesyncSpinOffset = DesyncSpinOffset; config.values.antiAimSpeed = antiAimSpeed
+	config.values.DesyncOffsetRange = DesyncOffsetRange; config.values.DesyncSpinOffset = DesyncSpinOffset; config.values.DesyncMode = DesyncMode; config.values.antiAimSpeed = antiAimSpeed
 	config.values.loopSpeedValue = loopSpeedValue; config.values.customJumpPowerValue = customJumpPowerValue; config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
 	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed; config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
 	config.values.multiFlingCollapsed = multiFlingCollapsed or false; config.values.airStrafeMultiplier = airStrafeMultiplier
@@ -28516,6 +28651,7 @@ function restoreFullConfig()
 		if c.values.coinAuraRadius then coinAuraRadius = math.clamp(c.values.coinAuraRadius, 1, 20); if ui.coinAuraRadiusInput then ui.coinAuraRadiusInput.Text = tostring(coinAuraRadius) end end
 		if c.values.DesyncOffsetRange then DesyncOffsetRange = c.values.DesyncOffsetRange; if desyncOffsetInput then desyncOffsetInput.Text = tostring(DesyncOffsetRange) end end
 		if c.values.DesyncSpinOffset then DesyncSpinOffset = c.values.DesyncSpinOffset; if desyncSpinInput then desyncSpinInput.Text = tostring(DesyncSpinOffset) end end
+		if c.values.DesyncMode == "No Spoof" or c.values.DesyncMode == "Spoof Pos" then DesyncMode = c.values.DesyncMode; UpdateDesyncModeUI() end
 		if c.values.antiAimSpeed then antiAimSpeed = c.values.antiAimSpeed; if antiAimSpeedInput then antiAimSpeedInput.Text = tostring(antiAimSpeed) end end
 		if c.values.antiAimSpeedGlitchValue then antiAimSpeedGlitchValue = c.values.antiAimSpeedGlitchValue; if antiAimSpeedGlitchSpdInput then antiAimSpeedGlitchSpdInput.Text = tostring(antiAimSpeedGlitchValue) end end
 		if c.values.loopSpeedValue then loopSpeedValue = c.values.loopSpeedValue; if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end end
