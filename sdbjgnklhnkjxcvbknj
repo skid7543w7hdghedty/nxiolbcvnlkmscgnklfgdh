@@ -279,6 +279,10 @@ function saveConfig()
 	config.toggles.autoResetEveryoneEnabled = autoResetEveryoneEnabled
 	config.toggles.autoResetSheriffEnabled = autoResetSheriffEnabled
 	config.toggles.autoResetMurdererEnabled = autoResetMurdererEnabled
+	config.toggles.newRstAutoPlayerEnabled = newRstAutoPlayerEnabled
+	config.toggles.newRstAutoEveryoneEnabled = newRstAutoEveryoneEnabled
+	config.toggles.newRstAutoSheriffEnabled = newRstAutoSheriffEnabled
+	config.toggles.newRstAutoMurdererEnabled = newRstAutoMurdererEnabled
 	config.toggles.aimWallbangEnabled = aimWallbangEnabled
 	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled
 	config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
@@ -305,6 +309,7 @@ config.toggles.gameNotifEnabled = gameNotifEnabled
 	config.toggles.tryhardAnimEnabled = tryhardAnimEnabled
 	config.toggles.tryhardMainEnabled = tryhardMainEnabled
 	config.toggles.r6AnimEnabled = r6AnimEnabled
+	config.toggles.activeCustomAnimName = activeCustomAnimName
 	config.toggles.korbloxEnabled = korbloxEnabled
 	config.toggles.headlessEnabled = headlessEnabled
 	config.toggles.headlessAllHatsEnabled = headlessAllHatsEnabled
@@ -400,6 +405,21 @@ config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
 		config.pickerMultiSelect = config.pickerMultiSelect or {}
 		config.pickerMultiSelect.WatchSheriff = watchSheriffPicker.selectedNames
 	end
+	if newRstPicker then
+		config.pickerCollapsed.NewReset = newRstPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.NewReset = newRstPicker.selectedNames
+	end
+	if newRstWatchMurdererPicker then
+		config.pickerCollapsed.NewWatchMurderer = newRstWatchMurdererPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.NewWatchMurderer = newRstWatchMurdererPicker.selectedNames
+	end
+	if newRstWatchSheriffPicker then
+		config.pickerCollapsed.NewWatchSheriff = newRstWatchSheriffPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.NewWatchSheriff = newRstWatchSheriffPicker.selectedNames
+	end
 	config.values.toggleBgTransparency = toggleBgTransparency
 	config.values.mainBgTransparency = mainBgTransparency
 	config.values.popupBgTransparency = popupBgTransparency
@@ -457,6 +477,7 @@ config.values.voteStartSoundPath = voteStartSoundPath
 	config.values.autofarmAvoidMurdererDist = autofarmAvoidMurdererDist
 	config.values.autofarmResetDeathCount = autofarmResetDeathCount
 	config.values.autofarmResetDeathDelay = autofarmResetDeathDelay
+	config.values.autofarmResetMethodIndex = autofarmResetMethodIndex
 	config.values.autofarmPreTpDelay = autofarmPreTpDelay
 config.values.autofarmAutoAntiShootDelay = autofarmAutoAntiShootDelay
 	config.values.autofarmCoinDelay = autofarmCoinDelay
@@ -467,6 +488,11 @@ config.values.autofarmStuckTimeout = autofarmStuckTimeout
 	config.values.resetEveryoneInterval = resetEveryoneInterval
 	config.values.autoResetPlayerInterval = autoResetPlayerInterval
 	config.values.autoResetEveryoneInterval = autoResetEveryoneInterval
+	config.values.newRstEveryoneInterval = newRstEveryoneInterval
+	config.values.newRstAutoPlayerInterval = newRstAutoPlayerInterval
+	config.values.newRstAutoEveryoneInterval = newRstAutoEveryoneInterval
+	config.values.newRstDuration = newRstDuration
+	config.values.newRstStartStuds = newRstStartStuds
 	-- Session stats survive rejoins/server hops (farming time keeps counting)
 	config.values.autofarmSessionCoins = autofarmSessionCoins
 	config.values.autofarmSessionElapsed = autofarmSessionStart and (os.clock() - autofarmSessionStart) or 0
@@ -623,10 +649,10 @@ config.values.autofarmStuckTimeout = autofarmStuckTimeout
 		end
 	end
 	local encoded = game:GetService("HttpService"):JSONEncode(config)
-	task.defer(function()
-		pcall(function()
-			writefile(CONFIG_PATH, encoded)
-		end)
+	-- Synchronous write: settings must be on disk the moment this returns,
+	-- otherwise a quick rejoin/teleport loses the toggle that was just set.
+	pcall(function()
+		writefile(CONFIG_PATH, encoded)
 	end)
 end
 
@@ -3356,13 +3382,22 @@ if loadedConfig and type(loadedConfig.emotionKeyBinds) == "table" then
 end
 
 -- Register saved emotion keybinds into the global keyBinds table.
+-- NOTE: emote-ness is resolved lazily at press time (emoteOrder is built much
+-- later in the file, so snapshotting it here would mark every restored bind
+-- as a non-emote and R15 emotes would silently do nothing after a rejoin).
+function emotionIsEmote(animId)
+	if emoteOrder then
+		for _, e in ipairs(emoteOrder) do
+			if e.id == animId then return true end
+		end
+	end
+	return false
+end
 keyBinds = keyBinds or {}
 for animId, kc in pairs(emotionKeyBinds) do
-	local isEmote = false
-	if emoteOrder then for _, e in ipairs(emoteOrder) do if e.id == animId then isEmote = true; break end end end
 	keyBinds[kc] = {
 		callback = function()
-			if isEmote then
+			if emotionIsEmote(animId) then
 				local char2 = player.Character
 				local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
 				if hum2 and hum2.RigType == Enum.HumanoidRigType.R15 then
@@ -3382,7 +3417,7 @@ for animId, kc in pairs(emotionKeyBinds) do
 				end
 			end
 		end,
-		description = (isEmote and "Ragebait: " or "Emotion: ") .. tostring(animId),
+		description = "Emotion: " .. tostring(animId),
 	}
 end
 
@@ -3845,7 +3880,9 @@ end
 
 function stopCurrentAnimation()
 	if animationTrack then
-		animationTrack:Stop()
+		-- pcall: the track may belong to a dead character (respawn) and :Stop()
+		-- would throw, leaving playingAnimationId stuck forever. Always clear it.
+		pcall(function() animationTrack:Stop() end)
 		animationTrack = nil
 	end
 	if playingAnimationId ~= 0 and animationUiById[playingAnimationId] then
@@ -4047,37 +4084,65 @@ function createDetachedEmote(animationId, animationName, savedPos, skipSave, sav
 	end))
 	table.insert(d.conns, btn.InputEnded:Connect(function(ipt)
 		if ipt.UserInputType == Enum.UserInputType.MouseButton1 or ipt.UserInputType == Enum.UserInputType.Touch then
+			-- Touch screens often emit BOTH Touch and MouseButton1 InputEnded for a
+			-- single tap; without this guard one tap would toggle twice (play then
+			-- instantly replay), so the emote looks unstoppable.
+			local nowTap = os.clock()
+			if d.lastTapT and (nowTap - d.lastTapT) < 0.35 and ipt.UserInputType ~= d.lastTapType then
+				dragging = false; moved = false; dragIpt = nil
+				return
+			end
+			d.lastTapT = nowTap
+			d.lastTapType = ipt.UserInputType
 			local wasDragged = dragging and moved
 			dragging = false; moved = false; dragIpt = nil
 			if wasDragged then
 				pcall(saveConfig)
 			else
-				-- FIX: one-time use, Dance.lua principle, no toggle - just play
-				local char2 = player.Character
-				local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
-				if hum2 and hum2.RigType == Enum.HumanoidRigType.R15 then
-					local desc = hum2:FindFirstChildOfClass("HumanoidDescription")
-					local isEmote = false
-					if emoteOrder then for _, e in ipairs(emoteOrder) do if e.id == animationId then isEmote = true; break end end end
-					local track
-					local ok = false
-					if isEmote then
-						ok = pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
-						if not ok and desc then
-							local nm = (emoteUiById[animationId] and emoteUiById[animationId].Name) or ("Emote "..tostring(animationId))
-							pcall(function() desc:AddEmote(nm, animationId) end)
-							pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
+				-- Toggle: second press stops the emote/animation instead of replaying it
+				if playingAnimationId == animationId then
+					stopCurrentAnimation()
+				else
+					local stoppedEmote = false
+					if d.emoteTrack then
+						local stillPlaying = false
+						pcall(function() stillPlaying = d.emoteTrack.IsPlaying end)
+						if stillPlaying then
+							pcall(function() d.emoteTrack:Stop() end)
+							stoppedEmote = true
+						end
+						d.emoteTrack = nil
+					end
+					if not stoppedEmote then
+						local char2 = player.Character
+						local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+						if hum2 and hum2.RigType == Enum.HumanoidRigType.R15 then
+							local desc = hum2:FindFirstChildOfClass("HumanoidDescription")
+							local isEmote = false
+							if emoteOrder then for _, e in ipairs(emoteOrder) do if e.id == animationId then isEmote = true; break end end end
+							local track
+							local ok = false
+							if isEmote then
+								ok = pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
+								if not ok and desc then
+									local nm = (emoteUiById[animationId] and emoteUiById[animationId].Name) or ("Emote "..tostring(animationId))
+									pcall(function() desc:AddEmote(nm, animationId) end)
+									pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
+								end
+							end
+							if not track then
+								local spd = (emoteUiById[animationId] and emoteUiById[animationId].Box and emoteUiById[animationId].Box.Text) or (animationUiById[animationId] and animationUiById[animationId].Box and animationUiById[animationId].Box.Text) or "1"
+								pcall(function() playAnimation(animationId, spd) end)
+							elseif track then
+								d.emoteTrack = track
+								local s = tonumber((emoteUiById[animationId] and emoteUiById[animationId].Box and emoteUiById[animationId].Box.Text) or "1") or 1
+								pcall(function() track:AdjustSpeed(s) end)
+							end
+						elseif hum2 then
+							notify("Emotions", "R15 required", 2)
 						end
 					end
-					if not track then
-						local spd = (emoteUiById[animationId] and emoteUiById[animationId].Box and emoteUiById[animationId].Box.Text) or (animationUiById[animationId] and animationUiById[animationId].Box and animationUiById[animationId].Box.Text) or "1"
-						pcall(function() playAnimation(animationId, spd) end)
-					elseif track then
-						local s = tonumber((emoteUiById[animationId] and emoteUiById[animationId].Box and emoteUiById[animationId].Box.Text) or "1") or 1
-						pcall(function() track:AdjustSpeed(s) end)
-					end
-				elseif hum2 then
-					notify("Emotions", "R15 required", 2)
+					updateDetachedEmoteVisual(animationId)
 				end
 			end
 		end
@@ -5355,6 +5420,7 @@ createCategoryScrollFrame("Player")
 createCategoryScrollFrame("Combat")
 createCategoryScrollFrame("Sheriff")
 createCategoryScrollFrame("Murderer")
+createCategoryScrollFrame("OG Reset")
 createCategoryScrollFrame("Reset")
 createCategoryScrollFrame("Trolling")
 createCategoryScrollFrame("Teleports")
@@ -5402,7 +5468,7 @@ function createCategoryButton(shortName, layoutOrder)
 		["Cmbt"] = "Combat",
 		["Sher"] = "Sheriff",
 		["Murd"] = "Murderer",
-		["Rst"] = "Reset",
+		["Rst"] = "OG Reset",
 		["Trl"] = "Trolling",
 		["Tele"] = "Teleports",
 		["Util"] = "Utilities",
@@ -5500,6 +5566,7 @@ createCategoryButton("Cmbt", 3)
 createCategoryButton("Sher", 3.2)
 createCategoryButton("Murd", 3.4)
 createCategoryButton("Rst", 3.6)
+createCategoryButton("Reset", 3.65)
 createCategoryButton("Trl", 3.8)
 createCategoryButton("Tele", 4)
 createCategoryButton("Util", 5)
@@ -6044,6 +6111,14 @@ function setToggleState(btn, state, onText, offText)
 		btn.TextColor3 = btnTextColor
 	end
 	saveConfig()
+end
+
+-- Dropdown arrow helper: ▼ when closed, ▲ when open. Keeps the base text intact.
+function refreshDropdownArrow(selectBtn, dropFrame)
+	if not selectBtn or not dropFrame then return end
+	local t = tostring(selectBtn.Text or "")
+	t = t:gsub(" ▼$", ""):gsub(" ▲$", "")
+	selectBtn.Text = t .. (dropFrame.Visible and " ▲" or " ▼")
 end
 
 -- РЎРёСЃС‚РµРјР° Р±РёРЅРґРёРЅРіР° РєР»Р°РІРёС€
@@ -7010,7 +7085,7 @@ function toggleAutoGrabGun()
 end
 
 -- ============================================================
--- Reset Player (NaN Fling)
+-- OG Reset Player (NaN Fling)
 -- ============================================================
 resetWhitelist = {
 	["Erereer454"] = true,
@@ -7709,7 +7784,7 @@ resetPlayerBtn.Name = "ResetPlayerButton"
 resetPlayerBtn.Size = UDim2.new(1, -140, 1, 0)
 resetPlayerBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 resetPlayerBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-resetPlayerBtn.Text = "Reset Player"
+resetPlayerBtn.Text = "OG Reset Player"
 resetPlayerBtn.Font = Enum.Font.SourceSansBold
 resetPlayerBtn.TextSize = 14
 resetPlayerBtn.Parent = resetPlayerRow
@@ -7755,12 +7830,12 @@ resetPlayerBtn.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Reset player picker (collapsible multi-select) + Reset Selected button
+-- OG Reset player picker (collapsible multi-select) + OG Reset Selected button
 resetPicker = createMultiPlayerPicker({
 	parent = categoryFrames["Utilities"],
 	order = 115.15,
 	prefix = "Reset",
-	statusText = "Select players to reset",
+	statusText = "Select players to OG Reset",
 	onSelect = function(names)
 		if names and #names > 0 then
 			nanFlingTargetName = names[#names]
@@ -7772,10 +7847,10 @@ resetPicker = createMultiPlayerPicker({
 	end,
 })
 
-resetSelectedBtn = createButton("ResetSelectedButton", "Reset Selected", 115.16)
+resetSelectedBtn = createButton("ResetSelectedButton", "OG Reset Selected", 115.16)
 resetSelectedBtn.MouseButton1Click:Connect(function()
 	local sel = resetPicker.selectedNames
-	if not sel or #sel == 0 then notify("Reset", "Select players first", 2) return end
+	if not sel or #sel == 0 then notify("OG Reset", "Select players first", 2) return end
 	-- Copy the list so mid-run selection changes can't corrupt the loop
 	local names = {}
 	for _, n in ipairs(sel) do table.insert(names, n) end
@@ -7909,21 +7984,21 @@ function executeNanFlingNames(names)
 end
 
 -- Intervals between reset actions, configurable in the Reset tab
-resetEveryoneInterval = 1.6     -- seconds between each player reset inside Reset Everyone (0.5-10)
+resetEveryoneInterval = 1.6     -- seconds between each player reset inside OG Reset Everyone (0.5-10)
 autoResetPlayerInterval = 2     -- seconds between Auto Reset Player cycles (0.5-30)
 autoResetEveryoneInterval = 0.5 -- seconds between Auto Reset Everyone full loops (0.2-10)
 
-resetEveryoneBtn = createButton("ResetEveryoneButton", "Reset Everyone", 115.2)
+resetEveryoneBtn = createButton("ResetEveryoneButton", "OG Reset Everyone", 115.2)
 resetEveryoneBtn.MouseButton1Click:Connect(function()
 	executeNanFlingEveryone()
 end)
 
-resetSheriffBtn = createButton("ResetSheriffButton", "Reset Sheriff/Hero", 115.3)
+resetSheriffBtn = createButton("ResetSheriffButton", "OG Reset Sheriff/Hero", 115.3)
 resetSheriffBtn.MouseButton1Click:Connect(function()
 	executeNanFlingByRole("Sheriff")
 end)
 
-resetMurdererBtn = createButton("ResetMurdererButton", "Reset Murderer", 115.4)
+resetMurdererBtn = createButton("ResetMurdererButton", "OG Reset Murderer", 115.4)
 resetMurdererBtn.MouseButton1Click:Connect(function()
 	executeNanFlingByRole("Murderer")
 end)
@@ -7939,8 +8014,8 @@ function toggleAutoResetPlayer()
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if not hrp or not hum then
 				autoResetPlayerEnabled = false
-				setToggleState(autoResetPlayerBtn, false, "Auto Reset Player: ON", "Auto Reset Player: OFF")
-				setExtractedBtnState("Auto Reset Player", false)
+				setToggleState(autoResetPlayerBtn, false, "Auto OG Reset Player: ON", "Auto OG Reset Player: OFF")
+				setExtractedBtnState("Auto OG Reset Player", false)
 				return
 			end
 			local savedCFrame = hrp.CFrame
@@ -8006,11 +8081,11 @@ function toggleAutoResetPlayer()
 	end
 end
 
-autoResetPlayerBtn = createButton("AutoResetPlayerButton", "Auto Reset Player: OFF", 115.5)
+autoResetPlayerBtn = createButton("AutoResetPlayerButton", "Auto OG Reset Player: OFF", 115.5)
 autoResetPlayerBtn.MouseButton1Click:Connect(function()
 	toggleAutoResetPlayer()
-	setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF")
-	setExtractedBtnState("Auto Reset Player", autoResetPlayerEnabled)
+	setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto OG Reset Player: ON", "Auto OG Reset Player: OFF")
+	setExtractedBtnState("Auto OG Reset Player", autoResetPlayerEnabled)
 end)
 
 autoResetEveryoneEnabled = false
@@ -8024,8 +8099,8 @@ function toggleAutoResetEveryone()
 			local hum = char and char:FindFirstChildOfClass("Humanoid")
 			if not hrp or not hum then
 				autoResetEveryoneEnabled = false
-				setToggleState(autoResetEveryoneBtn, false, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF")
-				setExtractedBtnState("Auto Reset Everyone", false)
+				setToggleState(autoResetEveryoneBtn, false, "Auto OG Reset Everyone: ON", "Auto OG Reset Everyone: OFF")
+				setExtractedBtnState("Auto OG Reset Everyone", false)
 				return
 			end
 			local savedCFrame = hrp.CFrame
@@ -8090,28 +8165,28 @@ function toggleAutoResetEveryone()
 	end
 end
 
-autoResetEveryoneBtn = createButton("AutoResetEveryoneButton", "Auto Reset Everyone: OFF", 115.6)
+autoResetEveryoneBtn = createButton("AutoResetEveryoneButton", "Auto OG Reset Everyone: OFF", 115.6)
 autoResetEveryoneBtn.MouseButton1Click:Connect(function()
 	toggleAutoResetEveryone()
-	setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF")
-	setExtractedBtnState("Auto Reset Everyone", autoResetEveryoneEnabled)
+	setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto OG Reset Everyone: ON", "Auto OG Reset Everyone: OFF")
+	setExtractedBtnState("Auto OG Reset Everyone", autoResetEveryoneEnabled)
 end)
 
--- Configurable intervals between reset actions (Reset tab).
--- Created directly in categoryFrames["Reset"] (created earlier than this code).
--- Reset Everyone interval: per-player pause inside a single Reset Everyone run
+-- Configurable intervals between reset actions (OG Reset tab).
+-- Created directly in categoryFrames["OG Reset"] (created earlier than this code).
+-- OG Reset Everyone interval: per-player pause inside a single OG Reset Everyone run
 resetEveryoneIntervalRow = Instance.new("Frame")
 resetEveryoneIntervalRow.Name = "ResetEveryoneIntervalRow"
 resetEveryoneIntervalRow.Size = UDim2.new(1, 0, 0, 42)
 resetEveryoneIntervalRow.BackgroundTransparency = 1
 resetEveryoneIntervalRow.LayoutOrder = 317
-resetEveryoneIntervalRow.Parent = categoryFrames["Reset"]
+resetEveryoneIntervalRow.Parent = categoryFrames["OG Reset"]
 
 resetEveryoneIntervalLabel = Instance.new("TextLabel")
 resetEveryoneIntervalLabel.Size = UDim2.new(1, -80, 1, 0)
 resetEveryoneIntervalLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 resetEveryoneIntervalLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-resetEveryoneIntervalLabel.Text = "Reset Everyone Interval (Seconds)"
+resetEveryoneIntervalLabel.Text = "OG Reset Everyone Interval (Seconds)"
 resetEveryoneIntervalLabel.Font = Enum.Font.SourceSansBold
 resetEveryoneIntervalLabel.TextSize = 14
 resetEveryoneIntervalLabel.Parent = resetEveryoneIntervalRow
@@ -8147,13 +8222,13 @@ autoResetPlayerIntervalRow.Name = "AutoResetPlayerIntervalRow"
 autoResetPlayerIntervalRow.Size = UDim2.new(1, 0, 0, 42)
 autoResetPlayerIntervalRow.BackgroundTransparency = 1
 autoResetPlayerIntervalRow.LayoutOrder = 321
-autoResetPlayerIntervalRow.Parent = categoryFrames["Reset"]
+autoResetPlayerIntervalRow.Parent = categoryFrames["OG Reset"]
 
 autoResetPlayerIntervalLabel = Instance.new("TextLabel")
 autoResetPlayerIntervalLabel.Size = UDim2.new(1, -80, 1, 0)
 autoResetPlayerIntervalLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 autoResetPlayerIntervalLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-autoResetPlayerIntervalLabel.Text = "Auto Reset Player Interval (Seconds)"
+autoResetPlayerIntervalLabel.Text = "Auto OG Reset Player Interval (Seconds)"
 autoResetPlayerIntervalLabel.Font = Enum.Font.SourceSansBold
 autoResetPlayerIntervalLabel.TextSize = 14
 autoResetPlayerIntervalLabel.Parent = autoResetPlayerIntervalRow
@@ -8189,13 +8264,13 @@ autoResetEveryoneIntervalRow.Name = "AutoResetEveryoneIntervalRow"
 autoResetEveryoneIntervalRow.Size = UDim2.new(1, 0, 0, 42)
 autoResetEveryoneIntervalRow.BackgroundTransparency = 1
 autoResetEveryoneIntervalRow.LayoutOrder = 323
-autoResetEveryoneIntervalRow.Parent = categoryFrames["Reset"]
+autoResetEveryoneIntervalRow.Parent = categoryFrames["OG Reset"]
 
 autoResetEveryoneIntervalLabel = Instance.new("TextLabel")
 autoResetEveryoneIntervalLabel.Size = UDim2.new(1, -80, 1, 0)
 autoResetEveryoneIntervalLabel.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 autoResetEveryoneIntervalLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-autoResetEveryoneIntervalLabel.Text = "Auto Reset Everyone Interval (Seconds)"
+autoResetEveryoneIntervalLabel.Text = "Auto OG Reset Everyone Interval (Seconds)"
 autoResetEveryoneIntervalLabel.Font = Enum.Font.SourceSansBold
 autoResetEveryoneIntervalLabel.TextSize = 14
 autoResetEveryoneIntervalLabel.Parent = autoResetEveryoneIntervalRow
@@ -8240,11 +8315,11 @@ function toggleAutoResetSheriff()
 	end
 end
 
-autoResetSheriffBtn = createButton("AutoResetSheriffButton", "Auto Reset Sheriff/Hero: OFF", 115.7)
+autoResetSheriffBtn = createButton("AutoResetSheriffButton", "Auto OG Reset Sheriff/Hero: OFF", 115.7)
 autoResetSheriffBtn.MouseButton1Click:Connect(function()
 	toggleAutoResetSheriff()
-	setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF")
-	setExtractedBtnState("Auto Reset Sheriff/Hero", autoResetSheriffEnabled)
+	setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto OG Reset Sheriff/Hero: ON", "Auto OG Reset Sheriff/Hero: OFF")
+	setExtractedBtnState("Auto OG Reset Sheriff/Hero", autoResetSheriffEnabled)
 end)
 
 autoResetMurdererEnabled = false
@@ -8262,30 +8337,30 @@ function toggleAutoResetMurderer()
 	end
 end
 
-autoResetMurdererBtn = createButton("AutoResetMurdererButton", "Auto Reset Murderer: OFF", 115.8)
+autoResetMurdererBtn = createButton("AutoResetMurdererButton", "Auto OG Reset Murderer: OFF", 115.8)
 autoResetMurdererBtn.MouseButton1Click:Connect(function()
 	toggleAutoResetMurderer()
-	setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF")
-	setExtractedBtnState("Auto Reset Murderer", autoResetMurdererEnabled)
+	setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto OG Reset Murderer: ON", "Auto OG Reset Murderer: OFF")
+	setExtractedBtnState("Auto OG Reset Murderer", autoResetMurdererEnabled)
 end)
 
 -- ============================================
 -- Role-based Auto-Reset — watch a player, auto-reset when they get a role
 -- ============================================
--- Picker 1: when selected player becomes Murderer → Reset Sheriff/Hero
+-- Picker 1: when selected player becomes Murderer → OG Reset Sheriff/Hero
 watchMurdererPicker = createMultiPlayerPicker({
 	parent = categoryFrames["Utilities"],
 	order = 115.85,
 	prefix = "WatchMurderer",
-	statusText = "Watch players → Murderer ⇒ Reset Sheriff",
+	statusText = "Watch players → Murderer ⇒ OG Reset Sheriff",
 })
 
--- Picker 2: when selected player becomes Sheriff → Reset Murderer
+-- Picker 2: when selected player becomes Sheriff → OG Reset Murderer
 watchSheriffPicker = createMultiPlayerPicker({
 	parent = categoryFrames["Utilities"],
 	order = 115.95,
 	prefix = "WatchSheriff",
-	statusText = "Watch players → Sheriff ⇒ Reset Murderer",
+	statusText = "Watch players → Sheriff ⇒ OG Reset Murderer",
 })
 
 -- Tracking per watched player
@@ -9842,6 +9917,7 @@ end
 
 autoTpTargetBtn.MouseButton1Click:Connect(function()
 	autoTpTargetDropdownFrame.Visible = not autoTpTargetDropdownFrame.Visible
+	refreshDropdownArrow(autoTpTargetBtn, autoTpTargetDropdownFrame)
 end)
 
 autoTpDistBox.FocusLost:Connect(function()
@@ -17814,6 +17890,7 @@ for i, modeName in ipairs(autofarmModeNames) do
 end
 autofarmModeSelect.MouseButton1Click:Connect(function()
 	autofarmModeDropdownFrame.Visible = not autofarmModeDropdownFrame.Visible
+	refreshDropdownArrow(autofarmModeSelect, autofarmModeDropdownFrame)
 end)
 
 -- Custom target coin count: toggle button + numeric input (right after 50 coins)
@@ -18108,6 +18185,7 @@ for i, modeName in ipairs(autofarmStuckTpModes) do
 end
 autofarmStuckSelect.MouseButton1Click:Connect(function()
 	autofarmStuckDropdownFrame.Visible = not autofarmStuckDropdownFrame.Visible
+	refreshDropdownArrow(autofarmStuckSelect, autofarmStuckDropdownFrame)
 end)
 
 -- Configurable timeout before the anti-stop teleport (seconds, default 5)
@@ -18171,6 +18249,75 @@ autofarmResetMurdererBtn = createButton("AutofarmResetMurdererButton", "Auto Res
 autofarmResetMurdererBtn.MouseButton1Click:Connect(function()
 	autofarmResetMurdererEnabled = not autofarmResetMurdererEnabled
 	setToggleState(autofarmResetMurdererBtn, autofarmResetMurdererEnabled, "Auto Reset (Murderer): ON", "Auto Reset (Murderer): OFF")
+end)
+
+-- ===== Reset Method: which fling technology autofarm uses (Reset Murderer On Death) =====
+-- "OG Method" = old NaN fling (needs Touch Fling), "New Method" = sweep from the new Reset tab.
+autofarmResetMethodModes = {"OG Method", "New Method"}
+autofarmResetMethodIndex = 1
+
+autofarmResetMethodRow = Instance.new("Frame")
+autofarmResetMethodRow.Name = "AutofarmResetMethodRow"
+autofarmResetMethodRow.Size = UDim2.new(1, 0, 0, 42)
+autofarmResetMethodRow.BackgroundTransparency = 1
+autofarmResetMethodRow.LayoutOrder = 314.5
+autofarmResetMethodRow.Parent = categoryFrames["Autofarm"]
+
+autofarmResetMethodSelect = Instance.new("TextButton")
+autofarmResetMethodSelect.Name = "AutofarmResetMethodSelect"
+autofarmResetMethodSelect.Size = UDim2.new(1, 0, 1, 0)
+autofarmResetMethodSelect.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmResetMethodSelect.TextColor3 = Color3.fromRGB(255, 255, 255)
+autofarmResetMethodSelect.Text = "Reset Method: OG Method ▼"
+autofarmResetMethodSelect.Font = Enum.Font.SourceSansBold
+autofarmResetMethodSelect.TextSize = 14
+autofarmResetMethodSelect.AutoButtonColor = false
+autofarmResetMethodSelect.Parent = autofarmResetMethodRow
+Instance.new("UICorner", autofarmResetMethodSelect).CornerRadius = UDim.new(0, 6)
+
+autofarmResetMethodDropdownFrame = Instance.new("Frame")
+autofarmResetMethodDropdownFrame.Size = UDim2.new(1, 0, 0, math.min(#autofarmResetMethodModes * 30, 180))
+autofarmResetMethodDropdownFrame.Position = UDim2.new(0, 0, 0, 42)
+autofarmResetMethodDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmResetMethodDropdownFrame.BorderSizePixel = 0
+autofarmResetMethodDropdownFrame.Visible = false
+autofarmResetMethodDropdownFrame.ZIndex = 10
+autofarmResetMethodDropdownFrame.Parent = autofarmResetMethodRow
+
+autofarmResetMethodDropdownList = Instance.new("ScrollingFrame")
+autofarmResetMethodDropdownList.Size = UDim2.new(1, 0, 1, 0)
+autofarmResetMethodDropdownList.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autofarmResetMethodDropdownList.BorderSizePixel = 0
+autofarmResetMethodDropdownList.ScrollBarThickness = 4
+autofarmResetMethodDropdownList.CanvasSize = UDim2.new(0, 0, 0, #autofarmResetMethodModes * 30)
+autofarmResetMethodDropdownList.ZIndex = 10
+autofarmResetMethodDropdownList.Parent = autofarmResetMethodDropdownFrame
+Instance.new("UICorner", autofarmResetMethodDropdownList).CornerRadius = UDim.new(0, 6)
+
+for i, modeName in ipairs(autofarmResetMethodModes) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 30)
+	btn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+	btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Text = modeName
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 14
+	btn.AutoButtonColor = false
+	btn.ZIndex = 10
+	btn.Parent = autofarmResetMethodDropdownList
+	btn.MouseButton1Click:Connect(function()
+		autofarmResetMethodIndex = i
+		autofarmResetMethodSelect.Text = "Reset Method: " .. modeName .. " ▼"
+		autofarmResetMethodDropdownFrame.Visible = false
+		saveConfig()
+	end)
+	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+end
+autofarmResetMethodSelect.MouseButton1Click:Connect(function()
+	autofarmResetMethodDropdownFrame.Visible = not autofarmResetMethodDropdownFrame.Visible
+	refreshDropdownArrow(autofarmResetMethodSelect, autofarmResetMethodDropdownFrame)
 end)
 
 -- Auto Kill Sheriff/Hero: when you're the Murderer, kill anyone who picks up the gun
@@ -18280,6 +18427,7 @@ for i, modeName in ipairs(autofarmAutoAntiShootModes) do
 end
 autofarmAutoAntiShootSelect.MouseButton1Click:Connect(function()
 	autofarmAutoAntiShootDropdownFrame.Visible = not autofarmAutoAntiShootDropdownFrame.Visible
+	refreshDropdownArrow(autofarmAutoAntiShootSelect, autofarmAutoAntiShootDropdownFrame)
 end)
 
 -- Auto Anti-Shoot delay (seconds after round start before Anti-Shoot turns on)
@@ -18403,6 +18551,7 @@ for i, modeName in ipairs(autofarmPreTpModes) do
 end
 autofarmPreTpSelect.MouseButton1Click:Connect(function()
 	autofarmPreTpDropdownFrame.Visible = not autofarmPreTpDropdownFrame.Visible
+	refreshDropdownArrow(autofarmPreTpSelect, autofarmPreTpDropdownFrame)
 end)
 
 -- ===== Post-farm TP: toggle button + location dropdown =====
@@ -18486,6 +18635,7 @@ for i, modeName in ipairs(autofarmTpModes) do
 end
 autofarmTpSelect.MouseButton1Click:Connect(function()
 	autofarmTpDropdownFrame.Visible = not autofarmTpDropdownFrame.Visible
+	refreshDropdownArrow(autofarmTpSelect, autofarmTpDropdownFrame)
 end)
 
 -- ===== Avoid Murderer: toggle + location dropdown + distance input =====
@@ -18567,6 +18717,7 @@ for i, modeName in ipairs(autofarmAvoidMurdererModes) do
 end
 autofarmAvoidMurdererSelect.MouseButton1Click:Connect(function()
 	autofarmAvoidMurdererDropdownFrame.Visible = not autofarmAvoidMurdererDropdownFrame.Visible
+	refreshDropdownArrow(autofarmAvoidMurdererSelect, autofarmAvoidMurdererDropdownFrame)
 end)
 
 -- Avoid Murderer distance row: label + input box
@@ -18785,7 +18936,10 @@ task.spawn(function()
 						if c and h and h.Health > 0 and c:FindFirstChild("HumanoidRootPart") then break end
 						task.wait(0.2)
 					end
-					-- 2) Touch Fling ON — only spawn a fling thread if none is
+				-- 2) Method: OG needs Touch Fling ON (NaN fling), New sweep works standalone.
+				local useNewResetMethod = autofarmResetMethodModes and autofarmResetMethodModes[autofarmResetMethodIndex] == "New Method"
+				if not useNewResetMethod then
+					-- Touch Fling ON — only spawn a fling thread if none is
 					-- already running (a live suspended coroutine resumes itself
 					-- on every Heartbeat:Wait, so re-creating it would just stack
 					-- dead threads and leave the actual fling half-applied).
@@ -18796,19 +18950,27 @@ task.spawn(function()
 						flingThread = coroutine.create(fling)
 						coroutine.resume(flingThread)
 					end
-					-- 3) Reset Murderer N times with a gap between attempts;
-					-- Touch Fling stays ON for the whole sequence.
-					local attempts = math.clamp(autofarmResetDeathCount, 1, 5)
-					for i = 1, attempts do
+				end
+				-- 3) Reset Murderer N times with a gap between attempts;
+				-- (OG: Touch Fling stays ON for the whole sequence.)
+				local attempts = math.clamp(autofarmResetDeathCount, 1, 5)
+				for i = 1, attempts do
+					if useNewResetMethod then
+						pcall(executeNewResetByRole, "Murderer")
+						newRstWaitDone(3)
+					else
 						pcall(executeNanFlingByRole, "Murderer")
-						if i < attempts then task.wait(autofarmResetDeathGap) end
 					end
-					-- 4) Touch Fling OFF
+					if i < attempts then task.wait(autofarmResetDeathGap) end
+				end
+				-- 4) Touch Fling OFF (OG method only)
+				if not useNewResetMethod then
 					task.wait(1.5)
 					hiddenfling = false
 					setToggleState(touchFlingButton, false, "Touch Fling: ON", "Touch Fling: OFF")
 					setExtractedBtnState("Touch Fling", false)
-					autofarmResetDeathBusy = false
+				end
+				autofarmResetDeathBusy = false
 				end)
 			end
 			wasAlive = isAlive
@@ -19288,7 +19450,7 @@ function rebuildEmote()
 		order = order + 1
 		local animationButton = Instance.new("TextButton")
 		animationButton.Name = "EmoteButton_" .. tostring(animationId)
-		animationButton.Size = UDim2.new(1, -208, 1, 0)
+		animationButton.Size = UDim2.new(1, -126, 1, 0)
 		animationButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		animationButton.TextColor3 = Color3.fromRGB(255, 255, 255)
 		animationButton.Text = animationName
@@ -19296,23 +19458,11 @@ function rebuildEmote()
 		animationButton.TextSize = 15
 		animationButton.Parent = animationRow
 		Instance.new("UICorner", animationButton).CornerRadius = UDim.new(0, 6)
-		local speedBox = Instance.new("TextBox")
-		speedBox.Name = "EmoteSpeed_" .. tostring(animationId)
-		speedBox.Size = UDim2.new(0, 78, 1, 0)
-		speedBox.Position = UDim2.new(1, -78, 0, 0)
-		speedBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-		speedBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-		speedBox.PlaceholderText = "Speed"
-		speedBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
-		speedBox.Text = "1"
-		speedBox.Font = Enum.Font.SourceSansBold
-		speedBox.TextSize = 15
-		speedBox.ClearTextOnFocus = false
-		speedBox.Parent = animationRow
-		Instance.new("UICorner", speedBox).CornerRadius = UDim.new(0, 6)
+		-- NOTE: no speed box in the Emotions tab (removed): the play button below
+		-- stretches over the freed space and the rest is packed to the right.
 		local bindBtn = Instance.new("TextButton")
 		bindBtn.Size = UDim2.new(0, 22, 1, 0)
-		bindBtn.Position = UDim2.new(1, -102, 0, 0)
+		bindBtn.Position = UDim2.new(1, -24, 0, 0)
 		bindBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		bindBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		bindBtn.Text = emotionKeyBinds[animationId] and bindKeyToName(emotionKeyBinds[animationId]) or "⌨"
@@ -19322,7 +19472,7 @@ function rebuildEmote()
 		Instance.new("UICorner", bindBtn).CornerRadius = UDim.new(0, 4)
 		local starBtn = Instance.new("TextButton")
 		starBtn.Size = UDim2.new(0, 22, 1, 0)
-		starBtn.Position = UDim2.new(1, -126, 0, 0)
+		starBtn.Position = UDim2.new(1, -48, 0, 0)
 		starBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		starBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		starBtn.Text = isEmoteDetached(animationId) and "★" or "☆"
@@ -19333,7 +19483,7 @@ function rebuildEmote()
 		local moveGroup = Instance.new("Frame")
 		moveGroup.Name = "EmoteMove_" .. tostring(animationId)
 		moveGroup.Size = UDim2.new(0, 46, 1, 0)
-		moveGroup.Position = UDim2.new(1, -174, 0, 0)
+		moveGroup.Position = UDim2.new(1, -96, 0, 0)
 		moveGroup.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		moveGroup.Parent = animationRow
 		Instance.new("UICorner", moveGroup).CornerRadius = UDim.new(0, 4)
@@ -19357,7 +19507,7 @@ function rebuildEmote()
 		downBtn.Parent = moveGroup
 		local delBtn = Instance.new("TextButton")
 		delBtn.Size = UDim2.new(0, 22, 1, 0)
-		delBtn.Position = UDim2.new(1, -198, 0, 0)
+		delBtn.Position = UDim2.new(1, -120, 0, 0)
 		delBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		delBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		delBtn.Text = "×"
@@ -19368,9 +19518,9 @@ function rebuildEmote()
 		emoteUiById[animationId] = {
 			Row = animationRow,
 			Button = animationButton,
-			Box = speedBox,
 			Name = animationName,
 			PopOut = starBtn,
+			Bind = bindBtn,
 		}
 		starBtn.MouseButton1Click:Connect(function()
 			if isEmoteDetached(animationId) then
@@ -19427,20 +19577,8 @@ function rebuildEmote()
 				pcall(function() track = hum2:PlayEmoteAndGetAnimTrackById(animationId) end)
 			end
 			if track then
-				local s = tonumber(speedBox.Text) or 1
-				pcall(function() track:AdjustSpeed(s) end)
+				-- No speed control in the Emotions tab: emotes play at default speed.
 			end
-		end)
-		speedBox.FocusLost:Connect(function()
-			local numericSpeed = tonumber(speedBox.Text)
-			if not numericSpeed then
-				speedBox.Text = "1"
-				numericSpeed = 1
-			end
-			if playingAnimationId == animationId and animationTrack then
-				animationTrack:AdjustSpeed(numericSpeed)
-			end
-			pcall(saveConfig)
 		end)
 		local function applySearchRowVisible()
 			local searchText = string.lower(emoteSearchText)
@@ -19730,6 +19868,7 @@ function rebuildEmotions()
 			Box = speedBox,
 			Name = animationName,
 			PopOut = starBtn,
+			Bind = bindBtn,
 		}
 
 		starBtn.MouseButton1Click:Connect(function()
@@ -19922,7 +20061,12 @@ customSlotDefs = { {"idle1","Idle 1"}, {"idle2","Idle 2"}, {"pose","Pose"}, {"wa
 
 local function customSlotId(holder, child, id)
 	if not (holder and child and holder:FindFirstChild(child)) then return end
-	holder[child].AnimationId = "rbxassetid://" .. tostring(id)
+	-- Only overwrite slots the user actually filled: empty slots stay at their
+	-- default IDs instead of becoming broken "rbxassetid://nil" assets.
+	if id == nil then return end
+	local s = tostring(id):gsub("%s", "")
+	if s == "" then return end
+	holder[child].AnimationId = "rbxassetid://" .. s
 end
 
 function applyCustomAnim(char, slots)
@@ -19958,9 +20102,33 @@ function applyCustomAnim(char, slots)
 	pcall(function() animate.Disabled = false end)
 end
 
+-- Preloads custom animation assets in the background so the first apply
+-- (and every re-apply after respawn) doesn't stall on downloading them.
+function preloadCustomAnim(slots)
+	if not slots then return end
+	task.spawn(function()
+		pcall(function()
+			local cp = game:GetService("ContentProvider")
+			local assets = {}
+			for _, def in ipairs(customSlotDefs) do
+				local v = slots[def[1]]
+				if v ~= nil and tostring(v):gsub("%s", "") ~= "" then
+					local a = Instance.new("Animation")
+					a.AnimationId = "rbxassetid://" .. tostring(v):gsub("%s", "")
+					table.insert(assets, a)
+				end
+			end
+			if #assets > 0 then cp:PreloadAsync(assets) end
+			for _, a in ipairs(assets) do pcall(function() a:Destroy() end) end
+		end)
+	end)
+end
+
 function enableCustomAnim(name)
 	disableAnyOtherAnim()
 	activeCustomAnimName = name
+	local e0 = findCustomAnimByName(name)
+	if e0 then preloadCustomAnim(e0) end
 	customAnimConn = player.CharacterAdded:Connect(function(c)
 		if activeCustomAnimName == name then
 			local e = findCustomAnimByName(name)
@@ -19972,12 +20140,14 @@ function enableCustomAnim(name)
 		if e then applyCustomAnim(player.Character, e) end
 	end
 	customRefreshUi()
+	pcall(saveConfig)
 end
 
 function disableCustomAnim()
 	if customAnimConn then customAnimConn:Disconnect() customAnimConn = nil end
 	activeCustomAnimName = nil
 	customRefreshUi()
+	pcall(saveConfig)
 end
 
 -- Three tryhard preset toggle buttons
@@ -20089,6 +20259,8 @@ custAddBtn.MouseButton1Click:Connect(function()
 		customAnims[#customAnims + 1] = slots
 		notify("Animations", "Added '" .. name .. "'", 2)
 	end
+	-- Warm the asset cache right away so Play applies instantly.
+	preloadCustomAnim(slots)
 	pcall(saveConfig)
 	rebuildCustomAnims()
 	for _, def in ipairs(customSlotDefs) do customSlots[def[1]].Text = "" end
@@ -20112,7 +20284,7 @@ function rebuildCustomAnims()
 
 		local isOn = (activeCustomAnimName == e.name)
 		local btn = Instance.new("TextButton")
-		btn.Size = UDim2.new(1, -104, 1, 0)
+		btn.Size = UDim2.new(1, -152, 1, 0)
 		btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 		btn.TextColor3 = Color3.fromRGB(255, 255, 255)
 		btn.Text = e.name .. (isOn and "  [ON]" or "")
@@ -20131,6 +20303,17 @@ function rebuildCustomAnims()
 		playBtn.TextSize = 12
 		playBtn.Parent = row
 		Instance.new("UICorner", playBtn).CornerRadius = UDim.new(0, 4)
+
+		local stopBtn = Instance.new("TextButton")
+		stopBtn.Size = UDim2.new(0, 48, 1, 0)
+		stopBtn.Position = UDim2.new(1, -146, 0, 0)
+		stopBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		stopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		stopBtn.Text = "Stop"
+		stopBtn.Font = Enum.Font.SourceSansBold
+		stopBtn.TextSize = 12
+		stopBtn.Parent = row
+		Instance.new("UICorner", stopBtn).CornerRadius = UDim.new(0, 4)
 
 		local delBtn = Instance.new("TextButton")
 		delBtn.Size = UDim2.new(0, 22, 1, 0)
@@ -20166,7 +20349,17 @@ function rebuildCustomAnims()
 		end)
 
 		playBtn.MouseButton1Click:Connect(function()
-			if player.Character then applyCustomAnim(player.Character, e) end
+			-- Play enables the set: applies now and re-applies after every respawn,
+			-- exactly like the preset animations.
+			if activeCustomAnimName == e.name then
+				if player.Character then applyCustomAnim(player.Character, e) end
+			else
+				disableAnyOtherAnim(); enableCustomAnim(e.name)
+			end
+		end)
+
+		stopBtn.MouseButton1Click:Connect(function()
+			disableCustomAnim()
 		end)
 
 		delBtn.MouseButton1Click:Connect(function()
@@ -21518,21 +21711,21 @@ bindableFeatures = {
 		setToggleState(autoDodgeButton, autoDodgeEnabled, "Auto Dodge Knife: ON", "Auto Dodge Knife: OFF")
 		setExtractedBtnState("Auto Dodge Knife", autoDodgeEnabled)
 	end},
-	{name = "Reset Sheriff/Hero", defaultKey = nil, getState = function() return false end, callback = function()
+	{name = "OG Reset Sheriff/Hero", defaultKey = nil, getState = function() return false end, callback = function()
 		executeNanFlingByRole("Sheriff")
 	end},
-	{name = "Reset Murderer", defaultKey = nil, getState = function() return false end, callback = function()
+	{name = "OG Reset Murderer", defaultKey = nil, getState = function() return false end, callback = function()
 		executeNanFlingByRole("Murderer")
 	end},
-	{name = "Auto Reset Sheriff/Hero", defaultKey = nil, getState = function() return autoResetSheriffEnabled end, callback = function()
+	{name = "Auto OG Reset Sheriff/Hero", defaultKey = nil, getState = function() return autoResetSheriffEnabled end, callback = function()
 		toggleAutoResetSheriff()
-		setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF")
-		setExtractedBtnState("Auto Reset Sheriff/Hero", autoResetSheriffEnabled)
+		setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto OG Reset Sheriff/Hero: ON", "Auto OG Reset Sheriff/Hero: OFF")
+		setExtractedBtnState("Auto OG Reset Sheriff/Hero", autoResetSheriffEnabled)
 	end},
-	{name = "Auto Reset Murderer", defaultKey = nil, getState = function() return autoResetMurdererEnabled end, callback = function()
+	{name = "Auto OG Reset Murderer", defaultKey = nil, getState = function() return autoResetMurdererEnabled end, callback = function()
 		toggleAutoResetMurderer()
-		setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF")
-		setExtractedBtnState("Auto Reset Murderer", autoResetMurdererEnabled)
+		setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto OG Reset Murderer: ON", "Auto OG Reset Murderer: OFF")
+		setExtractedBtnState("Auto OG Reset Murderer", autoResetMurdererEnabled)
 	end},
 	{name = "Anti-Bang", defaultKey = nil, getState = function() return false end, callback = function()
 		executeAntiBang()
@@ -21589,15 +21782,15 @@ bindableFeatures = {
 		setToggleState(antiVoidButton, antiVoidEnabled, "Anti-Void: ON", "Anti-Void: OFF")
 		setExtractedBtnState("Anti-Void", antiVoidEnabled)
 	end},
-	{name = "Auto Reset Player", defaultKey = nil, getState = function() return autoResetPlayerEnabled end, callback = function()
+	{name = "Auto OG Reset Player", defaultKey = nil, getState = function() return autoResetPlayerEnabled end, callback = function()
 		toggleAutoResetPlayer()
-		setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF")
-		setExtractedBtnState("Auto Reset Player", autoResetPlayerEnabled)
+		setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto OG Reset Player: ON", "Auto OG Reset Player: OFF")
+		setExtractedBtnState("Auto OG Reset Player", autoResetPlayerEnabled)
 	end},
-	{name = "Auto Reset Everyone", defaultKey = nil, getState = function() return autoResetEveryoneEnabled end, callback = function()
+	{name = "Auto OG Reset Everyone", defaultKey = nil, getState = function() return autoResetEveryoneEnabled end, callback = function()
 		toggleAutoResetEveryone()
-		setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF")
-		setExtractedBtnState("Auto Reset Everyone", autoResetEveryoneEnabled)
+		setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto OG Reset Everyone: ON", "Auto OG Reset Everyone: OFF")
+		setExtractedBtnState("Auto OG Reset Everyone", autoResetEveryoneEnabled)
 	end},
 	{name = "Auto Kill Everyone", defaultKey = nil, getState = function() return autoKillEveryoneEnabled end, callback = function()
 		autoKillEveryoneEnabled = not autoKillEveryoneEnabled
@@ -21679,11 +21872,43 @@ bindableFeatures = {
 	{name = "TP to Murderer", defaultKey = nil, getState = function() return false end, callback = function()
 		tpToRole("Murderer")
 	end},
-	{name = "Reset Player", defaultKey = nil, getState = function() return false end, callback = function()
+	{name = "OG Reset Player", defaultKey = nil, getState = function() return false end, callback = function()
 		executeNanFling()
 	end},
-	{name = "Reset Everyone", defaultKey = nil, getState = function() return false end, callback = function()
+	{name = "OG Reset Everyone", defaultKey = nil, getState = function() return false end, callback = function()
 		executeNanFlingEveryone()
+	end},
+	{name = "Reset Player", defaultKey = nil, getState = function() return false end, callback = function()
+		executeNewResetByName(newRstTargetName)
+	end},
+	{name = "Reset Everyone", defaultKey = nil, getState = function() return false end, callback = function()
+		executeNewResetEveryone()
+	end},
+	{name = "Reset Sheriff/Hero", defaultKey = nil, getState = function() return false end, callback = function()
+		executeNewResetByRole("Sheriff")
+	end},
+	{name = "Reset Murderer", defaultKey = nil, getState = function() return false end, callback = function()
+		executeNewResetByRole("Murderer")
+	end},
+	{name = "Auto Reset Player", defaultKey = nil, getState = function() return newRstAutoPlayerEnabled end, callback = function()
+		toggleNewRstAutoPlayer()
+		if newRstAutoPlayerBtn then setToggleState(newRstAutoPlayerBtn, newRstAutoPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF") end
+		setExtractedBtnState("Auto Reset Player", newRstAutoPlayerEnabled)
+	end},
+	{name = "Auto Reset Everyone", defaultKey = nil, getState = function() return newRstAutoEveryoneEnabled end, callback = function()
+		toggleNewRstAutoEveryone()
+		if newRstAutoEveryoneBtn then setToggleState(newRstAutoEveryoneBtn, newRstAutoEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF") end
+		setExtractedBtnState("Auto Reset Everyone", newRstAutoEveryoneEnabled)
+	end},
+	{name = "Auto Reset Sheriff/Hero", defaultKey = nil, getState = function() return newRstAutoSheriffEnabled end, callback = function()
+		toggleNewRstAutoSheriff()
+		if newRstAutoSheriffBtn then setToggleState(newRstAutoSheriffBtn, newRstAutoSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF") end
+		setExtractedBtnState("Auto Reset Sheriff/Hero", newRstAutoSheriffEnabled)
+	end},
+	{name = "Auto Reset Murderer", defaultKey = nil, getState = function() return newRstAutoMurdererEnabled end, callback = function()
+		toggleNewRstAutoMurderer()
+		if newRstAutoMurdererBtn then setToggleState(newRstAutoMurdererBtn, newRstAutoMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF") end
+		setExtractedBtnState("Auto Reset Murderer", newRstAutoMurdererEnabled)
 	end},
 	{name = "Kill Everyone", defaultKey = nil, getState = function() return false end, callback = function()
 		local c = doKillEveryone(false)
@@ -21735,12 +21960,14 @@ bindInputConn = UserInputService.InputBegan:Connect(function(input, gp)
 		end
 		emotionKeyBinds[listeningEmotionId] = bindKey
 		local animId = listeningEmotionId
-		-- Emote tab: one-time Dance.lua principle, Emotions: toggle walkable
+		-- Emote tab: one-time Dance.lua principle, Emotions: toggle walkable.
+		-- Emote-ness is checked lazily at press time (see emotionIsEmote) so the
+		-- bind keeps working even if the emote lists change later.
 		local isEmote = false
 		if emoteOrder then for _, e in ipairs(emoteOrder) do if e.id == animId then isEmote = true; break end end end
 		keyBinds[bindKey] = {
 			callback = function()
-				if isEmote then
+				if emotionIsEmote(animId) then
 					local char2 = player.Character
 					local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
 					if hum2 and hum2.RigType == Enum.HumanoidRigType.R15 then
@@ -26749,7 +26976,7 @@ function buildConfigData()
 	config.toggles.notifyOnExploiters = notifyOnExploiters; config.toggles.notifyOnTeamers = notifyOnTeamers
 	config.toggles.notifyOnScammers = notifyOnScammers; config.toggles.hideButtonsEnabled = hideButtonsEnabled; config.toggles.hideMiniButtonsEnabled = hideMiniButtonsEnabled; config.toggles.skipLoadingScreenEnabled = skipLoadingScreenEnabled
 	config.toggles.notifyOnVoteStart = notifyOnVoteStart
-	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled; config.toggles.tryhardAnimEnabled = tryhardAnimEnabled; config.toggles.tryhardMainEnabled = tryhardMainEnabled; config.toggles.r6AnimEnabled = r6AnimEnabled; config.toggles.korbloxEnabled = korbloxEnabled; config.toggles.headlessEnabled = headlessEnabled; config.toggles.headlessAllHatsEnabled = headlessAllHatsEnabled
+	config.toggles.zombieTryhardEnabled = zombieTryhardEnabled; config.toggles.tryhardAnimEnabled = tryhardAnimEnabled; config.toggles.tryhardMainEnabled = tryhardMainEnabled; config.toggles.r6AnimEnabled = r6AnimEnabled; config.toggles.activeCustomAnimName = activeCustomAnimName; config.toggles.korbloxEnabled = korbloxEnabled; config.toggles.headlessEnabled = headlessEnabled; config.toggles.headlessAllHatsEnabled = headlessAllHatsEnabled
 	config.toggles.crosshairEnabled = crosshairEnabled; config.toggles.keystrokeEnabled = keystrokeEnabled
 	config.toggles.shadersEnabled = shadersEnabled
 	config.toggles.autofarmEnabled = autofarmEnabled; config.toggles.autofarmResetInnocentEnabled = autofarmResetInnocentEnabled
@@ -26807,7 +27034,7 @@ config.values.explicitlyClearedSoundPaths = explicitlyClearedSoundPaths
 	config.values.autofarmPreTpModeIndex = autofarmPreTpModeIndex; config.values.autofarmPreTpEnabled = autofarmPreTpEnabled
 	config.values.autofarmAvoidMurdererModeIndex = autofarmAvoidMurdererModeIndex; config.values.autofarmAvoidMurdererDist = autofarmAvoidMurdererDist
 	config.values.autofarmResetDeathEnabled = autofarmResetDeathEnabled; config.values.autofarmWebhookIntervalMin = autofarmWebhookIntervalMin
-	config.values.autofarmResetDeathCount = autofarmResetDeathCount; config.values.autofarmResetDeathDelay = autofarmResetDeathDelay
+	config.values.autofarmResetDeathCount = autofarmResetDeathCount; config.values.autofarmResetDeathDelay = autofarmResetDeathDelay; config.values.autofarmResetMethodIndex = autofarmResetMethodIndex
 	config.values.autofarmPreTpDelay = autofarmPreTpDelay
 	config.values.autofarmAutoAntiShootDelay = autofarmAutoAntiShootDelay
 	config.values.autofarmCoinDelay = autofarmCoinDelay
@@ -26851,6 +27078,21 @@ config.values.explicitlyClearedSoundPaths = explicitlyClearedSoundPaths
 	if killPicker then config.pickerCollapsed.Kill = killPicker.collapsed end
 	if watchMurdererPicker then config.pickerCollapsed.WatchMurderer = watchMurdererPicker.collapsed end
 	if watchSheriffPicker then config.pickerCollapsed.WatchSheriff = watchSheriffPicker.collapsed end
+	if newRstPicker then
+		config.pickerCollapsed.NewReset = newRstPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.NewReset = newRstPicker.selectedNames
+	end
+	if newRstWatchMurdererPicker then
+		config.pickerCollapsed.NewWatchMurderer = newRstWatchMurdererPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.NewWatchMurderer = newRstWatchMurdererPicker.selectedNames
+	end
+	if newRstWatchSheriffPicker then
+		config.pickerCollapsed.NewWatchSheriff = newRstWatchSheriffPicker.collapsed
+		config.pickerMultiSelect = config.pickerMultiSelect or {}
+		config.pickerMultiSelect.NewWatchSheriff = newRstWatchSheriffPicker.selectedNames
+	end
 	return config
 end
 
@@ -26885,7 +27127,7 @@ Instance.new("UICorner", configListSelect).CornerRadius = UDim.new(0, 6)
 
 local configDropdownFrame = Instance.new("Frame")
 configDropdownFrame.Size = UDim2.new(0, 164, 0, 0)
-configDropdownFrame.Position = UDim2.new(0, 0, 0, 42)
+configDropdownFrame.Position = UDim2.new(1, -168, 0, 42)
 configDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
 configDropdownFrame.BorderSizePixel = 0
 configDropdownFrame.Visible = false
@@ -26944,6 +27186,7 @@ end
 configListSelect.MouseButton1Click:Connect(function()
 	refreshConfigDropdown()
 	configDropdownFrame.Visible = not configDropdownFrame.Visible
+	refreshDropdownArrow(configListSelect, configDropdownFrame)
 end)
 
 -- Close dropdown when clicking the toggle again (handled in toggle Click)
@@ -27185,26 +27428,46 @@ btnFeatures = {
 	 toggle = function() tpToRole("Hero") end},
 	{name = "TP to Murderer",
 	 toggle = function() tpToRole("Murderer") end},
-	{name = "Reset Player",
+	{name = "OG Reset Player",
 	 toggle = function() executeNanFling() end},
-	{name = "Reset Everyone",
+	{name = "OG Reset Everyone",
 	 toggle = function() executeNanFlingEveryone() end},
-	{name = "Reset Sheriff/Hero",
+	{name = "OG Reset Sheriff/Hero",
 	 toggle = function() executeNanFlingByRole("Sheriff") end},
-	{name = "Reset Murderer",
+	{name = "OG Reset Murderer",
 	 toggle = function() executeNanFlingByRole("Murderer") end},
-	{name = "Auto Reset Player",
-	 toggle = function() toggleAutoResetPlayer(); setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF"); setExtractedBtnState("Auto Reset Player", autoResetPlayerEnabled) end,
+	{name = "Reset Player",
+	 toggle = function() executeNewResetByName(newRstTargetName) end},
+	{name = "Reset Everyone",
+	 toggle = function() executeNewResetEveryone() end},
+	{name = "Reset Sheriff/Hero",
+	 toggle = function() executeNewResetByRole("Sheriff") end},
+	{name = "Reset Murderer",
+	 toggle = function() executeNewResetByRole("Murderer") end},
+	{name = "Auto OG Reset Player",
+	 toggle = function() toggleAutoResetPlayer(); setToggleState(autoResetPlayerBtn, autoResetPlayerEnabled, "Auto OG Reset Player: ON", "Auto OG Reset Player: OFF"); setExtractedBtnState("Auto OG Reset Player", autoResetPlayerEnabled) end,
 	 getState = function() return autoResetPlayerEnabled end},
-	{name = "Auto Reset Everyone",
-	 toggle = function() toggleAutoResetEveryone(); setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF"); setExtractedBtnState("Auto Reset Everyone", autoResetEveryoneEnabled) end,
+	{name = "Auto OG Reset Everyone",
+	 toggle = function() toggleAutoResetEveryone(); setToggleState(autoResetEveryoneBtn, autoResetEveryoneEnabled, "Auto OG Reset Everyone: ON", "Auto OG Reset Everyone: OFF"); setExtractedBtnState("Auto OG Reset Everyone", autoResetEveryoneEnabled) end,
 	 getState = function() return autoResetEveryoneEnabled end},
-	{name = "Auto Reset Sheriff/Hero",
-	 toggle = function() toggleAutoResetSheriff(); setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF"); setExtractedBtnState("Auto Reset Sheriff/Hero", autoResetSheriffEnabled) end,
+	{name = "Auto OG Reset Sheriff/Hero",
+	 toggle = function() toggleAutoResetSheriff(); setToggleState(autoResetSheriffBtn, autoResetSheriffEnabled, "Auto OG Reset Sheriff/Hero: ON", "Auto OG Reset Sheriff/Hero: OFF"); setExtractedBtnState("Auto OG Reset Sheriff/Hero", autoResetSheriffEnabled) end,
 	 getState = function() return autoResetSheriffEnabled end},
-	{name = "Auto Reset Murderer",
-	 toggle = function() toggleAutoResetMurderer(); setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF"); setExtractedBtnState("Auto Reset Murderer", autoResetMurdererEnabled) end,
+	{name = "Auto OG Reset Murderer",
+	 toggle = function() toggleAutoResetMurderer(); setToggleState(autoResetMurdererBtn, autoResetMurdererEnabled, "Auto OG Reset Murderer: ON", "Auto OG Reset Murderer: OFF"); setExtractedBtnState("Auto OG Reset Murderer", autoResetMurdererEnabled) end,
 	 getState = function() return autoResetMurdererEnabled end},
+	{name = "Auto Reset Player",
+	 toggle = function() toggleNewRstAutoPlayer(); if newRstAutoPlayerBtn then setToggleState(newRstAutoPlayerBtn, newRstAutoPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF") end; setExtractedBtnState("Auto Reset Player", newRstAutoPlayerEnabled) end,
+	 getState = function() return newRstAutoPlayerEnabled end},
+	{name = "Auto Reset Everyone",
+	 toggle = function() toggleNewRstAutoEveryone(); if newRstAutoEveryoneBtn then setToggleState(newRstAutoEveryoneBtn, newRstAutoEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF") end; setExtractedBtnState("Auto Reset Everyone", newRstAutoEveryoneEnabled) end,
+	 getState = function() return newRstAutoEveryoneEnabled end},
+	{name = "Auto Reset Sheriff/Hero",
+	 toggle = function() toggleNewRstAutoSheriff(); if newRstAutoSheriffBtn then setToggleState(newRstAutoSheriffBtn, newRstAutoSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF") end; setExtractedBtnState("Auto Reset Sheriff/Hero", newRstAutoSheriffEnabled) end,
+	 getState = function() return newRstAutoSheriffEnabled end},
+	{name = "Auto Reset Murderer",
+	 toggle = function() toggleNewRstAutoMurderer(); if newRstAutoMurdererBtn then setToggleState(newRstAutoMurdererBtn, newRstAutoMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF") end; setExtractedBtnState("Auto Reset Murderer", newRstAutoMurdererEnabled) end,
+	 getState = function() return newRstAutoMurdererEnabled end},
 	{name = "Kill Everyone",
 	 toggle = function() local c = doKillEveryone(false); if c == nil then notify("Kill Everyone", "You need the knife (be the Murderer).", 2) else notify("Kill Everyone", "Hit " .. c .. " player(s).", 1.5) end end},
 	{name = "Kill Everyone (No Friends)",
@@ -29073,8 +29336,17 @@ function restoreFullConfig()
 		roundTimerSizeHInput.Text = tostring(math.floor(c.values.roundTimerSizeYScale * 100))
 	end
 
-	-- Restore binds UI FIRST (before toggles, so saveConfig sees them)
+	-- Restore binds UI FIRST (before toggles, so saveConfig sees them).
+	-- Full resync: wipe current binds first, otherwise switching to a config
+	-- without binds (or with different keys) leaves stale shortcuts firing
+	-- while the UI already shows "None".
 	if c.binds then
+		for name, oldKey in pairs(featureBinds) do
+			if oldKey and keyBinds[oldKey] then
+				keyBinds[oldKey] = nil
+			end
+			featureBinds[name] = nil
+		end
 		for name, keyStr in pairs(c.binds) do
 			local key = stringToKey(keyStr)
 			if key then
@@ -29099,11 +29371,81 @@ function restoreFullConfig()
 		end
 	end
 
-	-- Restore extracted buttons (before toggles, so saveConfig sees them)
+	-- Restore emotion binds (Emotions/Ragebait tabs): full resync for the same
+	-- reason — stale emotion shortcuts must die when the new config lacks them.
+	if c.emotionKeyBinds then
+		for animId, oldKc in pairs(emotionKeyBinds) do
+			if oldKc and keyBinds[oldKc] then
+				keyBinds[oldKc] = nil
+			end
+		end
+		emotionKeyBinds = {}
+		for idStr, keyCodeStr in pairs(c.emotionKeyBinds) do
+			local id = tonumber(idStr)
+			if id and keyCodeStr then
+				local ok, kc = pcall(function()
+					local kc2 = Enum.KeyCode[keyCodeStr]
+					if kc2 then return kc2 end
+					return Enum.UserInputType[keyCodeStr]
+				end)
+				if ok and kc then
+					emotionKeyBinds[id] = kc
+				end
+			end
+		end
+		for animId, kc in pairs(emotionKeyBinds) do
+			keyBinds[kc] = {
+				callback = function()
+					if emotionIsEmote(animId) then
+						local char2 = player.Character
+						local hum2 = char2 and char2:FindFirstChildOfClass("Humanoid")
+						if hum2 and hum2.RigType == Enum.HumanoidRigType.R15 then
+							local desc = hum2:FindFirstChildOfClass("HumanoidDescription")
+							local ok = pcall(function() hum2:PlayEmoteAndGetAnimTrackById(animId) end)
+							if not ok and desc then
+								local nm = (emoteUiById[animId] and emoteUiById[animId].Name) or ("Emote "..tostring(animId))
+								pcall(function() desc:AddEmote(nm, animId) end)
+								pcall(function() hum2:PlayEmoteAndGetAnimTrackById(animId) end)
+							end
+						end
+					else
+						if playingAnimationId == animId then
+							stopCurrentAnimation()
+						else
+							playAnimation(animId, "1")
+						end
+					end
+				end,
+				description = "Emotion: " .. tostring(animId),
+			}
+		end
+		-- Refresh bind labels on existing Emotions/Ragebait rows.
+		if emoteUiById then
+			for animId, ui in pairs(emoteUiById) do
+				if ui and ui.Bind then
+					pcall(function()
+						ui.Bind.Text = emotionKeyBinds[animId] and bindKeyToName(emotionKeyBinds[animId]) or "⌨"
+					end)
+				end
+			end
+		end
+		if animationUiById then
+			for animId, ui in pairs(animationUiById) do
+				if ui and ui.Bind then
+					pcall(function()
+						ui.Bind.Text = emotionKeyBinds[animId] and bindKeyToName(emotionKeyBinds[animId]) or "⌨"
+					end)
+				end
+			end
+		end
+	end
+
+	-- Restore extracted buttons (before toggles, so saveConfig sees them).
+	-- Each entry is isolated: one broken button must not abort the whole restore.
 	if c.extractedBtns then
 		for name, btnData in pairs(c.extractedBtns) do
 			if not extractedButtons[name] and extractHandlers[name] then
-				extractHandlers[name]()
+				pcall(extractHandlers[name])
 			end
 			if extractedButtons[name] and extractedButtons[name].btn and btnData.pos then
 				local p = btnData.pos
@@ -29266,13 +29608,29 @@ function restoreFullConfig()
 	end
 
 	if T.hideButtonsEnabled then
-		hideButtonsEnabled = false
-		hideButtonsBtn.MouseButton1Click:Fire()
+		-- Applied directly (no :Fire()): executor support for firing signals
+		-- varies, and firing re-saves a half-restored config to disk.
+		hideButtonsEnabled = true
+		if hideButtonsBtn then
+			hideButtonsBtn.Text = "Hide Buttons: ON"
+			hideButtonsBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			hideButtonsBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		end
+		for name, data in pairs(extractedButtons) do
+			if data.btn then
+				data.btn.Visible = false
+			end
+		end
 	end
 
-	if hideMiniButtonsEnabled and hideMiniButtonsBtn then
-		hideMiniButtonsEnabled = false
-		hideMiniButtonsBtn.MouseButton1Click:Fire()
+	if T.hideMiniButtonsEnabled then
+		hideMiniButtonsEnabled = true
+		if hideMiniButtonsBtn then
+			hideMiniButtonsBtn.Text = "Hide Mini Buttons: ON"
+			hideMiniButtonsBtn.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+			hideMiniButtonsBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+		end
+		applyHideMiniButtons()
 	end
 
 	if skipLoadingScreenEnabled and skipLoadingBtn then
@@ -29294,22 +29652,42 @@ function restoreFullConfig()
 	end
 	if T.autoResetPlayerEnabled then
 		autoResetPlayerEnabled = false; toggleAutoResetPlayer()
-		if autoResetPlayerBtn then setToggleState(autoResetPlayerBtn, true, "Auto Reset Player: ON", "Auto Reset Player: OFF") end
-		setExtractedBtnState("Auto Reset Player", true)
+		if autoResetPlayerBtn then setToggleState(autoResetPlayerBtn, true, "Auto OG Reset Player: ON", "Auto OG Reset Player: OFF") end
+		setExtractedBtnState("Auto OG Reset Player", true)
 	end
 	if T.autoResetEveryoneEnabled then
 		autoResetEveryoneEnabled = false; toggleAutoResetEveryone()
-		if autoResetEveryoneBtn then setToggleState(autoResetEveryoneBtn, true, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF") end
-		setExtractedBtnState("Auto Reset Everyone", true)
+		if autoResetEveryoneBtn then setToggleState(autoResetEveryoneBtn, true, "Auto OG Reset Everyone: ON", "Auto OG Reset Everyone: OFF") end
+		setExtractedBtnState("Auto OG Reset Everyone", true)
 	end
 	if T.autoResetSheriffEnabled then
 		autoResetSheriffEnabled = false; toggleAutoResetSheriff()
-		if autoResetSheriffBtn then setToggleState(autoResetSheriffBtn, true, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF") end
-		setExtractedBtnState("Auto Reset Sheriff/Hero", true)
+		if autoResetSheriffBtn then setToggleState(autoResetSheriffBtn, true, "Auto OG Reset Sheriff/Hero: ON", "Auto OG Reset Sheriff/Hero: OFF") end
+		setExtractedBtnState("Auto OG Reset Sheriff/Hero", true)
 	end
 	if T.autoResetMurdererEnabled then
 		autoResetMurdererEnabled = false; toggleAutoResetMurderer()
-		if autoResetMurdererBtn then setToggleState(autoResetMurdererBtn, true, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF") end
+		if autoResetMurdererBtn then setToggleState(autoResetMurdererBtn, true, "Auto OG Reset Murderer: ON", "Auto OG Reset Murderer: OFF") end
+		setExtractedBtnState("Auto OG Reset Murderer", true)
+	end
+	if T.newRstAutoPlayerEnabled then
+		newRstAutoPlayerEnabled = false; toggleNewRstAutoPlayer()
+		if newRstAutoPlayerBtn then setToggleState(newRstAutoPlayerBtn, true, "Auto Reset Player: ON", "Auto Reset Player: OFF") end
+		setExtractedBtnState("Auto Reset Player", true)
+	end
+	if T.newRstAutoEveryoneEnabled then
+		newRstAutoEveryoneEnabled = false; toggleNewRstAutoEveryone()
+		if newRstAutoEveryoneBtn then setToggleState(newRstAutoEveryoneBtn, true, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF") end
+		setExtractedBtnState("Auto Reset Everyone", true)
+	end
+	if T.newRstAutoSheriffEnabled then
+		newRstAutoSheriffEnabled = false; toggleNewRstAutoSheriff()
+		if newRstAutoSheriffBtn then setToggleState(newRstAutoSheriffBtn, true, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF") end
+		setExtractedBtnState("Auto Reset Sheriff/Hero", true)
+	end
+	if T.newRstAutoMurdererEnabled then
+		newRstAutoMurdererEnabled = false; toggleNewRstAutoMurderer()
+		if newRstAutoMurdererBtn then setToggleState(newRstAutoMurdererBtn, true, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF") end
 		setExtractedBtnState("Auto Reset Murderer", true)
 	end
 
@@ -29373,6 +29751,8 @@ function restoreFullConfig()
 	if T.tryhardAnimEnabled then tryhardAnimEnabled = false; enableTryhardAnim(); if btn.tryhardAnimBtn then setToggleState(btn.tryhardAnimBtn, true, "Tryhard Anim: ON", "Tryhard Anim: OFF") end end
 	if T.tryhardMainEnabled then tryhardMainEnabled = false; enableTryhardMain(); if btn.tryhardMainBtn then setToggleState(btn.tryhardMainBtn, true, "Tryhard Main: ON", "Tryhard Main: OFF") end end
 	if T.r6AnimEnabled then r6AnimEnabled = false; enableR6Anim(); if btn.r6AnimBtn then setToggleState(btn.r6AnimBtn, true, "R6 Animation: ON", "R6 Animation: OFF") end end
+	-- Restore the active custom animation set (applies now + on every respawn, like presets)
+	if T.activeCustomAnimName and findCustomAnimByName(T.activeCustomAnimName) then enableCustomAnim(T.activeCustomAnimName) end
 	if T.korbloxEnabled then korbloxEnabled = false; enableKorblox(); if btn.korbloxBtn then setToggleState(btn.korbloxBtn, true, "Korblox: ON", "Korblox: OFF") end end
 	if T.headlessEnabled then headlessEnabled = false; enableHeadless(); if btn.headlessBtn then setToggleState(btn.headlessBtn, true, "Headless: ON", "Headless: OFF") end end
 	if T.headlessAllHatsEnabled then headlessAllHatsEnabled = false; enableHeadlessAllHats(); if btn.headlessAllHatsBtn then setToggleState(btn.headlessAllHatsBtn, true, "Headless (All Hats): ON", "Headless (All Hats): OFF") end end
@@ -29433,6 +29813,10 @@ function restoreFullConfig()
 			autofarmResetDeathDelay = math.clamp(c.values.autofarmResetDeathDelay, 1, 10)
 			if autofarmResetDeathDelayBox then autofarmResetDeathDelayBox.Text = tostring(autofarmResetDeathDelay) end
 		end
+		if c.values.autofarmResetMethodIndex and autofarmResetMethodModes and autofarmResetMethodModes[c.values.autofarmResetMethodIndex] then
+			autofarmResetMethodIndex = c.values.autofarmResetMethodIndex
+			if autofarmResetMethodSelect then autofarmResetMethodSelect.Text = "Reset Method: " .. autofarmResetMethodModes[autofarmResetMethodIndex] .. " ▼" end
+		end
 		if c.values.autofarmPreTpDelay then
 			autofarmPreTpDelay = math.clamp(c.values.autofarmPreTpDelay, 1, 10)
 			if autofarmPreTpDelayBox then autofarmPreTpDelayBox.Text = tostring(autofarmPreTpDelay) end
@@ -29468,6 +29852,28 @@ function restoreFullConfig()
 		if c.values.autoResetEveryoneInterval then
 			autoResetEveryoneInterval = math.clamp(c.values.autoResetEveryoneInterval, 0.2, 10)
 			if autoResetEveryoneIntervalBox then autoResetEveryoneIntervalBox.Text = tostring(autoResetEveryoneInterval) end
+		end
+		if c.values.newRstEveryoneInterval then
+			newRstEveryoneInterval = math.clamp(c.values.newRstEveryoneInterval, 0.5, 10)
+			if newRstEveryoneIntervalBox then newRstEveryoneIntervalBox.Text = tostring(newRstEveryoneInterval) end
+		end
+		if c.values.newRstAutoPlayerInterval then
+			newRstAutoPlayerInterval = math.clamp(c.values.newRstAutoPlayerInterval, 0.5, 30)
+			if newRstAutoPlayerIntervalBox then newRstAutoPlayerIntervalBox.Text = tostring(newRstAutoPlayerInterval) end
+		end
+		if c.values.newRstAutoEveryoneInterval then
+			newRstAutoEveryoneInterval = math.clamp(c.values.newRstAutoEveryoneInterval, 0.2, 10)
+			if newRstAutoEveryoneIntervalBox then newRstAutoEveryoneIntervalBox.Text = tostring(newRstAutoEveryoneInterval) end
+		end
+		if c.values.newRstDuration then
+			newRstDuration = tonumber(c.values.newRstDuration) or 0.35
+			if newRstDuration <= 0 then newRstDuration = 0.35 end
+			if newRstDurationBox then newRstDurationBox.Text = tostring(newRstDuration) end
+		end
+		if c.values.newRstStartStuds then
+			newRstStartStuds = tonumber(c.values.newRstStartStuds) or 5
+			if newRstStartStuds < 0 then newRstStartStuds = 5 end
+			if newRstStartStudsBox then newRstStartStudsBox.Text = tostring(newRstStartStuds) end
 		end
 		if c.values.autofarmWebhookIntervalMin then
 			autofarmWebhookIntervalMin = c.values.autofarmWebhookIntervalMin
@@ -29579,7 +29985,7 @@ function restoreFullConfig()
 	end
 	-- Restore picker collapse states
 	if c and c.pickerCollapsed then
-		local pickers = { Troll = trollPicker, Reset = resetPicker, Shoot = shootPicker, Kill = killPicker, WatchMurderer = watchMurdererPicker, WatchSheriff = watchSheriffPicker }
+		local pickers = { Troll = trollPicker, Reset = resetPicker, Shoot = shootPicker, Kill = killPicker, WatchMurderer = watchMurdererPicker, WatchSheriff = watchSheriffPicker, NewReset = newRstPicker, NewWatchMurderer = newRstWatchMurdererPicker, NewWatchSheriff = newRstWatchSheriffPicker }
 		for key, picker in pairs(pickers) do
 			if picker and c.pickerCollapsed[key] ~= nil and c.pickerCollapsed[key] ~= picker.collapsed then
 				picker.collapsed = c.pickerCollapsed[key]
@@ -29597,7 +30003,7 @@ function restoreFullConfig()
 	end
 	-- Restore multi-picker selections
 	if c and c.pickerMultiSelect then
-		local mpickers = { Kill = killPicker, WatchMurderer = watchMurdererPicker, WatchSheriff = watchSheriffPicker, Reset = resetPicker }
+		local mpickers = { Kill = killPicker, WatchMurderer = watchMurdererPicker, WatchSheriff = watchSheriffPicker, Reset = resetPicker, NewReset = newRstPicker, NewWatchMurderer = newRstWatchMurdererPicker, NewWatchSheriff = newRstWatchSheriffPicker }
 		for key, picker in pairs(mpickers) do
 			if picker and c.pickerMultiSelect[key] then
 				picker.selectedNames = c.pickerMultiSelect[key]
@@ -29605,6 +30011,9 @@ function restoreFullConfig()
 			end
 		end
 	end
+	-- Persist the fully-restored state: early load-time saves may have written
+	-- default snapshots to disk, so rewrite the file now that everything is applied.
+	pcall(saveConfig)
 end
 
 -- Config restore Р±РµР· Р·Р°РґРµСЂР¶РєРё - UI СѓР¶Рµ РіРѕС‚РѕРІ Рє СЌС‚РѕРјСѓ РјРѕРјРµРЅС‚Сѓ
@@ -29696,8 +30105,8 @@ do
 end
 
 do
-	-- RESET TAB: LayoutOrder 310-331 (integers only)
-	local resetFrame = categoryFrames["Reset"]
+	-- OG RESET TAB: LayoutOrder 310-331 (integers only, old NaN technology)
+	local resetFrame = categoryFrames["OG Reset"]
 	local utilFrame = categoryFrames["Utilities"]
 	if resetFrame and utilFrame then
 		local rstSection = Instance.new("TextLabel")
@@ -29705,7 +30114,7 @@ do
 		rstSection.BackgroundTransparency = 1
 		rstSection.TextColor3 = Color3.fromRGB(255, 255, 255)
 		rstSection.TextXAlignment = Enum.TextXAlignment.Left
-		rstSection.Text = "Reset"
+		rstSection.Text = "OG Reset"
 		rstSection.Font = Enum.Font.SourceSansBold
 		rstSection.TextSize = 15
 		rstSection.LayoutOrder = 310
@@ -29745,6 +30154,803 @@ do
 		end
 	end
 end
+
+do
+	-- NEW RESET TAB (LayoutOrder 310-335): same functions as OG Reset, but NEW sweep technology from Reset New.lua
+	-- Technology: BodyVelocity down + BodyGyro + top-to-bottom sweep with firetouchinterest (no NaN vectors).
+	local newResetFrame = categoryFrames["Reset"]
+	if newResetFrame then
+		local newRstSection = Instance.new("TextLabel")
+		newRstSection.Size = UDim2.new(1, 0, 0, 24)
+		newRstSection.BackgroundTransparency = 1
+		newRstSection.TextColor3 = Color3.fromRGB(255, 255, 255)
+		newRstSection.TextXAlignment = Enum.TextXAlignment.Left
+		newRstSection.Text = "Reset"
+		newRstSection.Font = Enum.Font.SourceSansBold
+		newRstSection.TextSize = 15
+		newRstSection.LayoutOrder = 310
+		newRstSection.Parent = newResetFrame
+	end
+end
+
+-- ============================================================
+-- New Reset technology (sweep, ported from Reset New.lua)
+-- ============================================================
+newRstLastAttempt = 0
+newRstCooldown = 0.4
+newRstResetting = false
+newRstConn = nil
+newRstDuration = 0.35
+newRstStartStuds = 5
+newRstEveryoneInterval = 1.6
+newRstAutoPlayerInterval = 2
+newRstAutoEveryoneInterval = 0.5
+newRstTargetName = ""
+
+function newRstTouch(a, b)
+	pcall(function()
+		firetouchinterest(a, b, 0)
+		firetouchinterest(a, b, 1)
+	end)
+end
+
+function newRstFullyRestore(char, savedCF)
+	if not char or not savedCF then return end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	local hrp = char:FindFirstChild("HumanoidRootPart")
+	if not hum or not hrp then return end
+	hum.PlatformStand = false
+	for _, tr in ipairs(hum:GetPlayingAnimationTracks()) do
+		pcall(function() tr:Stop() end)
+	end
+	pcall(function() hrp.AssemblyLinearVelocity = Vector3.zero end)
+	pcall(function() hrp.AssemblyAngularVelocity = Vector3.zero end)
+	pcall(function() hrp.Velocity = Vector3.zero end)
+	pcall(function() hrp.RotVelocity = Vector3.zero end)
+	hrp.CFrame = savedCF
+	pcall(sethiddenproperty, hrp, "PhysicsRepRootPart", hrp)
+	pcall(function() hum:ChangeState(Enum.HumanoidStateType.GettingUp) end)
+	for _, part in ipairs(char:GetDescendants()) do
+		if part:IsA("BasePart") then
+			pcall(function() part.CanCollide = true end)
+		end
+	end
+end
+
+function newRstWaitDone(timeout)
+	timeout = timeout or 3
+	local t0 = tick()
+	while newRstResetting and (tick() - t0) < timeout do
+		task.wait(0.1)
+	end
+	if newRstResetting then
+		newRstResetting = false
+		if newRstConn then
+			pcall(function() newRstConn:Disconnect() end)
+			newRstConn = nil
+		end
+	end
+end
+
+function executeNewReset(TargetPlayer)
+	if not TargetPlayer then return false end
+	if TargetPlayer == player then return false end
+	if isPlayerWhitelisted and isPlayerWhitelisted(TargetPlayer.Name) then return false end
+	if tick() - newRstLastAttempt < newRstCooldown then return false end
+	if newRstResetting then
+		newRstResetting = false
+		if newRstConn then
+			pcall(function() newRstConn:Disconnect() end)
+			newRstConn = nil
+		end
+	end
+	newRstLastAttempt = tick()
+	newRstResetting = true
+
+	local char = player.Character
+	if not char then newRstResetting = false return false end
+	local hum = char:FindFirstChildOfClass("Humanoid")
+	local hrp = hum and hum.RootPart
+	if not hrp then hrp = char:FindFirstChild("HumanoidRootPart") end
+	local tChar = TargetPlayer.Character
+	if not (char and hum and hrp and tChar) then newRstResetting = false return false end
+	local tRoot = tChar:FindFirstChild("HumanoidRootPart")
+	local tHead = tChar:FindFirstChild("Head")
+	if not tRoot then newRstResetting = false return false end
+
+	local savedCF = hrp.CFrame
+	hum.PlatformStand = true
+
+	local bv = Instance.new("BodyVelocity")
+	bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+	bv.Velocity = Vector3.new(0, -50000, 0)
+	bv.Parent = hrp
+
+	local bg = Instance.new("BodyGyro")
+	bg.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
+	bg.P = 1000000
+	bg.Parent = hrp
+
+	local originalDestroyHeight = Workspace.FallenPartsDestroyHeight
+	pcall(function() Workspace.FallenPartsDestroyHeight = -100000 end)
+
+	local startTime = tick()
+	local resetDuration = tonumber(newRstDuration) or 0.35
+	if resetDuration <= 0 then resetDuration = 0.35 end
+	local startStuds = tonumber(newRstStartStuds)
+	if not startStuds or startStuds < 0 then startStuds = 5 end
+
+	newRstConn = RunService.Heartbeat:Connect(function()
+		if (tick() - startTime) > resetDuration or not TargetPlayer.Character or not tRoot.Parent then
+			pcall(function() Workspace.FallenPartsDestroyHeight = originalDestroyHeight end)
+			if bv.Parent then pcall(function() bv:Destroy() end) end
+			if bg.Parent then pcall(function() bg:Destroy() end) end
+			pcall(sethiddenproperty, hrp, "PhysicsRepRootPart", hrp)
+			newRstFullyRestore(char, savedCF)
+			if newRstConn then
+				pcall(function() newRstConn:Disconnect() end)
+				newRstConn = nil
+			end
+			newRstResetting = false
+			return
+		end
+		if tRoot and tRoot.Parent and char and char.Parent then
+			local topPos
+			if tHead then
+				topPos = tHead.Position + Vector3.new(0, startStuds, 0)
+			else
+				topPos = tRoot.Position + Vector3.new(0, startStuds + 0.5, 0)
+			end
+			local lowestY = tRoot.Position.Y - 3
+			for _, part in ipairs(tChar:GetDescendants()) do
+				if part:IsA("BasePart") then
+					local pY = part.Position.Y - (part.Size.Y / 2)
+					if pY < lowestY and pY > (tRoot.Position.Y - 6) then
+						lowestY = pY
+					end
+				end
+			end
+			local bottomPos = Vector3.new(tRoot.Position.X, lowestY - 0.5, tRoot.Position.Z)
+			local alpha = math.clamp((tick() - startTime) / resetDuration, 0, 1)
+			local sweepPos = topPos:Lerp(bottomPos, alpha)
+			hrp.CFrame = CFrame.new(sweepPos) * CFrame.Angles(math.pi / 2, 0, 0)
+			pcall(function() hrp.AssemblyLinearVelocity = Vector3.new(0, -50000, 0) end)
+			pcall(function() hrp.AssemblyAngularVelocity = Vector3.new(7500, 7500, 7500) end)
+			for _i = 1, 5 do
+				newRstTouch(hrp, tRoot)
+				if tHead then newRstTouch(hrp, tHead) end
+			end
+			pcall(sethiddenproperty, hrp, "PhysicsRepRootPart", tRoot)
+		end
+	end)
+	return true
+end
+
+function executeNewResetByName(nameStr)
+	if not nameStr or nameStr == "" then
+		notify("Error", "Enter a player name first", 2)
+		return
+	end
+	local targetPlayer = nil
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Name:lower():find(nameStr:lower(), 1, true) then
+			targetPlayer = plr
+			break
+		end
+	end
+	if not targetPlayer then
+		notify("Error", "Target not found", 2)
+		return
+	end
+	executeNewReset(targetPlayer)
+end
+
+function executeNewResetByRole(roleName)
+	local ok, result = pcall(function()
+		return invokePlayerData()
+	end)
+	if not (ok and result) then
+		notify("Error", "Could not get roles", 2)
+		return
+	end
+	local function isAlive(name)
+		local plr = Players:FindFirstChild(name)
+		return plr and plr.Character and plr.Character:FindFirstChild("Humanoid") and plr.Character.Humanoid.Health > 0
+	end
+	if roleName == "Sheriff" then
+		local physHolder = nil
+		pcall(function() physHolder = findCurrentGunHolderPlayer() end)
+		if physHolder then
+			executeNewReset(physHolder)
+			return
+		end
+		local heroAlive, heroAny, gunAlive, gunAny, sheriffAlive, sheriffAny = nil, nil, nil, nil, nil, nil
+		for _, plr in ipairs(Players:GetPlayers()) do
+			local name = plr.Name
+			local data = result[name]
+			if data and name ~= player.Name and not isPlayerWhitelisted(name) then
+				if data.Role == "Hero" and data.HasGun then
+					heroAny = name
+					if isAlive(name) then heroAlive = name end
+				elseif data.HasGun and data.Role ~= "Murderer" then
+					gunAny = name
+					if isAlive(name) then gunAlive = name end
+				elseif data.Role == "Sheriff" then
+					sheriffAny = name
+					if isAlive(name) then sheriffAlive = name end
+				end
+			end
+		end
+		local chosen = heroAlive or gunAlive or heroAny or gunAny or sheriffAlive or sheriffAny
+		if chosen then
+			local tp = Players:FindFirstChild(chosen)
+			if tp then executeNewReset(tp) return end
+		end
+	elseif roleName == "Murderer" then
+		local aliveTarget = nil
+		for name, data in pairs(result) do
+			if data.Role == "Murderer" and name ~= player.Name and not isPlayerWhitelisted(name) then
+				if isAlive(name) then
+					aliveTarget = name
+					break
+				end
+				if not aliveTarget then aliveTarget = name end
+			end
+		end
+		if aliveTarget then
+			local tp = Players:FindFirstChild(aliveTarget)
+			if tp then executeNewReset(tp) return end
+		end
+	end
+	notify("Error", "No " .. roleName .. " found", 2)
+end
+
+function executeNewResetEveryone()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and not isPlayerWhitelisted(plr.Name) then
+			local c = plr.Character
+			if c and c:FindFirstChild("Humanoid") and c.Humanoid.Health > 0 then
+				local started = executeNewReset(plr)
+				if started then
+					newRstWaitDone(3)
+				end
+				task.wait(tonumber(newRstEveryoneInterval) or 1.6)
+			end
+		end
+	end
+end
+
+function executeNewResetNames(names)
+	if not names or #names == 0 then return end
+	for _, name in ipairs(names) do
+		if not isPlayerWhitelisted(name) then
+			local tp = Players:FindFirstChild(name)
+			if tp then
+				local started = executeNewReset(tp)
+				if started then
+					newRstWaitDone(3)
+				end
+				task.wait(0.4)
+			end
+		end
+	end
+end
+
+newRstAutoPlayerEnabled = false
+newRstAutoEveryoneEnabled = false
+newRstAutoSheriffEnabled = false
+newRstAutoMurdererEnabled = false
+
+function toggleNewRstAutoPlayer()
+	newRstAutoPlayerEnabled = not newRstAutoPlayerEnabled
+	if newRstAutoPlayerEnabled then
+		task.spawn(function()
+			while newRstAutoPlayerEnabled do
+				local selected = (newRstPicker and newRstPicker.selectedNames) or {}
+				if #selected > 0 then
+					for _, name in ipairs(selected) do
+						if not newRstAutoPlayerEnabled then break end
+						if not isPlayerWhitelisted(name) then
+							local tp = Players:FindFirstChild(name)
+							if tp then
+								executeNewReset(tp)
+								newRstWaitDone(3)
+							end
+							task.wait(tonumber(newRstAutoPlayerInterval) or 2)
+						end
+					end
+				else
+					if newRstTargetName ~= "" then
+						executeNewResetByName(newRstTargetName)
+					end
+					task.wait(tonumber(newRstAutoPlayerInterval) or 2)
+				end
+			end
+		end)
+	end
+end
+
+function toggleNewRstAutoEveryone()
+	newRstAutoEveryoneEnabled = not newRstAutoEveryoneEnabled
+	if newRstAutoEveryoneEnabled then
+		task.spawn(function()
+			while newRstAutoEveryoneEnabled do
+				for _, plr in ipairs(Players:GetPlayers()) do
+					if not newRstAutoEveryoneEnabled then break end
+					if plr ~= player and not isPlayerWhitelisted(plr.Name) then
+						local c = plr.Character
+						if c and c:FindFirstChild("Humanoid") and c.Humanoid.Health > 0 then
+							local started = executeNewReset(plr)
+							if started then
+								newRstWaitDone(3)
+							end
+							task.wait(tonumber(newRstEveryoneInterval) or 1.6)
+						end
+					end
+				end
+				task.wait(tonumber(newRstAutoEveryoneInterval) or 0.5)
+			end
+		end)
+	end
+end
+
+function toggleNewRstAutoSheriff()
+	newRstAutoSheriffEnabled = not newRstAutoSheriffEnabled
+	if newRstAutoSheriffEnabled then
+		task.spawn(function()
+			while newRstAutoSheriffEnabled do
+				executeNewResetByRole("Sheriff")
+				newRstWaitDone(3)
+				task.wait(2)
+			end
+		end)
+	end
+end
+
+function toggleNewRstAutoMurderer()
+	newRstAutoMurdererEnabled = not newRstAutoMurdererEnabled
+	if newRstAutoMurdererEnabled then
+		task.spawn(function()
+			while newRstAutoMurdererEnabled do
+				executeNewResetByRole("Murderer")
+				newRstWaitDone(3)
+				task.wait(2)
+			end
+		end)
+	end
+end
+
+do
+	-- NEW RESET TAB UI: same functions as OG Reset, new sweep technology
+	local newFrame = categoryFrames["Reset"]
+	if newFrame then
+		local _prevCat = currentCategory
+		currentCategory = "Reset"
+
+		newRstPlayerRow = Instance.new("Frame")
+		newRstPlayerRow.Name = "NewResetPlayerRow"
+		newRstPlayerRow.Size = UDim2.new(1, 0, 0, 42)
+		newRstPlayerRow.BackgroundTransparency = 1
+		newRstPlayerRow.LayoutOrder = 311
+		newRstPlayerRow.Parent = newFrame
+
+		newRstPlayerBtn = Instance.new("TextButton")
+		newRstPlayerBtn.Name = "NewResetPlayerButton"
+		newRstPlayerBtn.Size = UDim2.new(1, -140, 1, 0)
+		newRstPlayerBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		newRstPlayerBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+		newRstPlayerBtn.Text = "Reset Player"
+		newRstPlayerBtn.Font = Enum.Font.SourceSansBold
+		newRstPlayerBtn.TextSize = 14
+		newRstPlayerBtn.Parent = newRstPlayerRow
+		Instance.new("UICorner", newRstPlayerBtn).CornerRadius = UDim.new(0, 6)
+
+		newRstPlayerInput = Instance.new("TextBox")
+		newRstPlayerInput.Name = "NewResetPlayerInput"
+		newRstPlayerInput.Size = UDim2.new(0, 134, 1, 0)
+		newRstPlayerInput.Position = UDim2.new(1, -134, 0, 0)
+		newRstPlayerInput.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		newRstPlayerInput.TextColor3 = Color3.fromRGB(255, 255, 255)
+		newRstPlayerInput.PlaceholderText = "Name"
+		newRstPlayerInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		newRstPlayerInput.Text = ""
+		newRstPlayerInput.Font = Enum.Font.SourceSansBold
+		newRstPlayerInput.TextSize = 13
+		newRstPlayerInput.ClearTextOnFocus = false
+		newRstPlayerInput.Parent = newRstPlayerRow
+		Instance.new("UICorner", newRstPlayerInput).CornerRadius = UDim.new(0, 6)
+
+		newRstPlayerInput.FocusLost:Connect(function()
+			newRstTargetName = newRstPlayerInput.Text
+		end)
+
+		newRstPlayerBtn.MouseButton1Click:Connect(function()
+			local sel = newRstPicker and newRstPicker.selectedNames
+			if sel and #sel > 0 then
+				local names = {}
+				for _, n in ipairs(sel) do table.insert(names, n) end
+				executeNewResetNames(names)
+			else
+				newRstTargetName = newRstPlayerInput.Text
+				executeNewResetByName(newRstTargetName)
+			end
+		end)
+
+		newRstPicker = createMultiPlayerPicker({
+			parent = newFrame,
+			order = 312,
+			prefix = "NewReset",
+			statusText = "Select players to reset",
+			onSelect = function(names)
+				if names and #names > 0 then
+					newRstTargetName = names[#names]
+					if newRstPlayerInput then newRstPlayerInput.Text = names[#names] end
+				else
+					newRstTargetName = ""
+					if newRstPlayerInput then newRstPlayerInput.Text = "" end
+				end
+			end,
+		})
+		for _, child in ipairs(newFrame:GetChildren()) do
+			if child.Name:match("^NewReset") and child.Name:match("Picker") then
+				if child.Name:match("TitleBar") then child.LayoutOrder = 312 end
+				if child.Name:match("Search") then child.LayoutOrder = 313 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 314 end
+			end
+		end
+
+		newRstSelectedBtn = createButton("NewResetSelectedButton", "Reset Selected", 315)
+		newRstSelectedBtn.Parent = newFrame
+		newRstSelectedBtn.MouseButton1Click:Connect(function()
+			local sel = newRstPicker and newRstPicker.selectedNames
+			if not sel or #sel == 0 then notify("Reset", "Select players first", 2) return end
+			local names = {}
+			for _, n in ipairs(sel) do table.insert(names, n) end
+			executeNewResetNames(names)
+		end)
+
+		newRstEveryoneBtn = createButton("NewResetEveryoneButton", "Reset Everyone", 316)
+		newRstEveryoneBtn.Parent = newFrame
+		newRstEveryoneBtn.MouseButton1Click:Connect(function()
+			executeNewResetEveryone()
+		end)
+
+		newRstSheriffBtn = createButton("NewResetSheriffButton", "Reset Sheriff/Hero", 318)
+		newRstSheriffBtn.Parent = newFrame
+		newRstSheriffBtn.MouseButton1Click:Connect(function()
+			executeNewResetByRole("Sheriff")
+		end)
+
+		newRstMurdererBtn = createButton("NewResetMurdererButton", "Reset Murderer", 319)
+		newRstMurdererBtn.Parent = newFrame
+		newRstMurdererBtn.MouseButton1Click:Connect(function()
+			executeNewResetByRole("Murderer")
+		end)
+
+		newRstAutoPlayerBtn = createButton("NewAutoResetPlayerButton", "Auto Reset Player: OFF", 320)
+		newRstAutoPlayerBtn.Parent = newFrame
+		newRstAutoPlayerBtn.MouseButton1Click:Connect(function()
+			toggleNewRstAutoPlayer()
+			setToggleState(newRstAutoPlayerBtn, newRstAutoPlayerEnabled, "Auto Reset Player: ON", "Auto Reset Player: OFF")
+			setExtractedBtnState("Auto Reset Player", newRstAutoPlayerEnabled)
+		end)
+
+		newRstAutoEveryoneBtn = createButton("NewAutoResetEveryoneButton", "Auto Reset Everyone: OFF", 322)
+		newRstAutoEveryoneBtn.Parent = newFrame
+		newRstAutoEveryoneBtn.MouseButton1Click:Connect(function()
+			toggleNewRstAutoEveryone()
+			setToggleState(newRstAutoEveryoneBtn, newRstAutoEveryoneEnabled, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF")
+			setExtractedBtnState("Auto Reset Everyone", newRstAutoEveryoneEnabled)
+		end)
+
+		newRstAutoSheriffBtn = createButton("NewAutoResetSheriffButton", "Auto Reset Sheriff/Hero: OFF", 324)
+		newRstAutoSheriffBtn.Parent = newFrame
+		newRstAutoSheriffBtn.MouseButton1Click:Connect(function()
+			toggleNewRstAutoSheriff()
+			setToggleState(newRstAutoSheriffBtn, newRstAutoSheriffEnabled, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF")
+			setExtractedBtnState("Auto Reset Sheriff/Hero", newRstAutoSheriffEnabled)
+		end)
+
+		newRstAutoMurdererBtn = createButton("NewAutoResetMurdererButton", "Auto Reset Murderer: OFF", 325)
+		newRstAutoMurdererBtn.Parent = newFrame
+		newRstAutoMurdererBtn.MouseButton1Click:Connect(function()
+			toggleNewRstAutoMurderer()
+			setToggleState(newRstAutoMurdererBtn, newRstAutoMurdererEnabled, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF")
+			setExtractedBtnState("Auto Reset Murderer", newRstAutoMurdererEnabled)
+		end)
+
+		newRstWatchMurdererPicker = createMultiPlayerPicker({
+			parent = newFrame,
+			order = 326,
+			prefix = "NewWatchMurderer",
+			statusText = "Watch players -> Murderer => Reset Sheriff",
+		})
+		for _, child in ipairs(newFrame:GetChildren()) do
+			if child.Name:match("^NewWatchMurderer") and child.Name:match("Picker") then
+				if child.Name:match("TitleBar") then child.LayoutOrder = 326 end
+				if child.Name:match("Search") then child.LayoutOrder = 327 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 328 end
+			end
+		end
+
+		newRstWatchSheriffPicker = createMultiPlayerPicker({
+			parent = newFrame,
+			order = 329,
+			prefix = "NewWatchSheriff",
+			statusText = "Watch players -> Sheriff => Reset Murderer",
+		})
+		for _, child in ipairs(newFrame:GetChildren()) do
+			if child.Name:match("^NewWatchSheriff") and child.Name:match("Picker") then
+				if child.Name:match("TitleBar") then child.LayoutOrder = 329 end
+				if child.Name:match("Search") then child.LayoutOrder = 330 end
+				if child.Name:match("Frame") and not child.Name:match("Scroll") then child.LayoutOrder = 331 end
+			end
+		end
+
+		currentCategory = _prevCat
+	end
+end
+
+do
+	-- New Reset tuning rows (technology params + intervals), parented directly to new Reset frame
+	local newFrame2 = categoryFrames["Reset"]
+	if newFrame2 then
+		newRstEveryoneIntervalRow = Instance.new("Frame")
+		newRstEveryoneIntervalRow.Name = "NewResetEveryoneIntervalRow"
+		newRstEveryoneIntervalRow.Size = UDim2.new(1, 0, 0, 42)
+		newRstEveryoneIntervalRow.BackgroundTransparency = 1
+		newRstEveryoneIntervalRow.LayoutOrder = 317
+		newRstEveryoneIntervalRow.Parent = newFrame2
+
+		local l1 = Instance.new("TextLabel")
+		l1.Size = UDim2.new(1, -80, 1, 0)
+		l1.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		l1.TextColor3 = Color3.fromRGB(255, 255, 255)
+		l1.Text = "Reset Everyone Interval (Seconds)"
+		l1.Font = Enum.Font.SourceSansBold
+		l1.TextSize = 14
+		l1.Parent = newRstEveryoneIntervalRow
+		Instance.new("UICorner", l1).CornerRadius = UDim.new(0, 6)
+
+		newRstEveryoneIntervalBox = Instance.new("TextBox")
+		newRstEveryoneIntervalBox.Name = "NewResetEveryoneIntervalInput"
+		newRstEveryoneIntervalBox.Size = UDim2.new(0, 74, 1, 0)
+		newRstEveryoneIntervalBox.Position = UDim2.new(1, -74, 0, 0)
+		newRstEveryoneIntervalBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		newRstEveryoneIntervalBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+		newRstEveryoneIntervalBox.Text = tostring(newRstEveryoneInterval)
+		newRstEveryoneIntervalBox.PlaceholderText = "Seconds"
+		newRstEveryoneIntervalBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		newRstEveryoneIntervalBox.Font = Enum.Font.SourceSansBold
+		newRstEveryoneIntervalBox.TextSize = 14
+		newRstEveryoneIntervalBox.ClearTextOnFocus = false
+		newRstEveryoneIntervalBox.Parent = newRstEveryoneIntervalRow
+		Instance.new("UICorner", newRstEveryoneIntervalBox).CornerRadius = UDim.new(0, 6)
+		newRstEveryoneIntervalBox.FocusLost:Connect(function()
+			local n = tonumber(newRstEveryoneIntervalBox.Text)
+			if n then newRstEveryoneInterval = math.clamp(n, 0.5, 10) end
+			newRstEveryoneIntervalBox.Text = tostring(newRstEveryoneInterval)
+			pcall(saveConfig)
+		end)
+
+		newRstAutoPlayerIntervalRow = Instance.new("Frame")
+		newRstAutoPlayerIntervalRow.Name = "NewAutoResetPlayerIntervalRow"
+		newRstAutoPlayerIntervalRow.Size = UDim2.new(1, 0, 0, 42)
+		newRstAutoPlayerIntervalRow.BackgroundTransparency = 1
+		newRstAutoPlayerIntervalRow.LayoutOrder = 321
+		newRstAutoPlayerIntervalRow.Parent = newFrame2
+
+		local l2 = Instance.new("TextLabel")
+		l2.Size = UDim2.new(1, -80, 1, 0)
+		l2.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		l2.TextColor3 = Color3.fromRGB(255, 255, 255)
+		l2.Text = "Auto Reset Player Interval (Seconds)"
+		l2.Font = Enum.Font.SourceSansBold
+		l2.TextSize = 14
+		l2.Parent = newRstAutoPlayerIntervalRow
+		Instance.new("UICorner", l2).CornerRadius = UDim.new(0, 6)
+
+		newRstAutoPlayerIntervalBox = Instance.new("TextBox")
+		newRstAutoPlayerIntervalBox.Name = "NewAutoResetPlayerIntervalInput"
+		newRstAutoPlayerIntervalBox.Size = UDim2.new(0, 74, 1, 0)
+		newRstAutoPlayerIntervalBox.Position = UDim2.new(1, -74, 0, 0)
+		newRstAutoPlayerIntervalBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		newRstAutoPlayerIntervalBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+		newRstAutoPlayerIntervalBox.Text = tostring(newRstAutoPlayerInterval)
+		newRstAutoPlayerIntervalBox.PlaceholderText = "Seconds"
+		newRstAutoPlayerIntervalBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		newRstAutoPlayerIntervalBox.Font = Enum.Font.SourceSansBold
+		newRstAutoPlayerIntervalBox.TextSize = 14
+		newRstAutoPlayerIntervalBox.ClearTextOnFocus = false
+		newRstAutoPlayerIntervalBox.Parent = newRstAutoPlayerIntervalRow
+		Instance.new("UICorner", newRstAutoPlayerIntervalBox).CornerRadius = UDim.new(0, 6)
+		newRstAutoPlayerIntervalBox.FocusLost:Connect(function()
+			local n = tonumber(newRstAutoPlayerIntervalBox.Text)
+			if n then newRstAutoPlayerInterval = math.clamp(n, 0.5, 30) end
+			newRstAutoPlayerIntervalBox.Text = tostring(newRstAutoPlayerInterval)
+			pcall(saveConfig)
+		end)
+
+		newRstAutoEveryoneIntervalRow = Instance.new("Frame")
+		newRstAutoEveryoneIntervalRow.Name = "NewAutoResetEveryoneIntervalRow"
+		newRstAutoEveryoneIntervalRow.Size = UDim2.new(1, 0, 0, 42)
+		newRstAutoEveryoneIntervalRow.BackgroundTransparency = 1
+		newRstAutoEveryoneIntervalRow.LayoutOrder = 323
+		newRstAutoEveryoneIntervalRow.Parent = newFrame2
+
+		local l3 = Instance.new("TextLabel")
+		l3.Size = UDim2.new(1, -80, 1, 0)
+		l3.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		l3.TextColor3 = Color3.fromRGB(255, 255, 255)
+		l3.Text = "Auto Reset Everyone Interval (Seconds)"
+		l3.Font = Enum.Font.SourceSansBold
+		l3.TextSize = 14
+		l3.Parent = newRstAutoEveryoneIntervalRow
+		Instance.new("UICorner", l3).CornerRadius = UDim.new(0, 6)
+
+		newRstAutoEveryoneIntervalBox = Instance.new("TextBox")
+		newRstAutoEveryoneIntervalBox.Name = "NewAutoResetEveryoneIntervalInput"
+		newRstAutoEveryoneIntervalBox.Size = UDim2.new(0, 74, 1, 0)
+		newRstAutoEveryoneIntervalBox.Position = UDim2.new(1, -74, 0, 0)
+		newRstAutoEveryoneIntervalBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		newRstAutoEveryoneIntervalBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+		newRstAutoEveryoneIntervalBox.Text = tostring(newRstAutoEveryoneInterval)
+		newRstAutoEveryoneIntervalBox.PlaceholderText = "Seconds"
+		newRstAutoEveryoneIntervalBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		newRstAutoEveryoneIntervalBox.Font = Enum.Font.SourceSansBold
+		newRstAutoEveryoneIntervalBox.TextSize = 14
+		newRstAutoEveryoneIntervalBox.ClearTextOnFocus = false
+		newRstAutoEveryoneIntervalBox.Parent = newRstAutoEveryoneIntervalRow
+		Instance.new("UICorner", newRstAutoEveryoneIntervalBox).CornerRadius = UDim.new(0, 6)
+		newRstAutoEveryoneIntervalBox.FocusLost:Connect(function()
+			local n = tonumber(newRstAutoEveryoneIntervalBox.Text)
+			if n then newRstAutoEveryoneInterval = math.clamp(n, 0.2, 10) end
+			newRstAutoEveryoneIntervalBox.Text = tostring(newRstAutoEveryoneInterval)
+			pcall(saveConfig)
+		end)
+
+		newRstDurationRow = Instance.new("Frame")
+		newRstDurationRow.Name = "NewResetDurationRow"
+		newRstDurationRow.Size = UDim2.new(1, 0, 0, 42)
+		newRstDurationRow.BackgroundTransparency = 1
+		newRstDurationRow.LayoutOrder = 332
+		newRstDurationRow.Parent = newFrame2
+
+		local l4 = Instance.new("TextLabel")
+		l4.Size = UDim2.new(1, -80, 1, 0)
+		l4.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		l4.TextColor3 = Color3.fromRGB(255, 255, 255)
+		l4.Text = "Reset Duration (Seconds)"
+		l4.Font = Enum.Font.SourceSansBold
+		l4.TextSize = 14
+		l4.Parent = newRstDurationRow
+		Instance.new("UICorner", l4).CornerRadius = UDim.new(0, 6)
+
+		newRstDurationBox = Instance.new("TextBox")
+		newRstDurationBox.Name = "NewResetDurationInput"
+		newRstDurationBox.Size = UDim2.new(0, 74, 1, 0)
+		newRstDurationBox.Position = UDim2.new(1, -74, 0, 0)
+		newRstDurationBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		newRstDurationBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+		newRstDurationBox.Text = tostring(newRstDuration)
+		newRstDurationBox.PlaceholderText = "Sec"
+		newRstDurationBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		newRstDurationBox.Font = Enum.Font.SourceSansBold
+		newRstDurationBox.TextSize = 14
+		newRstDurationBox.ClearTextOnFocus = false
+		newRstDurationBox.Parent = newRstDurationRow
+		Instance.new("UICorner", newRstDurationBox).CornerRadius = UDim.new(0, 6)
+		newRstDurationBox.FocusLost:Connect(function()
+			local n = tonumber(newRstDurationBox.Text)
+			if n and n > 0 then newRstDuration = n else newRstDuration = 0.35 end
+			newRstDurationBox.Text = tostring(newRstDuration)
+			pcall(saveConfig)
+		end)
+
+		newRstStartStudsRow = Instance.new("Frame")
+		newRstStartStudsRow.Name = "NewResetStartStudsRow"
+		newRstStartStudsRow.Size = UDim2.new(1, 0, 0, 42)
+		newRstStartStudsRow.BackgroundTransparency = 1
+		newRstStartStudsRow.LayoutOrder = 333
+		newRstStartStudsRow.Parent = newFrame2
+
+		local l5 = Instance.new("TextLabel")
+		l5.Size = UDim2.new(1, -80, 1, 0)
+		l5.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		l5.TextColor3 = Color3.fromRGB(255, 255, 255)
+		l5.Text = "Reset Start Studs"
+		l5.Font = Enum.Font.SourceSansBold
+		l5.TextSize = 14
+		l5.Parent = newRstStartStudsRow
+		Instance.new("UICorner", l5).CornerRadius = UDim.new(0, 6)
+
+		newRstStartStudsBox = Instance.new("TextBox")
+		newRstStartStudsBox.Name = "NewResetStartStudsInput"
+		newRstStartStudsBox.Size = UDim2.new(0, 74, 1, 0)
+		newRstStartStudsBox.Position = UDim2.new(1, -74, 0, 0)
+		newRstStartStudsBox.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+		newRstStartStudsBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+		newRstStartStudsBox.Text = tostring(newRstStartStuds)
+		newRstStartStudsBox.PlaceholderText = "Studs"
+		newRstStartStudsBox.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+		newRstStartStudsBox.Font = Enum.Font.SourceSansBold
+		newRstStartStudsBox.TextSize = 14
+		newRstStartStudsBox.ClearTextOnFocus = false
+		newRstStartStudsBox.Parent = newRstStartStudsRow
+		Instance.new("UICorner", newRstStartStudsBox).CornerRadius = UDim.new(0, 6)
+		newRstStartStudsBox.FocusLost:Connect(function()
+			local n = tonumber(newRstStartStudsBox.Text)
+			if n and n >= 0 then newRstStartStuds = n else newRstStartStuds = 5 end
+			newRstStartStudsBox.Text = tostring(newRstStartStuds)
+			pcall(saveConfig)
+		end)
+	end
+end
+
+-- Watch-role loop for NEW Reset (uses new sweep technology, no Touch Fling forcing)
+newRstWatchTrackedMurderers = {}
+newRstWatchTrackedSheriffs = {}
+newRstWatchLoopingSheriff = false
+newRstWatchLoopingMurderer = false
+
+task.spawn(function()
+	while true do
+		task.wait(0.5)
+		local watchNamesM = (newRstWatchMurdererPicker and newRstWatchMurdererPicker.selectedNames) or {}
+		local watchNamesS = (newRstWatchSheriffPicker and newRstWatchSheriffPicker.selectedNames) or {}
+		if #watchNamesM == 0 and #watchNamesS == 0 then
+			newRstWatchTrackedMurderers = {}
+			newRstWatchTrackedSheriffs = {}
+		else
+			local curMurderer, curSheriff = "", ""
+			pcall(function()
+				local ok2, res2 = pcall(function() return invokePlayerData() end)
+				if ok2 and res2 then
+					for name, data in pairs(res2) do
+						if data.Role == "Murderer" then curMurderer = name end
+						if data.Role == "Sheriff" then curSheriff = name end
+					end
+				end
+			end)
+			for _, watchName in ipairs(watchNamesM) do
+				if curMurderer == watchName and not newRstWatchTrackedMurderers[watchName] and not newRstWatchLoopingSheriff then
+					newRstWatchTrackedMurderers[watchName] = true
+					notify("Watch Role", watchName .. " became Murderer — resetting Sheriff! (New)", 3)
+					newRstWatchLoopingSheriff = true
+					task.spawn(function()
+						for _ri = 1, 2 do
+							pcall(executeNewResetByRole, "Sheriff")
+							newRstWaitDone(3)
+							if _ri < 2 then task.wait(1.5) end
+						end
+						newRstWatchLoopingSheriff = false
+					end)
+				end
+			end
+			for name, _ in pairs(newRstWatchTrackedMurderers) do
+				if curMurderer ~= name then newRstWatchTrackedMurderers[name] = nil end
+			end
+			for _, watchName in ipairs(watchNamesS) do
+				if curSheriff == watchName and not newRstWatchTrackedSheriffs[watchName] and not newRstWatchLoopingMurderer then
+					newRstWatchTrackedSheriffs[watchName] = true
+					notify("Watch Role", watchName .. " became Sheriff — resetting Murderer! (New)", 3)
+					newRstWatchLoopingMurderer = true
+					task.spawn(function()
+						for _ri = 1, 2 do
+							pcall(executeNewResetByRole, "Murderer")
+							newRstWaitDone(3)
+							if _ri < 2 then task.wait(1.5) end
+						end
+						newRstWatchLoopingMurderer = false
+					end)
+				end
+			end
+			for name, _ in pairs(newRstWatchTrackedSheriffs) do
+				if curSheriff ~= name then newRstWatchTrackedSheriffs[name] = nil end
+			end
+		end
+	end
+end)
 
 do
 	local combatEndFrame = categoryFrames["Combat"]
@@ -29839,6 +31045,11 @@ task.defer(function()
 				if ui and ui.PopOut then ui.PopOut.Text = "★" end
 			end)
 		end
+	end
+	-- Re-apply Hide Mini Buttons: this restore can run before restoreFullConfig
+	-- reaches its own apply step, otherwise lock buttons reappear after a rejoin.
+	if hideMiniButtonsEnabled then
+		pcall(applyHideMiniButtons)
 	end
 end)
 
