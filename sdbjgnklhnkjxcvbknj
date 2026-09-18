@@ -286,6 +286,8 @@ function saveConfig()
 	config.toggles.aimWallbangEnabled = aimWallbangEnabled
 	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled
 	config.toggles.aimAutoWallEnabled = aimAutoWallEnabled
+	config.toggles.manualsEnabled = manualsEnabled
+	config.toggles.manualsSide = manualsSide
 	config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
 	config.toggles.flickShotEnabled = flickShotEnabled
 	config.toggles.spin360Enabled = spin360Enabled
@@ -974,7 +976,12 @@ function antiAimStep(dt)
 	local interval = 1 / math.max(1, antiAimSpeed)
 	if (not antiAimYaw) or antiAimRandTimer >= interval then
 		antiAimRandTimer = 0
-		antiAimYaw = math.random() * math.pi * 2
+		local peekYaw = manualsPeekYaw()
+		if peekYaw ~= nil then
+			antiAimYaw = peekYaw
+		else
+			antiAimYaw = math.random() * math.pi * 2
+		end
 		-- Only horizontal (yaw) rotation — no vertical pitch/roll jitter
 		antiAimPitch = 0
 		antiAimRoll = 0
@@ -1101,7 +1108,12 @@ function fakeDuckAntiAimStep(dt)
 	local interval = 1 / math.max(1, fakeDuckAntiAimSpeed)
 	if (not fakeDuckYaw) or fakeDuckRandTimer >= interval then
 		fakeDuckRandTimer = 0
-		fakeDuckYaw = math.random() * math.pi * 2
+		local peekYaw = manualsPeekYaw()
+		if peekYaw ~= nil then
+			fakeDuckYaw = peekYaw
+		else
+			fakeDuckYaw = math.random() * math.pi * 2
+		end
 	end
 	hrp.CFrame = CFrame.new(pos) * CFrame.Angles(0, fakeDuckYaw, 0)
 	antiAimEnsureAnim(hum)
@@ -1192,6 +1204,53 @@ function toggleFakeDuck()
 	end
 	setToggleState(fakeDuckButton, fakeDuckEnabled, "Fake Duck: ON", "Fake Duck: OFF")
 	setExtractedBtnState("Fake Duck", fakeDuckEnabled)
+end
+
+-- ============================================================
+-- AA/FQ Manuals: peek assist, works ONLY paired with Anti-Aim or Fake Duck.
+-- Constrains the spin to a small jitter window around the chosen peek side
+-- (Left/Right are mutually exclusive) instead of a full 360 spin, so you can
+-- peek around a wall edge without facing it. Spin rate follows the paired
+-- function (antiAimSpeed / fakeDuckAntiAimSpeed).
+-- ============================================================
+manualsEnabled = false
+manualsSide = "Right"
+manualsPeekDeg = 90
+manualsJitterDeg = 30
+
+function manualsPeekYaw()
+	if not manualsEnabled then return nil end
+	if not (antiAimIsActive() or fakeDuckEnabled) then return nil end
+	local char = player.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	local cam = workspace.CurrentCamera
+	if not (hrp and cam) then return nil end
+	local lv = cam.CFrame.LookVector
+	local fx, fz = lv.X, lv.Z
+	if (fx * fx + fz * fz) < 0.0001 then return nil end
+	local base = math.atan2(-fx, -fz)
+	local sideSign = (manualsSide == "Left") and 1 or -1
+	local peek = base + sideSign * math.rad(manualsPeekDeg)
+	local j = math.rad(manualsJitterDeg)
+	return peek + (math.random() * 2 - 1) * j
+end
+
+function toggleManuals()
+	manualsEnabled = not manualsEnabled
+	setToggleState(manualsBtn, manualsEnabled, "AA/FQ Manuals: ON", "AA/FQ Manuals: OFF")
+	setExtractedBtnState("AA/FQ Manuals", manualsEnabled)
+	saveConfig()
+end
+
+function manualsSetSide(side)
+	if side ~= "Left" and side ~= "Right" then return end
+	manualsSide = side
+	if manualsSideSelect then manualsSideSelect.Text = side .. " ▼" end
+	saveConfig()
+end
+
+function manualsSwitchSide()
+	manualsSetSide(manualsSide == "Left" and "Right" or "Left")
 end
 
 -- LoopSpeed functions
@@ -12927,28 +12986,47 @@ end)
 
 -- AutoWall: same technique as Auto Shoot Murderer (predicted fire at the same
 -- cooldown), but fires ONLY while the murderer is in line of sight — never
--- through walls.
+-- through walls. MAX SPEED: the hidden→visible edge bypasses the cooldown and
+-- fires instantly, and a stale role cache is refreshed in the background.
 aimAutoWallEnabled = false
--- NOTE: global (not local) on purpose: the chunk is at the local-registers limit.
+-- NOTE: globals (not locals) on purpose: the chunk is at the local-registers limit.
 aimLastAutoWallAt = 0
+aimWallWasVisible = false
+aimWallLastRoleRefresh = 0
 
 task.spawn(function()
 	while true do
 		RunService.Heartbeat:Wait()
 		pcall(function()
-			if not aimAutoWallEnabled then return end
+			if not aimAutoWallEnabled then aimWallWasVisible = false; return end
 			local char = player.Character
 			local bp = player:FindFirstChild("Backpack")
 			local hasGun = char and (char:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")))
-			if not hasGun then return end
+			if not hasGun then aimWallWasVisible = false; return end
 			local now = os.clock()
-			-- Rate limit: same cooldown as Auto Shoot Murderer.
-			if (now - aimLastAutoWallAt) < (AIM_CONFIG.autoShotCooldown or 0.35) then return end
 			local murderer = aimFindMurderer()
-			if murderer and murderer ~= player and aimMurdererAlive(murderer) and aimHasLineOfSight(murderer) then
-				local ok, fired = pcall(aimFireGunAtOriginal, murderer, AIM_CONFIG.autoShotBurst)
-				if ok and fired then aimLastAutoWallAt = now end
+			if not murderer and (now - aimWallLastRoleRefresh) > 0.08 then
+				aimWallLastRoleRefresh = now
+				task.spawn(function()
+					if not autoShotGunRoleRefreshing then
+						autoShotGunRoleRefreshing = true
+						pcall(aimRefreshRoleNow)
+						autoShotGunRoleRefreshing = false
+					end
+				end)
+				murderer = aimFindMurderer()
 			end
+			local visible = murderer and murderer ~= player and aimMurdererAlive(murderer) and aimHasLineOfSight(murderer)
+			if not visible then aimWallWasVisible = false; return end
+			-- Just peeked out: fire instantly, bypassing the cooldown.
+			-- While staying visible, keep the normal rate limit.
+			if not aimWallWasVisible then
+				aimWallWasVisible = true
+			elseif (now - aimLastAutoWallAt) < (AIM_CONFIG.autoShotCooldown or 0.35) then
+				return
+			end
+			local ok, fired = pcall(aimFireGunAtOriginal, murderer, AIM_CONFIG.autoShotBurst)
+			if ok and fired then aimLastAutoWallAt = now end
 		end)
 	end
 end)
@@ -14059,6 +14137,86 @@ do
 		end
 	end)
 end
+
+-- ===== AA/FQ Manuals: toggle button + peek-side dropdown (same row pattern as Auto TP Before Farm) =====
+manualsSides = {"Right", "Left"}
+
+manualsRow = Instance.new("Frame")
+manualsRow.Name = "ManualsRow"
+manualsRow.Size = UDim2.new(1, 0, 0, 42)
+manualsRow.BackgroundTransparency = 1
+manualsRow.LayoutOrder = 215.5
+manualsRow.Parent = categoryFrames["Combat"]
+
+manualsBtn = Instance.new("TextButton")
+manualsBtn.Name = "ManualsButton"
+manualsBtn.Size = UDim2.new(0.5, -2, 1, 0)
+manualsBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+manualsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+manualsBtn.Text = "AA/FQ Manuals: OFF"
+manualsBtn.Font = Enum.Font.SourceSansBold
+manualsBtn.TextSize = 14
+manualsBtn.Parent = manualsRow
+Instance.new("UICorner", manualsBtn).CornerRadius = UDim.new(0, 6)
+manualsBtn.MouseButton1Click:Connect(function()
+	toggleManuals()
+end)
+
+manualsSideSelect = Instance.new("TextButton")
+manualsSideSelect.Size = UDim2.new(0.5, -2, 1, 0)
+manualsSideSelect.Position = UDim2.new(0.5, 2, 0, 0)
+manualsSideSelect.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+manualsSideSelect.TextColor3 = Color3.fromRGB(255, 255, 255)
+manualsSideSelect.Text = "Right ▼"
+manualsSideSelect.Font = Enum.Font.SourceSansBold
+manualsSideSelect.TextSize = 14
+manualsSideSelect.AutoButtonColor = false
+manualsSideSelect.Parent = manualsRow
+Instance.new("UICorner", manualsSideSelect).CornerRadius = UDim.new(0, 6)
+
+manualsSideDropdownFrame = Instance.new("Frame")
+manualsSideDropdownFrame.Size = UDim2.new(0.5, -2, 0, math.min(#manualsSides * 30, 180))
+manualsSideDropdownFrame.Position = UDim2.new(0.5, 2, 0, 42)
+manualsSideDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+manualsSideDropdownFrame.BorderSizePixel = 0
+manualsSideDropdownFrame.Visible = false
+manualsSideDropdownFrame.ZIndex = 10
+manualsSideDropdownFrame.Parent = manualsRow
+
+manualsSideDropdownList = Instance.new("ScrollingFrame")
+manualsSideDropdownList.Size = UDim2.new(1, 0, 1, 0)
+manualsSideDropdownList.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+manualsSideDropdownList.BorderSizePixel = 0
+manualsSideDropdownList.ScrollBarThickness = 4
+manualsSideDropdownList.CanvasSize = UDim2.new(0, 0, 0, #manualsSides * 30)
+manualsSideDropdownList.ZIndex = 10
+manualsSideDropdownList.Parent = manualsSideDropdownFrame
+Instance.new("UICorner", manualsSideDropdownList).CornerRadius = UDim.new(0, 6)
+
+for i, modeName in ipairs(manualsSides) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 30)
+	btn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+	btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Text = modeName
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 14
+	btn.AutoButtonColor = false
+	btn.ZIndex = 10
+	btn.Parent = manualsSideDropdownList
+	btn.MouseButton1Click:Connect(function()
+		manualsSetSide(modeName)
+		manualsSideSelect.Text = modeName .. " ▼"
+		manualsSideDropdownFrame.Visible = false
+	end)
+	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+end
+manualsSideSelect.MouseButton1Click:Connect(function()
+	manualsSideDropdownFrame.Visible = not manualsSideDropdownFrame.Visible
+	refreshDropdownArrow(manualsSideSelect, manualsSideDropdownFrame)
+end)
 
 -- Anti-Lag (toggleable): removes particles, visual effects, decals/textures,
 -- smooths part materials and hides the sky to boost FPS. Every change is recorded
@@ -21782,6 +21940,15 @@ bindableFeatures = {
 		bindToggleStates["Anti-Aim"] = (currentMode ~= 0)
 		setExtractedBtnState("Anti-Aim", currentMode ~= 0)
 	end},
+	{name = "AA/FQ Manuals", defaultKey = nil, getState = function() return manualsEnabled end, callback = function()
+		toggleManuals()
+		bindToggleStates["AA/FQ Manuals"] = manualsEnabled
+		setExtractedBtnState("AA/FQ Manuals", manualsEnabled)
+	end},
+	{name = "Manuals: Side", defaultKey = nil, getState = function() return manualsEnabled end, callback = function()
+		manualsSwitchSide()
+		bindToggleStates["Manuals: Side"] = manualsEnabled
+	end},
 	{name = "Auto Dodge Knife", defaultKey = nil, getState = function() return autoDodgeEnabled end, callback = function()
 		toggleAutoDodge()
 		setToggleState(autoDodgeButton, autoDodgeEnabled, "Auto Dodge Knife: ON", "Auto Dodge Knife: OFF")
@@ -27047,7 +27214,7 @@ function buildConfigData()
 	config.toggles.airStrafeEnabled = airStrafeEnabled; config.toggles.autoResetPlayerEnabled = autoResetPlayerEnabled
 	config.toggles.autoResetEveryoneEnabled = autoResetEveryoneEnabled; config.toggles.autoResetSheriffEnabled = autoResetSheriffEnabled
 	config.toggles.autoResetMurdererEnabled = autoResetMurdererEnabled; config.toggles.aimWallbangEnabled = aimWallbangEnabled
-	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled; config.toggles.aimAutoWallEnabled = aimAutoWallEnabled; config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
+	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled; config.toggles.aimAutoWallEnabled = aimAutoWallEnabled; config.toggles.manualsEnabled = manualsEnabled; config.toggles.manualsSide = manualsSide; config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
 	config.toggles.flickShotEnabled = flickShotEnabled
 	config.toggles.spin360Enabled = spin360Enabled
 	config.toggles.layEnabled = layEnabled
@@ -27475,6 +27642,13 @@ btnFeatures = {
 	 toggle = function() cycleMode(); local modeText = currentMode == 0 and "Anti-Aim: OFF" or "Anti-Aim: ON"; setExtractedBtnState("Anti-Aim", currentMode ~= 0, modeText) end,
 	 getState = function() return currentMode ~= 0 end,
 	 getStatusText = function() return currentMode == 0 and "Anti-Aim: OFF" or "Anti-Aim: ON" end},
+	{name = "AA/FQ Manuals",
+	 toggle = function() toggleManuals() end,
+	 getState = function() return manualsEnabled end,
+	 getStatusText = function() return manualsEnabled and "AA/FQ Manuals: ON" or "AA/FQ Manuals: OFF" end},
+	{name = "Manuals: Side",
+	 toggle = function() manualsSwitchSide() end,
+	 getState = function() return manualsEnabled end},
 	{name = "Fake Duck",
 	 toggle = function() toggleFakeDuck() end,
 	 getState = function() return fakeDuckEnabled end},
@@ -28954,6 +29128,7 @@ function restoreFullConfig()
 	aimWallbangEnabled = T.aimWallbangEnabled or false
 	aimAutoShotEnabled = T.aimAutoShotEnabled or false
 	aimAutoWallEnabled = T.aimAutoWallEnabled or false
+	manualsEnabled = T.manualsEnabled or false
 	aimLmbShootEnabled = T.aimLmbShootEnabled or false
 	flickShotEnabled = T.flickShotEnabled or false
 	spin360Enabled = T.spin360Enabled or false
@@ -29709,6 +29884,9 @@ function restoreFullConfig()
 	aimAutoWallEnabled = false
 	if autoWallButton then setToggleState(autoWallButton, false, "AutoWall: ON", "AutoWall: OFF") end
 	setExtractedBtnState("AutoWall", false)
+	manualsEnabled = false
+	if manualsBtn then setToggleState(manualsBtn, false, "AA/FQ Manuals: ON", "AA/FQ Manuals: OFF") end
+	setExtractedBtnState("AA/FQ Manuals", false)
 	aimLmbShootEnabled = false
 	if lmbShootButton then setToggleState(lmbShootButton, false, "LMB Shoot: ON", "LMB Shoot: OFF") end
 	setExtractedBtnState("LMB Shoot", false)
@@ -30039,6 +30217,13 @@ function restoreFullConfig()
 		aimAutoWallEnabled = true
 		if autoWallButton then setToggleState(autoWallButton, true, "AutoWall: ON", "AutoWall: OFF") end
 		setExtractedBtnState("AutoWall", true)
+	end
+	if T.manualsSide == "Left" or T.manualsSide == "Right" then manualsSide = T.manualsSide end
+	if manualsSideSelect then manualsSideSelect.Text = manualsSide .. " ▼" end
+	if T.manualsEnabled then
+		manualsEnabled = true
+		if manualsBtn then setToggleState(manualsBtn, true, "AA/FQ Manuals: ON", "AA/FQ Manuals: OFF") end
+		setExtractedBtnState("AA/FQ Manuals", true)
 	end
 	if T.aimLmbShootEnabled then
 		aimLmbShootEnabled = true
