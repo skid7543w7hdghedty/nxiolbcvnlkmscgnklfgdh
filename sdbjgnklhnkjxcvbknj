@@ -1026,6 +1026,9 @@ end
 
 function cycleMode()
 	if currentMode == 0 then
+		-- Mutually exclusive with Fake Duck (both drive rotation): enabling
+		-- Anti-Aim turns Fake Duck off, like Anti-Shoot vs Desync.
+		if fakeDuckEnabled then toggleFakeDuck() end
 		currentMode = 1
 		running = true
 		antiAimYaw = nil
@@ -1174,6 +1177,10 @@ function toggleFakeDuck()
 			if loopSpeedEnabled then setupLoopSpeed() end
 		end
 	else
+		-- Mutually exclusive with Anti-Aim (both drive rotation): enabling
+		-- Fake Duck turns Anti-Aim off, like Anti-Shoot vs Desync.
+		if currentMode ~= 0 then cycleMode() end
+		setExtractedBtnState("Anti-Aim", false)
 		-- Save current LoopSpeed and set to 10
 		if loopSpeedEnabled then
 			loopSpeedPreFakeDuck = loopSpeedValue
