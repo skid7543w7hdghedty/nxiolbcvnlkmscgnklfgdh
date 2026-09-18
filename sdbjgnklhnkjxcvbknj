@@ -285,6 +285,7 @@ function saveConfig()
 	config.toggles.newRstAutoMurdererEnabled = newRstAutoMurdererEnabled
 	config.toggles.aimWallbangEnabled = aimWallbangEnabled
 	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled
+	config.toggles.aimAutoWallEnabled = aimAutoWallEnabled
 	config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
 	config.toggles.flickShotEnabled = flickShotEnabled
 	config.toggles.spin360Enabled = spin360Enabled
@@ -4973,7 +4974,7 @@ mainBgImage.ScaleType = Enum.ScaleType.Crop
 mainBgImage.Parent = mainFrame
 
 -- Background image file helpers
-local function findBgFiles()
+function findBgFiles()
 	local images = {}
 	local ok, files = pcall(function() return listfiles(MAIN_DIR) end)
 	if ok then
@@ -4987,7 +4988,7 @@ local function findBgFiles()
 	return images
 end
 
-local function findClickSoundFiles()
+function findClickSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(CLICK_SOUNDS_DIR) end)
 	if ok then
@@ -5001,7 +5002,7 @@ local function findClickSoundFiles()
 	return files
 end
 
-local function findWinSoundFiles()
+function findWinSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(WIN_SOUNDS_DIR) end)
 	if ok then
@@ -5015,7 +5016,7 @@ local function findWinSoundFiles()
 	return files
 end
 
-local function findStartupSoundFiles()
+function findStartupSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(STARTUP_SOUND_DIR) end)
 	if ok then
@@ -5033,7 +5034,7 @@ end
 -- [perf deferred] winSoundFiles = findWinSoundFiles()
 -- [perf deferred] startupSoundFiles = findStartupSoundFiles()
 
-local function findSheriffDieSoundFiles()
+function findSheriffDieSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(SHERIFF_DIE_SOUND_DIR) end)
 	if ok then
@@ -5047,7 +5048,7 @@ local function findSheriffDieSoundFiles()
 	return files
 end
 
-local function findMurdererDieSoundFiles()
+function findMurdererDieSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(MURDERER_DIE_SOUND_DIR) end)
 	if ok then
@@ -5061,7 +5062,7 @@ local function findMurdererDieSoundFiles()
 	return files
 end
 
-local function findMurdererLeftSoundFiles()
+function findMurdererLeftSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(MURDERER_LEFT_SOUND_DIR) end)
 	if ok then
@@ -5075,7 +5076,7 @@ local function findMurdererLeftSoundFiles()
 	return files
 end
 
-local function findTeamerSoundFiles()
+function findTeamerSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(TEAMERS_SOUND_DIR) end)
 	if ok then
@@ -5089,7 +5090,7 @@ local function findTeamerSoundFiles()
 	return files
 end
 
-local function findExploiterSoundFiles()
+function findExploiterSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(EXPLOITERS_SOUND_DIR) end)
 	if ok then
@@ -5103,7 +5104,7 @@ local function findExploiterSoundFiles()
 	return files
 end
 
-local function findScammerSoundFiles()
+function findScammerSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(SCAMMERS_SOUND_DIR) end)
 	if ok then
@@ -5117,7 +5118,7 @@ local function findScammerSoundFiles()
 	return files
 end
 
-local function findMarkSoundFiles()
+function findMarkSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(MARK_SOUND_DIR) end)
 	if ok then
@@ -5131,7 +5132,7 @@ local function findMarkSoundFiles()
 	return files
 end
 
-local function findUnmarkSoundFiles()
+function findUnmarkSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(UNMARK_SOUND_DIR) end)
 	if ok then
@@ -5145,7 +5146,7 @@ local function findUnmarkSoundFiles()
 	return files
 end
 
-local function findRoundStartSoundFiles()
+function findRoundStartSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(ROUND_START_SOUND_DIR) end)
 	if ok then
@@ -5168,7 +5169,7 @@ end
 -- [perf deferred] unmarkSoundFiles = findUnmarkSoundFiles()
 -- [perf deferred] roundStartSoundFiles = findRoundStartSoundFiles()
 
-local function findVoteStartSoundFiles()
+function findVoteStartSoundFiles()
 	local files = {}
 	local ok, result = pcall(function() return listfiles(VOTE_START_SOUND_DIR) end)
 	if ok then
@@ -5186,7 +5187,7 @@ end
 
 -- [perf deferred] bgImageFiles = findBgFiles()
 
-local function resolveImageAsset(filePath)
+function resolveImageAsset(filePath)
 	if not filePath or filePath == "" then return nil end
 	if filePath:match("^https?://") or filePath:match("^rbxasset") then
 		return filePath
@@ -7243,7 +7244,7 @@ end
 -- dies, so "Reset Sheriff/Hero", "TP to Hero" and "Kill Sheriff" may point at a
 -- dead/old player even though a live one visibly holds the gun. Using the real
 -- tool fixes that. Returns the Player (or nil). Only considers OTHER players.
-local function findCurrentGunHolderPlayer()
+function findCurrentGunHolderPlayer()
 	for _, p in ipairs(Players:GetPlayers()) do
 		if p ~= player then
 			local char = p.Character
@@ -9488,7 +9489,10 @@ tpMapCoords = {
 	House2 = Vector3.new(49, 265, 9057),
 	MilBase = Vector3.new(85, 202, 9195),
 	Workplace = Vector3.new(19, 292, 8936),
-	PoliceStation = Vector3.new(-31, 289, 8927)
+	PoliceStation = Vector3.new(-31, 289, 8927),
+	Hotel2014 = Vector3.new(509, 8, 835),
+	Office2014 = Vector3.new(605, 4, 602),
+	Hospital2014 = Vector3.new(483, 8, 514)
 }
 
 function tpToMap()
@@ -9542,7 +9546,10 @@ tpAboveMapCoords = {
 	Workplace = Vector3.new(-3, 319, 9002),
 	PoliceStation = Vector3.new(-14, 307, 8934),
 	Bank2 = Vector3.new(-5, 328, 9008),
-	BioLab = Vector3.new(539, 322, 9856)
+	BioLab = Vector3.new(539, 322, 9856),
+	Hotel2014 = Vector3.new(401, 37, 837),
+	Office2014 = Vector3.new(597, 17, 648),
+	Hospital2014 = Vector3.new(436, 19, 421)
 }
 
 function tpAboveMap()
@@ -12662,6 +12669,32 @@ function aimFireGunAtOriginal(murderer, burstOverride)
 	return aimFireOnce(shoot, ahead, origin)
 end
 
+-- Line of sight: true when nothing but the two characters sits between our
+-- head and the target's head (i.e. the murderer is NOT behind a wall).
+-- NOTE: global (not local) on purpose: the chunk is at the local-registers
+-- limit, every top-level local counts. Behavior is identical.
+function aimHasLineOfSight(m)
+	local myChar = player.Character
+	local myHead = myChar and (myChar:FindFirstChild("Head") or myChar:FindFirstChild("HumanoidRootPart"))
+	local tChar = m and m.Character
+	local tPart = tChar and (tChar:FindFirstChild("Head") or tChar:FindFirstChild("HumanoidRootPart"))
+	if not (myHead and tPart) then return false end
+	local origin = myHead.Position
+	local dir = tPart.Position - origin
+	if dir.Magnitude < 1e-3 then return true end
+	local ok, hit = pcall(function()
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		local list = {tChar}
+		if myChar then table.insert(list, myChar) end
+		params.FilterDescendantsInstances = list
+		params.IgnoreWater = true
+		return Workspace:Raycast(origin, dir, params)
+	end)
+	if not ok then return false end
+	return hit == nil
+end
+
 -- Red dot on the current murderer (same aim indicator as the standalone script)
 local function aimCreateTargetDot()
 	if aimTargetDot then aimTargetDot:Destroy() end
@@ -12880,6 +12913,34 @@ task.spawn(function()
 				-- immediately instead of waiting a full autoShotCooldown.
 				local ok, fired = pcall(aimFireGunAtOriginal, murderer, AIM_CONFIG.autoShotBurst)
 				if ok and fired then aimLastAutoShotAt = now end
+			end
+		end)
+	end
+end)
+
+-- AutoWall: same technique as Auto Shoot Murderer (predicted fire at the same
+-- cooldown), but fires ONLY while the murderer is in line of sight — never
+-- through walls.
+aimAutoWallEnabled = false
+-- NOTE: global (not local) on purpose: the chunk is at the local-registers limit.
+aimLastAutoWallAt = 0
+
+task.spawn(function()
+	while true do
+		RunService.Heartbeat:Wait()
+		pcall(function()
+			if not aimAutoWallEnabled then return end
+			local char = player.Character
+			local bp = player:FindFirstChild("Backpack")
+			local hasGun = char and (char:FindFirstChild("Gun") or (bp and bp:FindFirstChild("Gun")))
+			if not hasGun then return end
+			local now = os.clock()
+			-- Rate limit: same cooldown as Auto Shoot Murderer.
+			if (now - aimLastAutoWallAt) < (AIM_CONFIG.autoShotCooldown or 0.35) then return end
+			local murderer = aimFindMurderer()
+			if murderer and murderer ~= player and aimMurdererAlive(murderer) and aimHasLineOfSight(murderer) then
+				local ok, fired = pcall(aimFireGunAtOriginal, murderer, AIM_CONFIG.autoShotBurst)
+				if ok and fired then aimLastAutoWallAt = now end
 			end
 		end)
 	end
@@ -13205,6 +13266,13 @@ autoShotButton.MouseButton1Click:Connect(function()
 	aimAutoShotEnabled = not aimAutoShotEnabled
 	setToggleState(autoShotButton, aimAutoShotEnabled, "Auto Shoot Murderer: ON", "Auto Shoot Murderer: OFF")
 	setExtractedBtnState("Auto Shoot Murderer", aimAutoShotEnabled)
+end)
+
+autoWallButton = createButton("AutoWallButton", "AutoWall: OFF", 203.35)
+autoWallButton.MouseButton1Click:Connect(function()
+	aimAutoWallEnabled = not aimAutoWallEnabled
+	setToggleState(autoWallButton, aimAutoWallEnabled, "AutoWall: ON", "AutoWall: OFF")
+	setExtractedBtnState("AutoWall", aimAutoWallEnabled)
 end)
 
 -- ============================================================
@@ -19426,7 +19494,7 @@ emoteAddBtn.TextSize = 14
 emoteAddBtn.Parent = emoteAddRow
 Instance.new("UICorner", emoteAddBtn).CornerRadius = UDim.new(0, 6)
 
-local function saveEmoteOrder()
+function saveEmoteOrder()
 	if not saveConfig then return end
 	pcall(saveConfig)
 end
@@ -19739,11 +19807,11 @@ animAddBtn.Parent = animAddRow
 Instance.new("UICorner", animAddBtn).CornerRadius = UDim.new(0, 6)
 
 
-local function trimEmoteName(raw)
+function trimEmoteName(raw)
 	return (raw or ""):gsub("^%s+", ""):gsub("%s+$", "")
 end
 
-local function saveEmotionOrder()
+function saveEmotionOrder()
 	if not saveConfig then return end
 	pcall(saveConfig)
 end
@@ -20059,7 +20127,8 @@ customSlots = {}
 customSlotDefs = { {"idle1","Idle 1"}, {"idle2","Idle 2"}, {"pose","Pose"}, {"walk","Walk"},
 	{"run","Run"}, {"jump","Jump"}, {"climb","Climb"}, {"fall","Fall"}, {"swim","Swim"}, {"swimidle","Swim Idle"} }
 
-local function customSlotId(holder, child, id)
+-- NOTE: global (not local) on purpose: the chunk is at the local-registers limit.
+function customSlotId(holder, child, id)
 	if not (holder and child and holder:FindFirstChild(child)) then return end
 	-- Only overwrite slots the user actually filled: empty slots stay at their
 	-- default IDs instead of becoming broken "rbxassetid://nil" assets.
@@ -21834,6 +21903,11 @@ bindableFeatures = {
 		aimAutoShotEnabled = not aimAutoShotEnabled
 		setToggleState(autoShotButton, aimAutoShotEnabled, "Auto Shoot Murderer: ON", "Auto Shoot Murderer: OFF")
 		setExtractedBtnState("Auto Shoot Murderer", aimAutoShotEnabled)
+	end},
+	{name = "AutoWall", defaultKey = nil, getState = function() return aimAutoWallEnabled end, callback = function()
+		aimAutoWallEnabled = not aimAutoWallEnabled
+		setToggleState(autoWallButton, aimAutoWallEnabled, "AutoWall: ON", "AutoWall: OFF")
+		setExtractedBtnState("AutoWall", aimAutoWallEnabled)
 	end},
 	{name = "Lay", defaultKey = nil, getState = function() return layEnabled end, callback = function()
 		toggleLay()
@@ -25720,7 +25794,7 @@ bgImageLabel.TextSize = 15
 bgImageLabel.TextXAlignment = Enum.TextXAlignment.Left
 bgImageLabel.Parent = bgImageRow
 
-local function findBgIndex()
+function findBgIndex()
 	bgImageIndex = 0
 	for i, path in ipairs(bgImageFiles) do
 		if path == mainBgImageUrl then
@@ -25864,7 +25938,7 @@ clickSoundLabel.TextSize = 15
 clickSoundLabel.TextXAlignment = Enum.TextXAlignment.Left
 clickSoundLabel.Parent = clickSoundRow
 
-local function findClickSoundIndex()
+function findClickSoundIndex()
 	clickSoundIndex = 0
 	for i, path in ipairs(clickSoundFiles) do
 		if path == clickSoundPath then
@@ -26005,7 +26079,7 @@ toggleSoundLabel.TextSize = 15
 toggleSoundLabel.TextXAlignment = Enum.TextXAlignment.Left
 toggleSoundLabel.Parent = toggleSoundRow
 
-local function findToggleSoundIndex()
+function findToggleSoundIndex()
 	toggleSoundIndex = 0
 	for i, path in ipairs(winSoundFiles) do
 		if path == toggleSoundPath then
@@ -26140,7 +26214,7 @@ startupSoundLabel.TextSize = 15
 startupSoundLabel.TextXAlignment = Enum.TextXAlignment.Left
 startupSoundLabel.Parent = startupSoundRow
 
-local function findStartupSoundIndex()
+function findStartupSoundIndex()
 	startupSoundIndex = 0
 	for i, path in ipairs(startupSoundFiles) do
 		if path == startupSoundPath then
@@ -26917,7 +26991,7 @@ CONFIGS_DIR = "AdrenalinConfigs"
 currentConfigName = "Default"
 autoSaveEnabled = false
 
-local function getConfigFiles()
+function getConfigFiles()
 	ensureFolder()
 	local files = {}
 	local dir = CONFIGS_DIR .. "/"
@@ -26966,7 +27040,7 @@ function buildConfigData()
 	config.toggles.airStrafeEnabled = airStrafeEnabled; config.toggles.autoResetPlayerEnabled = autoResetPlayerEnabled
 	config.toggles.autoResetEveryoneEnabled = autoResetEveryoneEnabled; config.toggles.autoResetSheriffEnabled = autoResetSheriffEnabled
 	config.toggles.autoResetMurdererEnabled = autoResetMurdererEnabled; config.toggles.aimWallbangEnabled = aimWallbangEnabled
-	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled; config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
+	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled; config.toggles.aimAutoWallEnabled = aimAutoWallEnabled; config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
 	config.toggles.flickShotEnabled = flickShotEnabled
 	config.toggles.spin360Enabled = spin360Enabled
 	config.toggles.layEnabled = layEnabled
@@ -27144,7 +27218,7 @@ configDropdownList.Parent = configDropdownFrame
 
 Instance.new("UICorner", configDropdownList).CornerRadius = UDim.new(0, 6)
 
-local function refreshConfigDropdown()
+function refreshConfigDropdown()
 	for _, child in ipairs(configDropdownList:GetChildren()) do
 		if child:IsA("TextButton") then child:Destroy() end
 	end
@@ -27164,19 +27238,10 @@ local function refreshConfigDropdown()
 		btn.ZIndex = 10
 		btn.Parent = configDropdownList
 		btn.MouseButton1Click:Connect(function()
+			-- Selecting only highlights the choice; loading happens
+			-- exclusively via the "Load Config" button below.
 			configListSelect.Text = name .. " ▼"
 			configDropdownFrame.Visible = false
-			-- Load config
-			local fullPath = CONFIGS_DIR .. "/" .. name .. ".json"
-			local ok, data = pcall(function() return readfile(fullPath) end)
-			if ok and data then
-				local decoded = game:GetService("HttpService"):JSONDecode(data)
-				loadedConfig = decoded
-				currentConfigName = name
-				configListLabel.Text = "Config: " .. currentConfigName
-				restoreFullConfig()
-				notify("Config", "Loaded '" .. name .. "'", 2)
-			end
 		end)
 		btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
 		btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
@@ -27245,7 +27310,7 @@ end)
 
 configLoadBtn = createButton("ConfigLoadButton", "Load Config", 733)
 configLoadBtn.MouseButton1Click:Connect(function()
-	local name = configListSelect.Text:gsub(" ▼$", "")
+	local name = configListSelect.Text:gsub(" ▼$", ""):gsub(" ▲$", "")
 	if name and name ~= "" then
 		local fullPath = CONFIGS_DIR .. "/" .. name .. ".json"
 		local ok, data = pcall(function() return readfile(fullPath) end)
@@ -27264,7 +27329,7 @@ end)
 
 configDeleteBtn = createButton("ConfigDeleteButton", "Delete Config", 734)
 configDeleteBtn.MouseButton1Click:Connect(function()
-	local name = configListSelect.Text:gsub(" ▼$", "")
+	local name = configListSelect.Text:gsub(" ▼$", ""):gsub(" ▲$", "")
 	if name and name ~= "" and name ~= "Default" then
 		local fullPath = CONFIGS_DIR .. "/" .. name .. ".json"
 		pcall(function() delfile(fullPath) end)
@@ -27504,6 +27569,9 @@ btnFeatures = {
 	{name = "Auto Shoot Murderer",
 	 toggle = function() aimAutoShotEnabled = not aimAutoShotEnabled; setToggleState(autoShotButton, aimAutoShotEnabled, "Auto Shoot Murderer: ON", "Auto Shoot Murderer: OFF"); setExtractedBtnState("Auto Shoot Murderer", aimAutoShotEnabled) end,
 	 getState = function() return aimAutoShotEnabled end},
+	{name = "AutoWall",
+	 toggle = function() aimAutoWallEnabled = not aimAutoWallEnabled; setToggleState(autoWallButton, aimAutoWallEnabled, "AutoWall: ON", "AutoWall: OFF"); setExtractedBtnState("AutoWall", aimAutoWallEnabled) end,
+	 getState = function() return aimAutoWallEnabled end},
 	{name = "Lay",
 	 toggle = function() toggleLay(); setToggleState(layButton, layEnabled, "Lay: ON", "Lay: OFF"); setExtractedBtnState("Lay", layEnabled) end,
 	 getState = function() return layEnabled end},
@@ -28878,6 +28946,7 @@ function restoreFullConfig()
 	skipLoadingScreenEnabled = T.skipLoadingScreenEnabled or false
 	aimWallbangEnabled = T.aimWallbangEnabled or false
 	aimAutoShotEnabled = T.aimAutoShotEnabled or false
+	aimAutoWallEnabled = T.aimAutoWallEnabled or false
 	aimLmbShootEnabled = T.aimLmbShootEnabled or false
 	flickShotEnabled = T.flickShotEnabled or false
 	spin360Enabled = T.spin360Enabled or false
@@ -29458,6 +29527,264 @@ function restoreFullConfig()
 		end
 	end
 
+	-- Config switching: shut EVERYTHING down first so the incoming config applies
+	-- onto a clean slate. Feature flags were already synced from T above, but live
+	-- runtime (connections, threads, GUIs, effects, world/character changes) and
+	-- button states still reflect the previous config. Each line below is that
+	-- feature's own OFF path (same as manual toggle-off). The enable-if-T blocks
+	-- after this then turn on exactly what the new config wants: nothing stale,
+	-- nothing stacked (re-enabling an already-running feature can no longer
+	-- duplicate Shaders effects, connections, etc.).
+	-- Movement / physics auras
+	if noclipConnection then noclipConnection:Disconnect(); noclipConnection = nil end
+	if noclipButton then setToggleState(noclipButton, false, "Noclip: ON", "Noclip: OFF") end
+	setExtractedBtnState("Noclip", false)
+	for _, cn in ipairs(reachActivatedConns) do pcall(function() cn:Disconnect() end) end
+	for _, cn in ipairs(reachHookConns) do pcall(function() cn:Disconnect() end) end
+	reachActivatedConns = {}
+	reachHookConns = {}
+	reachHookedTools = {}
+	if reachButton then setToggleState(reachButton, false, "KillAura: ON", "KillAura: OFF") end
+	setExtractedBtnState("KillAura", false)
+	if throwingKnifeAuraConnection then throwingKnifeAuraConnection:Disconnect(); throwingKnifeAuraConnection = nil end
+	throwingKnifeAuraEnabled = false
+	if throwingKnifeAuraButton then setToggleState(throwingKnifeAuraButton, false, "Throwing Knife Aura: ON", "Throwing Knife Aura: OFF") end
+	setExtractedBtnState("Throwing Knife Aura", false)
+	airStrafeEnabled = false
+	if airStrafeConnection then airStrafeConnection:Disconnect(); airStrafeConnection = nil end
+	if airStrafeInputConnection then airStrafeInputConnection:Disconnect(); airStrafeInputConnection = nil end
+	if airStrafeButton then setToggleState(airStrafeButton, false, "Air Strafe: ON", "Air Strafe: OFF") end
+	setExtractedBtnState("Air Strafe", false)
+	setupFakeSpeed()
+	if button4 then setToggleState(button4, false, "Speed Glitch: ON", "Speed Glitch: OFF") end
+	setExtractedBtnState("Speed Glitch", false)
+	if desyncConnection then desyncConnection:Disconnect(); desyncConnection = nil end
+	if desyncButton then setToggleState(desyncButton, false, "Anti-Shoot: ON", "Anti-Shoot: OFF") end
+	setExtractedBtnState("Anti-Shoot", false)
+	if desyncSpinConnection then desyncSpinConnection:Disconnect(); desyncSpinConnection = nil end
+	if desyncSpinButton then setToggleState(desyncSpinButton, false, "Desync: ON", "Desync: OFF") end
+	setExtractedBtnState("Desync", false)
+	disableAntiVoid()
+	if antiVoidButton then setToggleState(antiVoidButton, false, "Anti-Void: ON", "Anti-Void: OFF") end
+	setExtractedBtnState("Anti-Void", false)
+	if antiFlingConnection then antiFlingConnection:Disconnect(); antiFlingConnection = nil end
+	for _, vv in pairs(reachCachePlayers) do
+		if vv ~= player and vv.Character then
+			for _, bb in pairs(vv.Character:GetChildren()) do
+				if bb:IsA("BasePart") then bb.CanCollide = true end
+			end
+		end
+	end
+	if antiFlingButton then setToggleState(antiFlingButton, false, "Anti-Fling: ON", "Anti-Fling: OFF") end
+	setExtractedBtnState("Anti-Fling", false)
+	espCleanAll()
+	if espButton then setToggleState(espButton, false, "Esp: ON", "Esp: OFF") end
+	setExtractedBtnState("ESP", false)
+	if espLabelExploitersButton then setToggleState(espLabelExploitersButton, false, "ESP Label: ON", "ESP Label: OFF") end
+	if espLabelTeamersButton then setToggleState(espLabelTeamersButton, false, "ESP Label: ON", "ESP Label: OFF") end
+	if espLabelScammersButton then setToggleState(espLabelScammersButton, false, "ESP Label: ON", "ESP Label: OFF") end
+	disableAutoGrabGun()
+	if btn.autoGrabGun then setToggleState(btn.autoGrabGun, false, "AutoGrab Gun: ON", "AutoGrab Gun: OFF") end
+	setExtractedBtnState("AutoGrab Gun", false)
+	disableGunAura()
+	if btn.gunAura then setToggleState(btn.gunAura, false, "Gun Aura: ON", "Gun Aura: OFF") end
+	setExtractedBtnState("Gun Aura", false)
+	disableCoinAura()
+	if btn.coinAura then setToggleState(btn.coinAura, false, "Coin Aura: ON", "Coin Aura: OFF") end
+	setExtractedBtnState("Coin Aura", false)
+	disableAutoDeleteCoins()
+	if btn.autoDeleteCoins then setToggleState(btn.autoDeleteCoins, false, "Auto Remove Coins: ON", "Auto Remove Coins: OFF") end
+	setExtractedBtnState("Auto Remove Coins", false)
+	disableAutoMuteCoins()
+	if btn.autoMuteCoins then setToggleState(btn.autoMuteCoins, false, "Auto Mute Coins: ON", "Auto Mute Coins: OFF") end
+	setExtractedBtnState("Auto Mute Coins", false)
+	disableAutoDeleteCorpses()
+	if btn.autoDeleteCorpses then setToggleState(btn.autoDeleteCorpses, false, "Auto Delete Corpses: ON", "Auto Delete Corpses: OFF") end
+	setExtractedBtnState("Auto Delete Corpses", false)
+	if btn.antiDeathMansion2 then setToggleState(btn.antiDeathMansion2, false, "Anti-Death On Mansion 2: ON", "Anti-Death On Mansion 2: OFF") end
+	setExtractedBtnState("Anti-Death On Mansion 2", false)
+	if touchFlingButton then setToggleState(touchFlingButton, false, "Touch Fling: ON", "Touch Fling: OFF") end
+	setExtractedBtnState("Touch Fling", false)
+	if T.hiddenfling then
+		hiddenfling = true
+		if not flingThread or coroutine.status(flingThread) == "dead" then
+			flingThread = coroutine.create(fling)
+			coroutine.resume(flingThread)
+		end
+	end
+	if antiAimConnection then
+		running = false
+		antiAimStopAnim()
+		antiAimConnection:Disconnect()
+		antiAimConnection = nil
+		antiAimRealCF = nil
+		if not fakeDuckEnabled then
+			local ac = player.Character
+			if ac then
+				local ah = ac:FindFirstChildOfClass("Humanoid")
+				if ah then ah.AutoRotate = true end
+			end
+		end
+		stopAntiAimSpeedGlitch()
+		if loopSpeedPreFakeDuck ~= nil and not fakeDuckEnabled then
+			loopSpeedValue = loopSpeedPreFakeDuck
+			loopSpeedPreFakeDuck = nil
+			if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end
+			setupLoopSpeed()
+		end
+	end
+	updateAntiAimButtonVisual()
+	stopFakeDuck()
+	if fakeDuckButton then setToggleState(fakeDuckButton, false, "Fake Duck: ON", "Fake Duck: OFF") end
+	setExtractedBtnState("Fake Duck", false)
+	stopLoopSpeed()
+	if loopSpeedButton then setToggleState(loopSpeedButton, false, "LoopSpeed: ON", "LoopSpeed: OFF") end
+	setExtractedBtnState("LoopSpeed", false)
+	setupCustomJumpPower()
+	if customJumpPowerButton then setToggleState(customJumpPowerButton, false, "Jump Power: ON", "Jump Power: OFF") end
+	if btn.gameNotif then setToggleState(btn.gameNotif, false, "Notifications: ON", "Notifications: OFF") end
+	disableAntiLag()
+	if notifyExploitersButton then setToggleState(notifyExploitersButton, false, "Notify on Exploiters: ON", "Notify on Exploiters: OFF") end
+	if notifyTeamersButton then setToggleState(notifyTeamersButton, false, "Notify on Teamers: ON", "Notify on Teamers: OFF") end
+	if notifyScammersButton then setToggleState(notifyScammersButton, false, "Notify on Scammers: ON", "Notify on Scammers: OFF") end
+	if notifyVoteStartBtn then setToggleState(notifyVoteStartBtn, false, "Vote Notification: ON", "Vote Notification: OFF") end
+	notifyOnVoteStart = false
+	if button1 then setToggleState(button1, isEnabled, "Infinite Jump: ON", "Infinite Jump: OFF") end
+	if button2 then setToggleState(button2, wallhopToggle, "Wallhop: ON", "Wallhop: OFF") end
+	removeInvisibility()
+	if button5 then setToggleState(button5, invis_on, "Invisibility: ON", "Invisibility: OFF") end
+	setExtractedBtnState("Invisibility", invis_on)
+	local oldChair = workspace:FindFirstChild("clumsychair")
+	if oldChair then oldChair:Destroy() end
+	removeClumsyGhost()
+	if clumsyButton then setToggleState(clumsyButton, clumsy_on, "Clumsy: ON", "Clumsy: OFF") end
+	setExtractedBtnState("Clumsy", clumsy_on)
+	if autoTpConnection then autoTpConnection:Disconnect(); autoTpConnection = nil end
+	if autoTpBtn then autoTpBtn.Text = "Auto TP: OFF"; autoTpBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); autoTpBtn.TextColor3 = Color3.fromRGB(255, 255, 255) end
+	setExtractedBtnState("Auto TP", false)
+	if autoInvisConnection then autoInvisConnection:Disconnect(); autoInvisConnection = nil end
+	if autoInvisBtn then autoInvisBtn.Text = "Auto Invisibility: OFF"; autoInvisBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0); autoInvisBtn.TextColor3 = Color3.fromRGB(255, 255, 255) end
+	setExtractedBtnState("Auto Invisibility", false)
+	if autoDodgeEnabled then autoDodgeEnabled = false end
+	if autoDodgeConnection then autoDodgeConnection:Disconnect(); autoDodgeConnection = nil end
+	if autoDodgeButton then setToggleState(autoDodgeButton, false, "Auto Dodge Knife: ON", "Auto Dodge Knife: OFF") end
+	setExtractedBtnState("Auto Dodge Knife", false)
+	autoResetPlayerEnabled = false
+	autoResetEveryoneEnabled = false
+	autoResetSheriffEnabled = false
+	autoResetMurdererEnabled = false
+	if autoResetPlayerBtn then setToggleState(autoResetPlayerBtn, false, "Auto OG Reset Player: ON", "Auto OG Reset Player: OFF") end
+	setExtractedBtnState("Auto OG Reset Player", false)
+	if autoResetEveryoneBtn then setToggleState(autoResetEveryoneBtn, false, "Auto OG Reset Everyone: ON", "Auto OG Reset Everyone: OFF") end
+	setExtractedBtnState("Auto OG Reset Everyone", false)
+	if autoResetSheriffBtn then setToggleState(autoResetSheriffBtn, false, "Auto OG Reset Sheriff/Hero: ON", "Auto OG Reset Sheriff/Hero: OFF") end
+	setExtractedBtnState("Auto OG Reset Sheriff/Hero", false)
+	if autoResetMurdererBtn then setToggleState(autoResetMurdererBtn, false, "Auto OG Reset Murderer: ON", "Auto OG Reset Murderer: OFF") end
+	setExtractedBtnState("Auto OG Reset Murderer", false)
+	newRstAutoPlayerEnabled = false
+	newRstAutoEveryoneEnabled = false
+	newRstAutoSheriffEnabled = false
+	newRstAutoMurdererEnabled = false
+	if newRstAutoPlayerBtn then setToggleState(newRstAutoPlayerBtn, false, "Auto Reset Player: ON", "Auto Reset Player: OFF") end
+	setExtractedBtnState("Auto Reset Player", false)
+	if newRstAutoEveryoneBtn then setToggleState(newRstAutoEveryoneBtn, false, "Auto Reset Everyone: ON", "Auto Reset Everyone: OFF") end
+	setExtractedBtnState("Auto Reset Everyone", false)
+	if newRstAutoSheriffBtn then setToggleState(newRstAutoSheriffBtn, false, "Auto Reset Sheriff/Hero: ON", "Auto Reset Sheriff/Hero: OFF") end
+	setExtractedBtnState("Auto Reset Sheriff/Hero", false)
+	if newRstAutoMurdererBtn then setToggleState(newRstAutoMurdererBtn, false, "Auto Reset Murderer: ON", "Auto Reset Murderer: OFF") end
+	setExtractedBtnState("Auto Reset Murderer", false)
+	aimWallbangEnabled = false
+	if wallBangButton then setToggleState(wallBangButton, false, "Piercer Bullet: ON", "Piercer Bullet: OFF") end
+	setExtractedBtnState("Piercer Bullet", false)
+	aimAutoShotEnabled = false
+	if autoShotButton then setToggleState(autoShotButton, false, "Auto Shoot Murderer: ON", "Auto Shoot Murderer: OFF") end
+	setExtractedBtnState("Auto Shoot Murderer", false)
+	aimAutoWallEnabled = false
+	if autoWallButton then setToggleState(autoWallButton, false, "AutoWall: ON", "AutoWall: OFF") end
+	setExtractedBtnState("AutoWall", false)
+	aimLmbShootEnabled = false
+	if lmbShootButton then setToggleState(lmbShootButton, false, "LMB Shoot: ON", "LMB Shoot: OFF") end
+	setExtractedBtnState("LMB Shoot", false)
+	flickShotEnabled = false
+	if flickShotButton then setToggleState(flickShotButton, false, "Flick Shot: ON", "Flick Shot: OFF") end
+	setExtractedBtnState("Flick Shot", false)
+	spin360Enabled = false
+	if spin360Button then setToggleState(spin360Button, false, "Spin 360: ON", "Spin 360: OFF") end
+	setExtractedBtnState("Spin 360", false)
+	local lch = player.Character
+	local lh = lch and lch:FindFirstChildOfClass("Humanoid")
+	if lh then lh.Sit = false end
+	if layButton then setToggleState(layButton, false, "Lay: ON", "Lay: OFF") end
+	setExtractedBtnState("Lay", false)
+	doUnfreeze()
+	if freezeButton then setToggleState(freezeButton, false, "Freeze: ON", "Freeze: OFF") end
+	setExtractedBtnState("Freeze", false)
+	autoKillEveryoneEnabled = false
+	autoKillEveryoneNoFriendsEnabled = false
+	autoKillSheriffEnabled = false
+	if autoKillEveryoneBtn then setToggleState(autoKillEveryoneBtn, false, "Auto Kill Everyone: ON", "Auto Kill Everyone: OFF") end
+	setExtractedBtnState("Auto Kill Everyone", false)
+	if autoKillEveryoneNoFriendsBtn then setToggleState(autoKillEveryoneNoFriendsBtn, false, "Auto Kill Everyone (except friends): ON", "Auto Kill Everyone (except friends): OFF") end
+	setExtractedBtnState("Auto Kill Everyone (except friends)", false)
+	if autoKillSheriffBtn then setToggleState(autoKillSheriffBtn, false, "Auto Kill Sheriff: ON", "Auto Kill Sheriff: OFF") end
+	setExtractedBtnState("Auto Kill Sheriff", false)
+	disableZombieTryhard()
+	if btn.zombieBtn then setToggleState(btn.zombieBtn, false, "Zombie Tryhard: ON", "Zombie Tryhard: OFF") end
+	disableTryhardAnim()
+	if btn.tryhardAnimBtn then setToggleState(btn.tryhardAnimBtn, false, "Tryhard Anim: ON", "Tryhard Anim: OFF") end
+	disableTryhardMain()
+	if btn.tryhardMainBtn then setToggleState(btn.tryhardMainBtn, false, "Tryhard Main: ON", "Tryhard Main: OFF") end
+	disableR6Anim()
+	if btn.r6AnimBtn then setToggleState(btn.r6AnimBtn, false, "R6 Animation: ON", "R6 Animation: OFF") end
+	disableKorblox()
+	if btn.korbloxBtn then setToggleState(btn.korbloxBtn, false, "Korblox: ON", "Korblox: OFF") end
+	disableHeadless()
+	if btn.headlessBtn then setToggleState(btn.headlessBtn, false, "Headless: ON", "Headless: OFF") end
+	disableHeadlessAllHats()
+	if btn.headlessAllHatsBtn then setToggleState(btn.headlessAllHatsBtn, false, "Headless (All Hats): ON", "Headless (All Hats): OFF") end
+	if activeCustomAnimName then disableCustomAnim() end
+	disableCrosshair()
+	if btn.crosshairBtn then setToggleState(btn.crosshairBtn, false, "Adrenalin.win Crosshair: ON", "Adrenalin.win Crosshair: OFF") end
+	disableKeystroke()
+	if btn.keystrokeBtn then setToggleState(btn.keystrokeBtn, false, "Keystroke: ON", "Keystroke: OFF") end
+	disableShaders()
+	if btn.shadersBtn then setToggleState(btn.shadersBtn, false, "Shaders: ON", "Shaders: OFF") end
+	autofarmEnabled = false
+	if refreshAutofarmButtons then refreshAutofarmButtons() end
+	if refreshAutofarmCustomButton then refreshAutofarmCustomButton() end
+	autofarmResetInnocentEnabled = false
+	autofarmResetSheriffEnabled = false
+	autofarmResetMurdererEnabled = false
+	autofarmKillAllEnabled = false
+	autofarmShootPiercerEnabled = false
+	autofarmWebhookEnabled = false
+	autofarmServerHopEnabled = false
+	autofarmAvoidMurdererEnabled = false
+	autofarmAutoAntiShootEnabled = false
+	autofarmAutoKillSheriffEnabled = false
+	if autofarmResetInnocentBtn then setToggleState(autofarmResetInnocentBtn, false, "Auto Reset (Innocent): ON", "Auto Reset (Innocent): OFF") end
+	if autofarmResetSheriffBtn then setToggleState(autofarmResetSheriffBtn, false, "Auto Reset (Sheriff/Hero): ON", "Auto Reset (Sheriff/Hero): OFF") end
+	if autofarmResetMurdererBtn then setToggleState(autofarmResetMurdererBtn, false, "Auto Reset (Murderer): ON", "Auto Reset (Murderer): OFF") end
+	if autofarmKillAllBtn then setToggleState(autofarmKillAllBtn, false, "Auto Kill Everyone (Murderer): ON", "Auto Kill Everyone (Murderer): OFF") end
+	if autofarmPiercerBtn then setToggleState(autofarmPiercerBtn, false, "Auto Shoot Murderer (Piercer, Sheriff/Hero): ON", "Auto Shoot Murderer (Piercer, Sheriff/Hero): OFF") end
+	if autofarmWebhookBtn then setToggleState(autofarmWebhookBtn, false, "Discord Webhook Notification: ON", "Discord Webhook Notification: OFF") end
+	if autofarmServerHopBtn then setToggleState(autofarmServerHopBtn, false, "Server Hop When Alone: ON", "Server Hop When Alone: OFF") end
+	if autofarmAvoidMurdererBtn then setToggleState(autofarmAvoidMurdererBtn, false, "Avoid Murderer TP: ON", "Avoid Murderer TP: OFF") end
+	if autofarmAutoAntiShootBtn then setToggleState(autofarmAutoAntiShootBtn, false, "Auto Anti-Shoot: ON", "Auto Anti-Shoot: OFF") end
+	if autofarmAutoKillSheriffBtn then setToggleState(autofarmAutoKillSheriffBtn, false, "Auto Kill Sheriff/Hero (Murderer): ON", "Auto Kill Sheriff/Hero (Murderer): OFF") end
+	antiAfkEnabled = false
+	if antiAfkBtn then setToggleState(antiAfkBtn, false, "Anti-Afk: ON", "Anti-Afk: OFF") end
+	rejoinOnKickEnabled = false
+	if rejoinOnKickBtn then setToggleState(rejoinOnKickBtn, false, "Rejoin on Kick: ON", "Rejoin on Kick: OFF") end
+	if voteDupeActive then voteDupeStop() end
+	rendering3dEnabled = true
+	pcall(function() RunService:Set3dRenderingEnabled(true) end)
+	if rendering3dButton then setToggleState(rendering3dButton, true, "3D Rendering: ON", "3D Rendering: OFF") end
+	if button5 then setToggleState(button5, invis_on, "Invisibility: ON", "Invisibility: OFF") end
+	setExtractedBtnState("Invisibility", invis_on)
+	if clumsyButton then setToggleState(clumsyButton, clumsy_on, "Clumsy: ON", "Clumsy: OFF") end
+	setExtractedBtnState("Clumsy", clumsy_on)
+
 	-- Restore toggle buttons UI and enable features (read from T directly)
 	if T.isEnabled and button1 then
 		setToggleState(button1, true, "Infinite Jump: ON", "Infinite Jump: OFF")
@@ -29700,6 +30027,11 @@ function restoreFullConfig()
 		aimAutoShotEnabled = true
 		if autoShotButton then setToggleState(autoShotButton, true, "Auto Shoot Murderer: ON", "Auto Shoot Murderer: OFF") end
 		setExtractedBtnState("Auto Shoot Murderer", true)
+	end
+	if T.aimAutoWallEnabled then
+		aimAutoWallEnabled = true
+		if autoWallButton then setToggleState(autoWallButton, true, "AutoWall: ON", "AutoWall: OFF") end
+		setExtractedBtnState("AutoWall", true)
 	end
 	if T.aimLmbShootEnabled then
 		aimLmbShootEnabled = true
@@ -30042,6 +30374,7 @@ do
 		if wallBangButton then wallBangButton.Parent = sheriffFrame; wallBangButton.LayoutOrder = 253 end
 		if shootPlayerButton then shootPlayerButton.Parent = sheriffFrame; shootPlayerButton.LayoutOrder = 255 end
 		if autoShotButton then autoShotButton.Parent = sheriffFrame; autoShotButton.LayoutOrder = 256 end
+		if autoWallButton then autoWallButton.Parent = sheriffFrame; autoWallButton.LayoutOrder = 256.5 end
 		if btn.autoGrabGun then btn.autoGrabGun.Parent = sheriffFrame; btn.autoGrabGun.LayoutOrder = 257 end
 		if btn.gunAura then
 			local row = btn.gunAura.Parent
