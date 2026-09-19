@@ -288,6 +288,7 @@ function saveConfig()
 	config.toggles.aimAutoWallEnabled = aimAutoWallEnabled
 	config.toggles.manualsEnabled = manualsEnabled
 	config.toggles.manualsSide = manualsSide
+	config.toggles.autoManualsEnabled = autoManualsEnabled
 	config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
 	config.toggles.flickShotEnabled = flickShotEnabled
 	config.toggles.spin360Enabled = spin360Enabled
@@ -352,6 +353,7 @@ config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
 	config.values.roundTimerSizeYScale = roundTimerSizeYScale
 	config.values.range = range
 	config.values.throwingKnifeAuraRadius = throwingKnifeAuraRadius
+	config.values.clumsyModeIndex = clumsyModeIndex
 	config.values.autoInvisActivateDist = autoInvisActivateDist
 	config.values.autoInvisDeactivateDist = autoInvisDeactivateDist
 	config.values.invisOffsetX = invisOffsetX
@@ -367,6 +369,8 @@ config.toggles.autofarmServerHopEnabled = autofarmServerHopEnabled
 	config.values.DesyncMode = DesyncMode
 	config.values.antiAimSpeed = antiAimSpeed
 	config.values.loopSpeedValue = loopSpeedValue
+	config.values.antiAimLoopSpeedValue = antiAimLoopSpeedValue
+	config.values.fakeDuckLoopSpeedValue = fakeDuckLoopSpeedValue
 	config.values.customJumpPowerValue = customJumpPowerValue
 	config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
 	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed
@@ -862,6 +866,7 @@ currentMode = 0            -- 0 = off, 1 = on
 running = false            -- legacy flag (kept so old handlers don't error)
 scriptCoroutine = nil      -- legacy (unused)
 antiAimSpeed = 35          -- re-randomization rate (persistent / tunable)
+antiAimLoopSpeedValue = 25   -- LoopSpeed applied while Anti-Aim is on (tunable, replaces fixed 25)
 antiAimYaw = nil
 antiAimPitch = 0
 antiAimRoll = 0
@@ -876,6 +881,7 @@ antiAimSpeedInput = nil
 -- Fake Duck variables (independent anti-aim + speed glitch combo)
 fakeDuckEnabled = false
 fakeDuckAntiAimSpeed = 15
+fakeDuckLoopSpeedValue = 10  -- LoopSpeed applied while Fake Duck is on (tunable, replaces fixed 10)
 fakeDuckSpeedValue = 60
 fakeDuckAntiAimConn = nil
 fakeDuckSpeedConn = nil
@@ -1043,11 +1049,11 @@ function cycleMode()
 		antiAimEnsureConnection()
 		-- Auto-start speed glitch with Anti-Aim
 		setupAntiAimSpeedGlitch()
-		-- LoopSpeed integration: save current value, set to 10
+		-- LoopSpeed integration: save current value, set to Anti-Aim value
 		if loopSpeedEnabled and loopSpeedPreFakeDuck == nil then
 			loopSpeedPreFakeDuck = loopSpeedValue
-			loopSpeedValue = 25
-			if loopSpeedInput then loopSpeedInput.Text = "25" end
+			loopSpeedValue = antiAimLoopSpeedValue
+			if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end
 			setupLoopSpeed()
 		end
 	else
@@ -1193,11 +1199,11 @@ function toggleFakeDuck()
 		-- Fake Duck turns Anti-Aim off, like Anti-Shoot vs Desync.
 		if currentMode ~= 0 then cycleMode() end
 		setExtractedBtnState("Anti-Aim", false)
-		-- Save current LoopSpeed and set to 10
+		-- Save current LoopSpeed and set to Fake Duck value
 		if loopSpeedEnabled then
 			loopSpeedPreFakeDuck = loopSpeedValue
-			loopSpeedValue = 10
-			if loopSpeedInput then loopSpeedInput.Text = "10" end
+			loopSpeedValue = fakeDuckLoopSpeedValue
+			if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end
 			setupLoopSpeed()
 		end
 		startFakeDuck()
@@ -4350,6 +4356,7 @@ function onCharacterAdded(char)
 		-- РћС‚РєР»СЋС‡Р°РµРј Clumsy
 		clumsy_on = false
 		removeClumsyGhost()
+		clumsyUnfreezeOthers()
 		if clumsyButton then
 			clumsyButton.Text = "Clumsy: OFF"
 			clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -4470,6 +4477,8 @@ if fakeSpeedEnabled then
 	-- Anti-Void: НЕ отключаем
 
 	clumsy_on = false
+	removeClumsyGhost()
+	clumsyUnfreezeOthers()
 	if clumsyButton then
 		clumsyButton.Text = "Clumsy: OFF"
 		clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -6827,7 +6836,8 @@ autoGrabGunMagnets = {}
 autoGrabGunTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
+	Hotel2014 = true, Office2014 = true, Hospital2014 = true
 }
 
 function autoGrabGetRoot()
@@ -8793,7 +8803,8 @@ MAGNET_DISTANCE = 6
 gunAuraTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
+	Hotel2014 = true, Office2014 = true, Hospital2014 = true
 }
 
 function gunAuraGetRoot()
@@ -9210,7 +9221,8 @@ autoDeleteCoinsConnections = {}
 autoDeleteCoinsTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true
+	Bank2 = true, Office3 = true, PoliceStation = true, ResearchFacility = true,
+	Hotel2014 = true, Office2014 = true, Hospital2014 = true
 }
 
 function isInsideTargetModel(instance)
@@ -10730,7 +10742,8 @@ autoDeleteCorpsesConnections = {}
 autoDeleteCorpsesTargets = {
 	Hotel = true, Factory = true, BioLab = true, Mansion2 = true,
 	House2 = true, Workplace = true, Hospital3 = true, MilBase = true,
-	Bank2 = true, Office3 = true, ResearchFacility = true
+	Bank2 = true, Office3 = true, ResearchFacility = true,
+	Hotel2014 = true, Office2014 = true, Hospital2014 = true
 }
 
 function neutralizeCorpsePart(part)
@@ -13692,7 +13705,208 @@ autoKillSheriffBtn.MouseButton1Click:Connect(function()
 	if autoKillSheriffEnabled then startAutoKillSheriff() end
 end)
 
-clumsyButton = createButton("ClumsyButton", "Clumsy: OFF", 204)
+-- ============================================================
+-- Clumsy modes: Default (seat + ghost desync) and Freeze (time-stop:
+-- everyone else is anchored in place on YOUR screen, their animations
+-- halted; disabling releases them back to real server positions).
+-- ============================================================
+clumsyModes = {"Default", "Freeze"}
+clumsyModeIndex = 1
+clumsyFreezeConns = {}
+clumsyFreezeLoop = nil
+
+function clumsyCurrentMode()
+	local m = clumsyModes[clumsyModeIndex]
+	if m ~= "Default" and m ~= "Freeze" then return "Default" end
+	return m
+end
+
+function clumsyFreezeChar(ch)
+	if not ch then return end
+	for _, part in ipairs(ch:GetDescendants()) do
+		if part:IsA("BasePart") then
+			pcall(function() part.Anchored = true end)
+		end
+	end
+	local hum = ch:FindFirstChildOfClass("Humanoid")
+	if hum then
+		for _, tr in ipairs(hum:GetPlayingAnimationTracks()) do
+			pcall(function() tr:Stop() end)
+		end
+	end
+end
+
+function clumsyUnfreezeOthers()
+	if clumsyFreezeConns then
+		for _, cn in ipairs(clumsyFreezeConns) do pcall(function() cn:Disconnect() end) end
+	end
+	clumsyFreezeConns = {}
+	if clumsyFreezeLoop then pcall(function() clumsyFreezeLoop:Disconnect() end) end
+	clumsyFreezeLoop = nil
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player then
+			local ch = plr.Character
+			if ch then
+				for _, part in ipairs(ch:GetDescendants()) do
+					if part:IsA("BasePart") then
+						pcall(function() part.Anchored = false end)
+					end
+				end
+			end
+		end
+	end
+end
+
+function clumsyFreezeOthers()
+	clumsyUnfreezeOthers()
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player then
+			clumsyFreezeChar(plr.Character)
+			local c = plr.CharacterAdded:Connect(function(ch)
+				if clumsy_on and clumsyCurrentMode() == "Freeze" then
+					clumsyFreezeChar(ch)
+				end
+			end)
+			table.insert(clumsyFreezeConns, c)
+		end
+	end
+	table.insert(clumsyFreezeConns, Players.PlayerAdded:Connect(function(plr)
+		table.insert(clumsyFreezeConns, plr.CharacterAdded:Connect(function(ch)
+			if clumsy_on and clumsyCurrentMode() == "Freeze" then
+				clumsyFreezeChar(ch)
+			end
+		end))
+	end))
+	clumsyFreezeLoop = RunService.Heartbeat:Connect(function()
+		if not (clumsy_on and clumsyCurrentMode() == "Freeze") then return end
+		for _, plr in ipairs(Players:GetPlayers()) do
+			if plr ~= player then
+				clumsyFreezeChar(plr.Character)
+			end
+		end
+	end)
+end
+
+function clumsyApplyMode()
+	local chair = workspace:FindFirstChild("clumsychair")
+	if chair then chair:Destroy() end
+	removeClumsyGhost()
+	clumsyUnfreezeOthers()
+	if not clumsy_on then return end
+	if clumsyCurrentMode() == "Freeze" then
+		clumsyFreezeOthers()
+	else
+		local char = player.Character
+		local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		if not hrp then return end
+		local savedpos = hrp.CFrame
+		task.wait()
+		pcall(function() char:MoveTo(savedpos.Position) end)
+		task.wait(0.15)
+		local Seat = Instance.new("Seat")
+		Seat.Anchored = false
+		Seat.CanCollide = false
+		Seat.Name = "clumsychair"
+		Seat.Transparency = 1
+		Seat.CFrame = savedpos
+		Seat.Parent = workspace
+		local Weld = Instance.new("Weld")
+		Weld.Part0 = Seat
+		Weld.Part1 = char:FindFirstChild("Torso") or char:FindFirstChild("UpperTorso")
+		Weld.Parent = Seat
+		task.wait()
+		Seat.CFrame = savedpos
+		createClumsyGhost(savedpos.Position)
+	end
+end
+
+function toggleClumsy()
+	clumsy_on = not clumsy_on
+	clumsyApplyMode()
+	setToggleState(clumsyButton, clumsy_on, "Clumsy: ON", "Clumsy: OFF")
+	setExtractedBtnState("Clumsy", clumsy_on)
+end
+
+clumsyRow = Instance.new("Frame")
+clumsyRow.Name = "ClumsyRow"
+clumsyRow.Size = UDim2.new(1, 0, 0, 42)
+clumsyRow.BackgroundTransparency = 1
+clumsyRow.LayoutOrder = 204
+clumsyRow.Parent = categoryFrames["Combat"]
+
+clumsyButton = Instance.new("TextButton")
+clumsyButton.Name = "ClumsyButton"
+clumsyButton.Size = UDim2.new(0.5, -2, 1, 0)
+clumsyButton.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+clumsyButton.Text = "Clumsy: OFF"
+clumsyButton.Font = Enum.Font.SourceSansBold
+clumsyButton.TextSize = 14
+clumsyButton.Parent = clumsyRow
+Instance.new("UICorner", clumsyButton).CornerRadius = UDim.new(0, 6)
+clumsyButton.MouseButton1Click:Connect(function()
+	toggleClumsy()
+	game.StarterGui:SetCore("SendNotification", {Title = clumsy_on and "Clumsy On" or "Clumsy Off"; Duration = 1; Text = "";})
+end)
+
+clumsyModeSelect = Instance.new("TextButton")
+clumsyModeSelect.Name = "ClumsyModeSelect"
+clumsyModeSelect.Size = UDim2.new(0.5, -2, 1, 0)
+clumsyModeSelect.Position = UDim2.new(0.5, 2, 0, 0)
+clumsyModeSelect.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+clumsyModeSelect.TextColor3 = Color3.fromRGB(255, 255, 255)
+clumsyModeSelect.Text = "Default ▼"
+clumsyModeSelect.Font = Enum.Font.SourceSansBold
+clumsyModeSelect.TextSize = 14
+clumsyModeSelect.AutoButtonColor = false
+clumsyModeSelect.Parent = clumsyRow
+Instance.new("UICorner", clumsyModeSelect).CornerRadius = UDim.new(0, 6)
+
+clumsyModeDropdownFrame = Instance.new("Frame")
+clumsyModeDropdownFrame.Size = UDim2.new(0.5, -2, 0, math.min(#clumsyModes * 30, 180))
+clumsyModeDropdownFrame.Position = UDim2.new(0.5, 2, 0, 42)
+clumsyModeDropdownFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+clumsyModeDropdownFrame.BorderSizePixel = 0
+clumsyModeDropdownFrame.Visible = false
+clumsyModeDropdownFrame.ZIndex = 10
+clumsyModeDropdownFrame.Parent = clumsyRow
+
+clumsyModeDropdownList = Instance.new("ScrollingFrame")
+clumsyModeDropdownList.Size = UDim2.new(1, 0, 1, 0)
+clumsyModeDropdownList.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+clumsyModeDropdownList.BorderSizePixel = 0
+clumsyModeDropdownList.ScrollBarThickness = 4
+clumsyModeDropdownList.CanvasSize = UDim2.new(0, 0, 0, #clumsyModes * 30)
+clumsyModeDropdownList.ZIndex = 10
+clumsyModeDropdownList.Parent = clumsyModeDropdownFrame
+Instance.new("UICorner", clumsyModeDropdownList).CornerRadius = UDim.new(0, 6)
+
+for i, modeName in ipairs(clumsyModes) do
+	local btn = Instance.new("TextButton")
+	btn.Size = UDim2.new(1, 0, 0, 30)
+	btn.Position = UDim2.new(0, 0, 0, (i-1)*30)
+	btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+	btn.Text = modeName
+	btn.Font = Enum.Font.SourceSansBold
+	btn.TextSize = 14
+	btn.AutoButtonColor = false
+	btn.ZIndex = 10
+	btn.Parent = clumsyModeDropdownList
+	btn.MouseButton1Click:Connect(function()
+		clumsyModeIndex = i
+		clumsyModeSelect.Text = modeName .. " ▼"
+		clumsyModeDropdownFrame.Visible = false
+		if clumsy_on then clumsyApplyMode() end
+		saveConfig()
+	end)
+	btn.MouseEnter:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(60, 60, 60) end)
+	btn.MouseLeave:Connect(function() btn.BackgroundColor3 = Color3.fromRGB(0, 0, 0) end)
+end
+clumsyModeSelect.MouseButton1Click:Connect(function()
+	clumsyModeDropdownFrame.Visible = not clumsyModeDropdownFrame.Visible
+	refreshDropdownArrow(clumsyModeSelect, clumsyModeDropdownFrame)
+end)
 -- Р”РѕР±Р°РІСЊ РІРІРµСЂС…Сѓ СЂСЏРґРѕРј СЃ clumsyGhost
 clumsyGhostAdornments = {}
 
@@ -13838,43 +14052,6 @@ function removeClumsyGhost()
 	clumsyGhost = nil
 end
 
-clumsyButton.MouseButton1Click:Connect(function()
-	clumsy_on = not clumsy_on
-	if clumsy_on then
-		local savedpos = player.Character.HumanoidRootPart.CFrame
-		task.wait()
-		player.Character:MoveTo(savedpos.Position)
-		task.wait(0.15)
-		local Seat = Instance.new("Seat", workspace)
-		Seat.Anchored = false
-		Seat.CanCollide = false
-		Seat.Name = "clumsychair"
-		Seat.Transparency = 1
-		Seat.CFrame = savedpos
-		local Weld = Instance.new("Weld", Seat)
-		Weld.Part0 = Seat
-		Weld.Part1 = player.Character:FindFirstChild("Torso") or player.Character.UpperTorso
-		task.wait()
-		Seat.CFrame = savedpos
-
-		-- РЎРѕР·РґР°С‘Рј РїСЂРёР·СЂР°Рє РЅР° СЃРµСЂРІРµСЂРЅРѕР№ РїРѕР·РёС†РёРё
-		createClumsyGhost(savedpos.Position)
-
-		game.StarterGui:SetCore("SendNotification", {Title = "Clumsy On"; Duration = 1; Text = "";})
-		setToggleState(clumsyButton, true, "Clumsy: ON", "Clumsy: OFF")
-		setExtractedBtnState("Clumsy", true)
-	else
-		local chair = workspace:FindFirstChild("clumsychair")
-		if chair then
-			chair:Destroy()
-		end
-		removeClumsyGhost()
-		game.StarterGui:SetCore("SendNotification", {Title = "Clumsy Off"; Duration = 1; Text = "";})
-		setToggleState(clumsyButton, false, "Clumsy: ON", "Clumsy: OFF")
-		setExtractedBtnState("Clumsy", false)
-	end
-end)
-
 noclipButton = createButton("NoclipButton", "Noclip: OFF", 211)
 noclipButton.MouseButton1Click:Connect(function()
 	toggleNoclip()
@@ -14001,7 +14178,7 @@ do
 
 	antiAimButton = Instance.new("TextButton")
 	antiAimButton.Name = "AntiAimButton"
-	antiAimButton.Size = UDim2.new(1, -136, 1, 0)
+	antiAimButton.Size = UDim2.new(1, -198, 1, 0)
 	antiAimButton.BackgroundColor3 = btnBgColor
 	antiAimButton.TextColor3 = btnTextColor
 	antiAimButton.Text = "Anti-Aim: OFF"
@@ -14013,7 +14190,7 @@ do
 	antiAimSpeedInput = Instance.new("TextBox")
 	antiAimSpeedInput.Name = "AntiAimSpeedInput"
 	antiAimSpeedInput.Size = UDim2.new(0, 62, 1, 0)
-	antiAimSpeedInput.Position = UDim2.new(1, -130, 0, 0)
+	antiAimSpeedInput.Position = UDim2.new(1, -128, 0, 0)
 	antiAimSpeedInput.BackgroundColor3 = inputBgColor
 	antiAimSpeedInput.TextColor3 = inputTextColor
 	antiAimSpeedInput.PlaceholderText = "Aim"
@@ -14039,6 +14216,35 @@ do
 	antiAimSpeedGlitchSpdInput.ClearTextOnFocus = false
 	antiAimSpeedGlitchSpdInput.Parent = aaRow
 	Instance.new("UICorner", antiAimSpeedGlitchSpdInput).CornerRadius = UDim.new(0, 6)
+
+	aaLoopInput = Instance.new("TextBox")
+	aaLoopInput.Name = "AaLoopInput"
+	aaLoopInput.Size = UDim2.new(0, 62, 1, 0)
+	aaLoopInput.Position = UDim2.new(1, -192, 0, 0)
+	aaLoopInput.BackgroundColor3 = inputBgColor
+	aaLoopInput.TextColor3 = inputTextColor
+	aaLoopInput.PlaceholderText = "Loop"
+	aaLoopInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	aaLoopInput.Text = tostring(antiAimLoopSpeedValue)
+	aaLoopInput.Font = Enum.Font.SourceSansBold
+	aaLoopInput.TextSize = 15
+	aaLoopInput.ClearTextOnFocus = false
+	aaLoopInput.Parent = aaRow
+	Instance.new("UICorner", aaLoopInput).CornerRadius = UDim.new(0, 6)
+	aaLoopInput.FocusLost:Connect(function()
+		local v = tonumber(aaLoopInput.Text)
+		if v and v > 0 then
+			antiAimLoopSpeedValue = v
+			if currentMode ~= 0 and loopSpeedEnabled then
+				loopSpeedValue = v
+				if loopSpeedInput then loopSpeedInput.Text = tostring(v) end
+				setupLoopSpeed()
+			end
+			saveConfig()
+		else
+			aaLoopInput.Text = tostring(antiAimLoopSpeedValue)
+		end
+	end)
 
 	antiAimButton.MouseButton1Click:Connect(cycleMode)
 	antiAimSpeedInput.FocusLost:Connect(function()
@@ -14075,7 +14281,7 @@ do
 
 	fakeDuckButton = Instance.new("TextButton")
 	fakeDuckButton.Name = "FakeDuckButton"
-	fakeDuckButton.Size = UDim2.new(1, -136, 1, 0)
+	fakeDuckButton.Size = UDim2.new(1, -198, 1, 0)
 	fakeDuckButton.BackgroundColor3 = btnBgColor
 	fakeDuckButton.TextColor3 = btnTextColor
 	fakeDuckButton.Text = "Fake Duck: OFF"
@@ -14087,7 +14293,7 @@ do
 	fakeDuckAimInput = Instance.new("TextBox")
 	fakeDuckAimInput.Name = "FakeDuckAimInput"
 	fakeDuckAimInput.Size = UDim2.new(0, 62, 1, 0)
-	fakeDuckAimInput.Position = UDim2.new(1, -130, 0, 0)
+	fakeDuckAimInput.Position = UDim2.new(1, -128, 0, 0)
 	fakeDuckAimInput.BackgroundColor3 = inputBgColor
 	fakeDuckAimInput.TextColor3 = inputTextColor
 	fakeDuckAimInput.PlaceholderText = "Aim"
@@ -14113,6 +14319,35 @@ do
 	fakeDuckSpdInput.ClearTextOnFocus = false
 	fakeDuckSpdInput.Parent = fdRow
 	Instance.new("UICorner", fakeDuckSpdInput).CornerRadius = UDim.new(0, 6)
+
+	fqLoopInput = Instance.new("TextBox")
+	fqLoopInput.Name = "FqLoopInput"
+	fqLoopInput.Size = UDim2.new(0, 62, 1, 0)
+	fqLoopInput.Position = UDim2.new(1, -192, 0, 0)
+	fqLoopInput.BackgroundColor3 = inputBgColor
+	fqLoopInput.TextColor3 = inputTextColor
+	fqLoopInput.PlaceholderText = "Loop"
+	fqLoopInput.PlaceholderColor3 = Color3.fromRGB(150, 150, 150)
+	fqLoopInput.Text = tostring(fakeDuckLoopSpeedValue)
+	fqLoopInput.Font = Enum.Font.SourceSansBold
+	fqLoopInput.TextSize = 15
+	fqLoopInput.ClearTextOnFocus = false
+	fqLoopInput.Parent = fdRow
+	Instance.new("UICorner", fqLoopInput).CornerRadius = UDim.new(0, 6)
+	fqLoopInput.FocusLost:Connect(function()
+		local v = tonumber(fqLoopInput.Text)
+		if v and v > 0 then
+			fakeDuckLoopSpeedValue = v
+			if fakeDuckEnabled and loopSpeedEnabled then
+				loopSpeedValue = v
+				if loopSpeedInput then loopSpeedInput.Text = tostring(v) end
+				setupLoopSpeed()
+			end
+			saveConfig()
+		else
+			fqLoopInput.Text = tostring(fakeDuckLoopSpeedValue)
+		end
+	end)
 
 	fakeDuckButton.MouseButton1Click:Connect(function()
 		toggleFakeDuck()
@@ -14216,6 +14451,82 @@ end
 manualsSideSelect.MouseButton1Click:Connect(function()
 	manualsSideDropdownFrame.Visible = not manualsSideDropdownFrame.Visible
 	refreshDropdownArrow(manualsSideSelect, manualsSideDropdownFrame)
+end)
+
+-- ============================================================
+-- Auto Manuals: picks the peek side from where the murderer is relative
+-- to YOU (camera-relative). Murderer on your right → back to the right
+-- (face Left); murderer on your left → back to the left (face Right).
+-- Dead-ahead/behind holds the current side (no flicker). Runs ONLY while
+-- manuals master is ON together with Anti-Aim or Fake Duck.
+-- ============================================================
+autoManualsEnabled = false
+
+function toggleAutoManuals()
+	autoManualsEnabled = not autoManualsEnabled
+	setToggleState(autoManualsBtn, autoManualsEnabled, "Auto Manuals: ON", "Auto Manuals: OFF")
+	setExtractedBtnState("Auto Manuals", autoManualsEnabled)
+	saveConfig()
+end
+
+task.spawn(function()
+	while true do
+		RunService.Heartbeat:Wait()
+		pcall(function()
+			if not autoManualsEnabled then return end
+			if not manualsEnabled then return end
+			if not (antiAimIsActive() or fakeDuckEnabled) then return end
+			local char = player.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+			local cam = workspace.CurrentCamera
+			if not (hrp and cam) then return end
+			local murderer = aimFindMurderer()
+			if not (murderer and murderer ~= player) then return end
+			local tChar = murderer.Character
+			local tRoot = tChar and tChar:FindFirstChild("HumanoidRootPart")
+			local tHum = tChar and tChar:FindFirstChildOfClass("Humanoid")
+			if not (tRoot and tHum and tHum.Health > 0) then return end
+			-- Lateral position of the murderer on YOUR screen: positive means
+			-- he is on your right → turn your back to the left (face Right),
+			-- and vice versa. Zero deadzone: flips exactly at center crossing.
+			local relX, relZ = tRoot.Position.X - hrp.Position.X, tRoot.Position.Z - hrp.Position.Z
+			local rv = cam.CFrame.RightVector
+			local rx, rz = rv.X, rv.Z
+			if (rx * rx + rz * rz) < 0.0001 then return end
+			local rlen = math.sqrt(rx * rx + rz * rz)
+			local lateral = (relX * rx + relZ * rz) / rlen
+			local want = nil
+			if lateral > 0 then
+				want = "Right"
+			elseif lateral < 0 then
+				want = "Left"
+			end
+			if want ~= nil and want ~= manualsSide then
+				manualsSetSide(want)
+			end
+		end)
+	end
+end)
+
+autoManualsRow = Instance.new("Frame")
+autoManualsRow.Name = "AutoManualsRow"
+autoManualsRow.Size = UDim2.new(1, 0, 0, 42)
+autoManualsRow.BackgroundTransparency = 1
+autoManualsRow.LayoutOrder = 215.6
+autoManualsRow.Parent = categoryFrames["Combat"]
+
+autoManualsBtn = Instance.new("TextButton")
+autoManualsBtn.Name = "AutoManualsButton"
+autoManualsBtn.Size = UDim2.new(1, 0, 1, 0)
+autoManualsBtn.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+autoManualsBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoManualsBtn.Text = "Auto Manuals: OFF"
+autoManualsBtn.Font = Enum.Font.SourceSansBold
+autoManualsBtn.TextSize = 14
+autoManualsBtn.Parent = autoManualsRow
+Instance.new("UICorner", autoManualsBtn).CornerRadius = UDim.new(0, 6)
+autoManualsBtn.MouseButton1Click:Connect(function()
+	toggleAutoManuals()
 end)
 
 -- Anti-Lag (toggleable): removes particles, visual effects, decals/textures,
@@ -21878,29 +22189,7 @@ bindableFeatures = {
 		setExtractedBtnState("Desync", DesyncSpinActive)
 	end},
 	{name = "Clumsy", defaultKey = nil, getState = function() return clumsy_on end, callback = function()
-		clumsy_on = not clumsy_on
-		if clumsy_on then
-			local savedpos = player.Character.HumanoidRootPart.CFrame
-			task.wait()
-			player.Character:MoveTo(savedpos.Position)
-			task.wait(0.15)
-			local Seat = Instance.new("Seat", workspace)
-			Seat.Anchored = false; Seat.CanCollide = false; Seat.Name = "clumsychair"; Seat.Transparency = 1
-			Seat.CFrame = savedpos
-			local Weld = Instance.new("Weld", Seat)
-			Weld.Part0 = Seat
-			Weld.Part1 = player.Character:FindFirstChild("Torso") or player.Character.UpperTorso
-			task.wait(); Seat.CFrame = savedpos
-			createClumsyGhost(savedpos.Position)
-			setToggleState(clumsyButton, true, "Clumsy: ON", "Clumsy: OFF")
-			setExtractedBtnState("Clumsy", true)
-		else
-			local chair = workspace:FindFirstChild("clumsychair")
-			if chair then chair:Destroy() end
-			removeClumsyGhost()
-			setToggleState(clumsyButton, false, "Clumsy: ON", "Clumsy: OFF")
-			setExtractedBtnState("Clumsy", false)
-		end
+		toggleClumsy()
 	end},
 	{name = "Noclip", defaultKey = nil, getState = function() return noclipEnabled end, callback = function()
 		toggleNoclip()
@@ -21948,6 +22237,11 @@ bindableFeatures = {
 	{name = "Manuals: Side", defaultKey = nil, getState = function() return manualsEnabled end, callback = function()
 		manualsSwitchSide()
 		bindToggleStates["Manuals: Side"] = manualsEnabled
+	end},
+	{name = "Auto Manuals", defaultKey = nil, getState = function() return autoManualsEnabled end, callback = function()
+		toggleAutoManuals()
+		bindToggleStates["Auto Manuals"] = autoManualsEnabled
+		setExtractedBtnState("Auto Manuals", autoManualsEnabled)
 	end},
 	{name = "Auto Dodge Knife", defaultKey = nil, getState = function() return autoDodgeEnabled end, callback = function()
 		toggleAutoDodge()
@@ -27214,7 +27508,7 @@ function buildConfigData()
 	config.toggles.airStrafeEnabled = airStrafeEnabled; config.toggles.autoResetPlayerEnabled = autoResetPlayerEnabled
 	config.toggles.autoResetEveryoneEnabled = autoResetEveryoneEnabled; config.toggles.autoResetSheriffEnabled = autoResetSheriffEnabled
 	config.toggles.autoResetMurdererEnabled = autoResetMurdererEnabled; config.toggles.aimWallbangEnabled = aimWallbangEnabled
-	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled; config.toggles.aimAutoWallEnabled = aimAutoWallEnabled; config.toggles.manualsEnabled = manualsEnabled; config.toggles.manualsSide = manualsSide; config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
+	config.toggles.aimAutoShotEnabled = aimAutoShotEnabled; config.toggles.aimAutoWallEnabled = aimAutoWallEnabled; 	config.toggles.manualsEnabled = manualsEnabled; config.toggles.manualsSide = manualsSide; config.toggles.autoManualsEnabled = autoManualsEnabled; config.toggles.aimLmbShootEnabled = aimLmbShootEnabled
 	config.toggles.flickShotEnabled = flickShotEnabled
 	config.toggles.spin360Enabled = spin360Enabled
 	config.toggles.layEnabled = layEnabled
@@ -27244,11 +27538,11 @@ function buildConfigData()
 	config.values.roundTimerPosXScale = roundTimerPosXScale; config.values.roundTimerPosYScale = roundTimerPosYScale
 	config.values.roundTimerSizeXScale = roundTimerSizeXScale; config.values.roundTimerSizeYScale = roundTimerSizeYScale
 	config.values.range = range; config.values.autoInvisActivateDist = autoInvisActivateDist
-	config.toggles.throwingKnifeAuraEnabled = throwingKnifeAuraEnabled; config.values.throwingKnifeAuraRadius = throwingKnifeAuraRadius
+	config.toggles.throwingKnifeAuraEnabled = throwingKnifeAuraEnabled; config.values.throwingKnifeAuraRadius = throwingKnifeAuraRadius; config.values.clumsyModeIndex = clumsyModeIndex
 	config.values.autoInvisDeactivateDist = autoInvisDeactivateDist; config.values.autoTpDist = autoTpDist
 	config.values.autoTpTarget = autoTpTarget; config.values.MAGNET_DISTANCE = MAGNET_DISTANCE
 	config.values.DesyncOffsetRange = DesyncOffsetRange; config.values.DesyncSpinOffset = DesyncSpinOffset; config.values.DesyncMode = DesyncMode; config.values.antiAimSpeed = antiAimSpeed
-	config.values.loopSpeedValue = loopSpeedValue; config.values.customJumpPowerValue = customJumpPowerValue; config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
+	config.values.loopSpeedValue = loopSpeedValue; config.values.antiAimLoopSpeedValue = antiAimLoopSpeedValue; config.values.fakeDuckLoopSpeedValue = fakeDuckLoopSpeedValue; config.values.customJumpPowerValue = customJumpPowerValue; config.values.antiAimSpeedGlitchValue = antiAimSpeedGlitchValue
 	config.values.fakeDuckAntiAimSpeed = fakeDuckAntiAimSpeed; config.values.fakeDuckSpeedValue = fakeDuckSpeedValue
 	config.values.multiFlingCollapsed = multiFlingCollapsed or false; config.values.airStrafeMultiplier = airStrafeMultiplier
 	config.values.toggleBgTransparency = toggleBgTransparency; config.values.mainBgTransparency = mainBgTransparency
@@ -27302,6 +27596,16 @@ config.values.explicitlyClearedSoundPaths = explicitlyClearedSoundPaths
 	if inputBgColor then config.values.inputBgColorR = math.floor(inputBgColor.R * 255); config.values.inputBgColorG = math.floor(inputBgColor.G * 255); config.values.inputBgColorB = math.floor(inputBgColor.B * 255) end
 	if inputTextColor then config.values.inputTextColorR = math.floor(inputTextColor.R * 255); config.values.inputTextColorG = math.floor(inputTextColor.G * 255); config.values.inputTextColorB = math.floor(inputTextColor.B * 255) end
 	for name, key in pairs(featureBinds) do config.binds[name] = tostring(key) end
+	config.emotionKeyBinds = {}
+	if emotionKeyBinds then
+		for animId, kc in pairs(emotionKeyBinds) do
+			-- Save keyboard keys as "G" and mouse buttons as "MouseButton2" so
+			-- both round-trip through the config and reload correctly.
+			config.emotionKeyBinds[tostring(animId)] = tostring(kc)
+				:gsub("Enum.KeyCode%.", "")
+				:gsub("Enum.UserInputType%.", "")
+		end
+	end
 	if extractedButtons then
 		for name, data in pairs(extractedButtons) do
 			if data and data.btn then
@@ -27609,7 +27913,7 @@ btnFeatures = {
 	 toggle = function() toggleDesyncSpin(); setToggleState(desyncSpinButton, DesyncSpinActive, "Desync: ON", "Desync: OFF"); setExtractedBtnState("Desync", DesyncSpinActive) end,
 	 getState = function() return DesyncSpinActive end},
 	{name = "Clumsy",
-	 toggle = function() clumsy_on = not clumsy_on; if clumsy_on then local s = player.Character.HumanoidRootPart.CFrame; task.wait(); player.Character:MoveTo(s.Position); task.wait(0.15); local Seat = Instance.new("Seat", workspace); Seat.Anchored = false; Seat.CanCollide = false; Seat.Name = "clumsychair"; Seat.Transparency = 1; Seat.CFrame = s; local Weld = Instance.new("Weld", Seat); Weld.Part0 = Seat; Weld.Part1 = player.Character:FindFirstChild("Torso") or player.Character.UpperTorso; task.wait(); Seat.CFrame = s; createClumsyGhost(s.Position); setToggleState(clumsyButton, true, "Clumsy: ON", "Clumsy: OFF") else local chair = workspace:FindFirstChild("clumsychair"); if chair then chair:Destroy() end; removeClumsyGhost(); setToggleState(clumsyButton, false, "Clumsy: ON", "Clumsy: OFF") end; setExtractedBtnState("Clumsy", clumsy_on) end,
+	 toggle = function() toggleClumsy() end,
 	 getState = function() return clumsy_on end},
 	{name = "Noclip",
 	 toggle = function() toggleNoclip(); setToggleState(noclipButton, noclipEnabled, "Noclip: ON", "Noclip: OFF"); setExtractedBtnState("Noclip", noclipEnabled) end,
@@ -27649,6 +27953,10 @@ btnFeatures = {
 	{name = "Manuals: Side",
 	 toggle = function() manualsSwitchSide() end,
 	 getState = function() return manualsEnabled end},
+	{name = "Auto Manuals",
+	 toggle = function() toggleAutoManuals() end,
+	 getState = function() return autoManualsEnabled end,
+	 getStatusText = function() return autoManualsEnabled and "Auto Manuals: ON" or "Auto Manuals: OFF" end},
 	{name = "Fake Duck",
 	 toggle = function() toggleFakeDuck() end,
 	 getState = function() return fakeDuckEnabled end},
@@ -28980,6 +29288,7 @@ function toggleMenu()
 end
 		clumsy_on = false
 		removeClumsyGhost()
+		clumsyUnfreezeOthers()
 		if clumsyButton then
 			clumsyButton.Text = "Clumsy: OFF"
 			clumsyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -29129,6 +29438,7 @@ function restoreFullConfig()
 	aimAutoShotEnabled = T.aimAutoShotEnabled or false
 	aimAutoWallEnabled = T.aimAutoWallEnabled or false
 	manualsEnabled = T.manualsEnabled or false
+	autoManualsEnabled = T.autoManualsEnabled or false
 	aimLmbShootEnabled = T.aimLmbShootEnabled or false
 	flickShotEnabled = T.flickShotEnabled or false
 	spin360Enabled = T.spin360Enabled or false
@@ -29169,6 +29479,8 @@ function restoreFullConfig()
 		if c.values.antiAimSpeed then antiAimSpeed = c.values.antiAimSpeed; if antiAimSpeedInput then antiAimSpeedInput.Text = tostring(antiAimSpeed) end end
 		if c.values.antiAimSpeedGlitchValue then antiAimSpeedGlitchValue = c.values.antiAimSpeedGlitchValue; if antiAimSpeedGlitchSpdInput then antiAimSpeedGlitchSpdInput.Text = tostring(antiAimSpeedGlitchValue) end end
 		if c.values.loopSpeedValue then loopSpeedValue = c.values.loopSpeedValue; if loopSpeedInput then loopSpeedInput.Text = tostring(loopSpeedValue) end end
+		if c.values.antiAimLoopSpeedValue then antiAimLoopSpeedValue = c.values.antiAimLoopSpeedValue; if aaLoopInput then aaLoopInput.Text = tostring(antiAimLoopSpeedValue) end end
+		if c.values.fakeDuckLoopSpeedValue then fakeDuckLoopSpeedValue = c.values.fakeDuckLoopSpeedValue; if fqLoopInput then fqLoopInput.Text = tostring(fakeDuckLoopSpeedValue) end end
 		if c.values.customJumpPowerValue then customJumpPowerValue = c.values.customJumpPowerValue; if customJumpPowerInput then customJumpPowerInput.Text = tostring(customJumpPowerValue) end end
 		if c.values.fakeDuckAntiAimSpeed then fakeDuckAntiAimSpeed = c.values.fakeDuckAntiAimSpeed; if fakeDuckAimInput then fakeDuckAimInput.Text = tostring(fakeDuckAntiAimSpeed) end end
 		if c.values.fakeDuckSpeedValue then fakeDuckSpeedValue = c.values.fakeDuckSpeedValue; if fakeDuckSpdInput then fakeDuckSpdInput.Text = tostring(fakeDuckSpeedValue) end end
@@ -29590,15 +29902,18 @@ function restoreFullConfig()
 	-- Restore binds UI FIRST (before toggles, so saveConfig sees them).
 	-- Full resync: wipe current binds first, otherwise switching to a config
 	-- without binds (or with different keys) leaves stale shortcuts firing
-	-- while the UI already shows "None".
-	if c.binds then
+	-- while the UI already shows "None". A missing key (old configs) counts
+	-- as empty — never skip, or stale binds survive the switch.
+	local restoreBinds = c.binds
+	if type(restoreBinds) ~= "table" then restoreBinds = {} end
+	do
 		for name, oldKey in pairs(featureBinds) do
 			if oldKey and keyBinds[oldKey] then
 				keyBinds[oldKey] = nil
 			end
 			featureBinds[name] = nil
 		end
-		for name, keyStr in pairs(c.binds) do
+		for name, keyStr in pairs(restoreBinds) do
 			local key = stringToKey(keyStr)
 			if key then
 				featureBinds[name] = key
@@ -29624,14 +29939,17 @@ function restoreFullConfig()
 
 	-- Restore emotion binds (Emotions/Ragebait tabs): full resync for the same
 	-- reason — stale emotion shortcuts must die when the new config lacks them.
-	if c.emotionKeyBinds then
+	-- A missing key (old configs) counts as empty — never skip.
+	local restoreEmotionBinds = c.emotionKeyBinds
+	if type(restoreEmotionBinds) ~= "table" then restoreEmotionBinds = {} end
+	do
 		for animId, oldKc in pairs(emotionKeyBinds) do
 			if oldKc and keyBinds[oldKc] then
 				keyBinds[oldKc] = nil
 			end
 		end
 		emotionKeyBinds = {}
-		for idStr, keyCodeStr in pairs(c.emotionKeyBinds) do
+		for idStr, keyCodeStr in pairs(restoreEmotionBinds) do
 			local id = tonumber(idStr)
 			if id and keyCodeStr then
 				local ok, kc = pcall(function()
@@ -29839,6 +30157,7 @@ function restoreFullConfig()
 	local oldChair = workspace:FindFirstChild("clumsychair")
 	if oldChair then oldChair:Destroy() end
 	removeClumsyGhost()
+	clumsyUnfreezeOthers()
 	if clumsyButton then setToggleState(clumsyButton, clumsy_on, "Clumsy: ON", "Clumsy: OFF") end
 	setExtractedBtnState("Clumsy", clumsy_on)
 	if autoTpConnection then autoTpConnection:Disconnect(); autoTpConnection = nil end
@@ -29887,6 +30206,9 @@ function restoreFullConfig()
 	manualsEnabled = false
 	if manualsBtn then setToggleState(manualsBtn, false, "AA/FQ Manuals: ON", "AA/FQ Manuals: OFF") end
 	setExtractedBtnState("AA/FQ Manuals", false)
+	autoManualsEnabled = false
+	if autoManualsBtn then setToggleState(autoManualsBtn, false, "Auto Manuals: ON", "Auto Manuals: OFF") end
+	setExtractedBtnState("Auto Manuals", false)
 	aimLmbShootEnabled = false
 	if lmbShootButton then setToggleState(lmbShootButton, false, "LMB Shoot: ON", "LMB Shoot: OFF") end
 	setExtractedBtnState("LMB Shoot", false)
@@ -30225,6 +30547,11 @@ function restoreFullConfig()
 		if manualsBtn then setToggleState(manualsBtn, true, "AA/FQ Manuals: ON", "AA/FQ Manuals: OFF") end
 		setExtractedBtnState("AA/FQ Manuals", true)
 	end
+	if T.autoManualsEnabled then
+		autoManualsEnabled = true
+		if autoManualsBtn then setToggleState(autoManualsBtn, true, "Auto Manuals: ON", "Auto Manuals: OFF") end
+		setExtractedBtnState("Auto Manuals", true)
+	end
 	if T.aimLmbShootEnabled then
 		aimLmbShootEnabled = true
 		if lmbShootButton then setToggleState(lmbShootButton, true, "LMB Shoot: ON", "LMB Shoot: OFF") end
@@ -30316,6 +30643,10 @@ function restoreFullConfig()
 		if c.values.autofarmPreTpModeIndex and autofarmPreTpModes[c.values.autofarmPreTpModeIndex] then
 			autofarmPreTpModeIndex = c.values.autofarmPreTpModeIndex
 			if autofarmPreTpSelect then autofarmPreTpSelect.Text = autofarmPreTpModes[autofarmPreTpModeIndex] .. " ▼" end
+		end
+		if c.values.clumsyModeIndex and clumsyModes[c.values.clumsyModeIndex] then
+			clumsyModeIndex = c.values.clumsyModeIndex
+			if clumsyModeSelect then clumsyModeSelect.Text = clumsyModes[clumsyModeIndex] .. " ▼" end
 		end
 		if c.values.autofarmMode and autofarmModeNames[c.values.autofarmMode] then
 			autofarmMode = c.values.autofarmMode
