@@ -25187,10 +25187,10 @@ function createTeamerPlayerButton(plr)
 			end
 		end
 
+		friendRefreshAlive = true
 		buildFriendList()
 		if popupGui.Parent == nil then return end
 
-		friendRefreshAlive = true
 		task.spawn(function()
 			while friendRefreshAlive do
 				task.wait(8) -- friendships rarely change; was 2s of web churn per open popup
